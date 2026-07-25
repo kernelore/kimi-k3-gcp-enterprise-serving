@@ -1,0 +1,214 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kimi-k3-gateway-secrets
+  namespace: llm-serving
+  labels:
+    app: kimi-k3-gateway
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+type: Opaque
+stringData:
+  GATEWAY_MASTER_KEY: "${GATEWAY_MASTER_KEY}"
+  LITELLM_MASTER_KEY: "${GATEWAY_MASTER_KEY}"
+  DB_CONNECTION_NAME: "${DB_CONNECTION_NAME}"
+  DB_PASSWORD: "${DB_PASSWORD}"
+  REDIS_HOST: "${REDIS_HOST}"
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: "${REDIS_PASSWORD}"
+  REDIS_URL: "redis://:${REDIS_PASSWORD_ENCODED}@${REDIS_HOST}:6379"
+  DATABASE_URL: "postgresql://gateway_admin:${DB_PASSWORD}@127.0.0.1:5432/kimi_k3_gateway"
+  BIGQUERY_PROJECT_ID: "${PROJECT_ID}"
+  BIGQUERY_DATASET_ID: "kimi_k3_enterprise_audit"
+  BIGQUERY_TABLE_ID: "trajectories"
+  BIGQUERY_TABLE_NAME: "${PROJECT_ID}.kimi_k3_enterprise_audit.trajectories"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kimi-k3-gateway-config
+  namespace: llm-serving
+  labels:
+    app: kimi-k3-gateway
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+data:
+  litellm_config.yaml: |
+    model_list:
+      - model_name: ${SERVING_MODEL_NAME}
+        litellm_params:
+          model: openai/${SERVING_MODEL_NAME}
+          api_base: http://${TRTLLM_VIP}:8000/v1
+          api_key: fake-key
+          rpm: 1000
+          tpm: 100000
+          drop_params: false
+        model_info:
+          input_cost_per_token: 0.0000008
+          output_cost_per_token: 0.0000024
+
+    router_settings:
+      routing_strategy: usage-based-routing-v2
+
+    general_settings:
+      master_key: os.environ/GATEWAY_MASTER_KEY
+      database_url: os.environ/DATABASE_URL
+      store_model_in_db: true
+      use_redis_transaction_buffer: true
+
+    litellm_settings:
+      callbacks: ["custom_callbacks.proxy_handler_instance"]
+      cache: true
+      cache_params:
+        type: redis
+        host: ${REDIS_HOST}
+        port: 6379
+        password: os.environ/REDIS_PASSWORD
+        supported_call_types: ["completion", "acompletion"]
+
+  custom_callbacks.py: |
+    import asyncio
+    import datetime
+    import json
+    import time
+    import uuid
+    import urllib.request
+    from litellm.integrations.custom_logger import CustomLogger
+
+    class BigQueryAuditLogger(CustomLogger):
+        def __init__(self):
+            self.project_id = "${PROJECT_ID}"
+            self.dataset_id = "kimi_k3_enterprise_audit"
+            self.table_id = "trajectories"
+            print(f"[BigQueryAudit] Initialized BigQuery Audit Logger for dataset: {self.dataset_id}")
+
+        # Day-0 Placeholder: Kimi K3 reasoning trajectory parsing (<think>...</think>)
+        # def parse_reasoning_trajectory(self, response_text: str):
+        #     """Extract reasoning tokens inside <think>...</think> tags for CoT auditing."""
+        #     if not response_text or "<think>" not in response_text:
+        #         return None, response_text
+        #     parts = response_text.split("</think>", 1)
+        #     think_content = parts[0].replace("<think>", "").strip()
+        #     answer_content = parts[1].strip() if len(parts) > 1 else ""
+        #     return think_content, answer_content
+
+        # Day-0 Placeholder: Tool-call clarification guardrails
+        # def validate_tool_call_guardrails(self, kwargs, response_obj):
+        #     """Ensure tool calls meet enterprise safety guidelines before returning to user."""
+        #     # Check response_obj.choices[0].message.tool_calls against safety policies
+        #     pass
+
+        def get_auth_token(self):
+            req = urllib.request.Request(
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+                headers={"Metadata-Flavor": "Google"}
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=2) as resp:
+                    data = json.loads(resp.read().decode())
+                    return data.get("access_token")
+            except Exception as e:
+                print(f"[BigQueryAudit] Metadata token error: {e}")
+                return None
+
+        def _sync_stream_to_bigquery(self, row, req_id):
+            token = self.get_auth_token()
+            if not token:
+                return
+            url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{self.project_id}/datasets/{self.dataset_id}/tables/{self.table_id}/insertAll"
+            payload = {
+                "kind": "bigquery#tableDataInsertAllRequest",
+                "rows": [{"insertId": str(req_id), "json": row}]
+            }
+            try:
+                post_req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json"
+                    }
+                )
+                with urllib.request.urlopen(post_req, timeout=3) as resp:
+                    print(f"[BigQueryAudit] Streamed row into BigQuery: HTTP {resp.status}")
+            except Exception as e:
+                print(f"[BigQueryAudit] Streaming insert error: {e}")
+
+        async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
+            try:
+                req_id = kwargs.get("litellm_call_id") or str(uuid.uuid4())
+                now_ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f UTC")
+                model = kwargs.get("model") or "${SERVING_MODEL_NAME}"
+                
+                usage = getattr(response_obj, "usage", None)
+                prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
+                completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
+                
+                try:
+                    if hasattr(end_time - start_time, "total_seconds"):
+                        duration_ms = (end_time - start_time).total_seconds() * 1000.0
+                    else:
+                        duration_ms = float(end_time - start_time) * 1000.0
+                except Exception:
+                    duration_ms = None
+                
+                ttft_ms = None
+                raw_ttft = getattr(response_obj, "time_to_first_token_ms", None) or getattr(response_obj, "ttft_ms", None) or kwargs.get("time_to_first_token")
+                if raw_ttft is not None:
+                    ttft_ms = float(raw_ttft) * 1000.0 if float(raw_ttft) < 500.0 else float(raw_ttft)
+                elif getattr(response_obj, "_response_ms", None) is not None and getattr(response_obj, "stream", False):
+                    ttft_ms = float(getattr(response_obj, "_response_ms"))
+                
+                tpot_ms = None
+                if duration_ms is not None and completion_tokens is not None and completion_tokens > 0:
+                    tpot_ms = float(duration_ms) / float(completion_tokens)
+                    
+                meta = kwargs.get("metadata") if isinstance(kwargs.get("metadata"), dict) else {}
+                litellm_params = kwargs.get("litellm_params") if isinstance(kwargs.get("litellm_params"), dict) else {}
+                litellm_meta = litellm_params.get("metadata") if isinstance(litellm_params.get("metadata"), dict) else {}
+                
+                virtual_key = (
+                    kwargs.get("user_api_key_alias")
+                    or meta.get("user_api_key_alias")
+                    or litellm_meta.get("user_api_key_alias")
+                    or kwargs.get("user_api_key_hash")
+                    or kwargs.get("user")
+                )
+                if virtual_key == "fake-key":
+                    virtual_key = None
+
+                team_id = meta.get("team_id") or litellm_meta.get("team_id") or None
+                
+                total_cost_usd = None
+                raw_cost = getattr(response_obj, "_response_cost", None)
+                if raw_cost is not None and float(raw_cost) > 0:
+                    total_cost_usd = float(raw_cost)
+                elif prompt_tokens is not None and completion_tokens is not None:
+                    total_cost_usd = round(float(prompt_tokens) * 0.0000008 + float(completion_tokens) * 0.0000024, 8)
+
+                row = {
+                    "request_id": str(req_id),
+                    "request_timestamp": now_ts,
+                    "virtual_key": str(virtual_key)[:100] if virtual_key else None,
+                    "team_id": str(team_id)[:100] if team_id else None,
+                    "model": str(model)[:100] if model else None,
+                    "prompt_tokens": int(prompt_tokens) if prompt_tokens is not None else None,
+                    "completion_tokens": int(completion_tokens) if completion_tokens is not None else None,
+                    "total_cost_usd": float(total_cost_usd) if total_cost_usd is not None else None,
+                    "ttft_ms": float(ttft_ms) if ttft_ms is not None else None,
+                    "tpot_ms": float(tpot_ms) if tpot_ms is not None else None
+                }
+
+                await asyncio.to_thread(self._sync_stream_to_bigquery, row, req_id)
+            except Exception as e:
+                print(f"[BigQueryAudit] Logging error: {e}")
+
+        def log_success_event(self, kwargs, response_obj, start_time, end_time):
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self.async_log_success_event(kwargs, response_obj, start_time, end_time))
+            except Exception:
+                pass
+
+    proxy_handler_instance = BigQueryAuditLogger()

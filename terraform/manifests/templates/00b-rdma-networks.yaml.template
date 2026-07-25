@@ -1,0 +1,207 @@
+apiVersion: networking.gke.io/v1
+kind: GKENetworkParamSet
+metadata:
+  name: rdma-0
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  vpc: rdma-net
+  vpcSubnet: rdma-sub-0
+  deviceMode: RDMA
+---
+apiVersion: networking.gke.io/v1
+kind: Network
+metadata:
+  name: rdma-0
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  type: "Device"
+  parametersRef:
+    group: networking.gke.io
+    kind: GKENetworkParamSet
+    name: rdma-0
+---
+apiVersion: networking.gke.io/v1
+kind: GKENetworkParamSet
+metadata:
+  name: rdma-1
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  vpc: rdma-net
+  vpcSubnet: rdma-sub-1
+  deviceMode: RDMA
+---
+apiVersion: networking.gke.io/v1
+kind: Network
+metadata:
+  name: rdma-1
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  type: "Device"
+  parametersRef:
+    group: networking.gke.io
+    kind: GKENetworkParamSet
+    name: rdma-1
+---
+apiVersion: networking.gke.io/v1
+kind: GKENetworkParamSet
+metadata:
+  name: rdma-2
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  vpc: rdma-net
+  vpcSubnet: rdma-sub-2
+  deviceMode: RDMA
+---
+apiVersion: networking.gke.io/v1
+kind: Network
+metadata:
+  name: rdma-2
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  type: "Device"
+  parametersRef:
+    group: networking.gke.io
+    kind: GKENetworkParamSet
+    name: rdma-2
+---
+apiVersion: networking.gke.io/v1
+kind: GKENetworkParamSet
+metadata:
+  name: rdma-3
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  vpc: rdma-net
+  vpcSubnet: rdma-sub-3
+  deviceMode: RDMA
+---
+apiVersion: networking.gke.io/v1
+kind: Network
+metadata:
+  name: rdma-3
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  type: "Device"
+  parametersRef:
+    group: networking.gke.io
+    kind: GKENetworkParamSet
+    name: rdma-3
+---
+apiVersion: networking.gke.io/v1
+kind: GKENetworkParamSet
+metadata:
+  name: rdma-4
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  vpc: rdma-net
+  vpcSubnet: rdma-sub-4
+  deviceMode: RDMA
+---
+apiVersion: networking.gke.io/v1
+kind: Network
+metadata:
+  name: rdma-4
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  type: "Device"
+  parametersRef:
+    group: networking.gke.io
+    kind: GKENetworkParamSet
+    name: rdma-4
+---
+apiVersion: networking.gke.io/v1
+kind: GKENetworkParamSet
+metadata:
+  name: rdma-5
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  vpc: rdma-net
+  vpcSubnet: rdma-sub-5
+  deviceMode: RDMA
+---
+apiVersion: networking.gke.io/v1
+kind: Network
+metadata:
+  name: rdma-5
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  type: "Device"
+  parametersRef:
+    group: networking.gke.io
+    kind: GKENetworkParamSet
+    name: rdma-5
+---
+apiVersion: networking.gke.io/v1
+kind: GKENetworkParamSet
+metadata:
+  name: rdma-6
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  vpc: rdma-net
+  vpcSubnet: rdma-sub-6
+  deviceMode: RDMA
+---
+apiVersion: networking.gke.io/v1
+kind: Network
+metadata:
+  name: rdma-6
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  type: "Device"
+  parametersRef:
+    group: networking.gke.io
+    kind: GKENetworkParamSet
+    name: rdma-6
+---
+apiVersion: networking.gke.io/v1
+kind: GKENetworkParamSet
+metadata:
+  name: rdma-7
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  vpc: rdma-net
+  vpcSubnet: rdma-sub-7
+  deviceMode: RDMA
+---
+apiVersion: networking.gke.io/v1
+kind: Network
+metadata:
+  name: rdma-7
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  type: "Device"
+  parametersRef:
+    group: networking.gke.io
+    kind: GKENetworkParamSet
+    name: rdma-7

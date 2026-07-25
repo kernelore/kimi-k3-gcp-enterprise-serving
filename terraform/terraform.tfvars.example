@@ -1,0 +1,41 @@
+# ==============================================================================
+# Kimi K3 Sovereign Enterprise Inference Architecture - Terraform Configuration
+# ==============================================================================
+# INSTRUCTIONS:
+# 1. Copy this example file to create your active variable file:
+#    cp terraform.tfvars.example terraform.tfvars
+# 2. Replace the placeholder values below with your own GCP Project ID, region,
+#    zone, and Mandatory resource compliance labels.
+# ==============================================================================
+
+# Required: Your GCP Project ID where resources will be provisioned
+project_id = "YOUR_PROJECT_ID"
+
+# GCP Region and Zone for Sovereign Deployment (Hamina, Finland recommended)
+region = "europe-north1"
+zone   = "europe-north1-b" # Required zone for NVIDIA B200 and RoCE network profile
+
+# GKE Cluster and GPU Node Pool Configuration
+cluster_name            = "kimi-enterprise-fi"
+gpu_machine_type        = "a4-highgpu-8g" # 8x NVIDIA B200 HGX per node
+nodes_per_replica       = 2               # 2 nodes MVP for Kimi K3 (16x B200 GPUs total)
+enable_private_endpoint = false
+master_authorized_cidrs = [
+  {
+    cidr_block   = "203.0.113.1/32"
+    display_name = "operator"
+  }
+]
+
+# Model & Storage Configuration
+model_family         = "kimi-k3"
+hyperdisk_ml_size_gb = 2000 # 2 TB volume for Kimi K3 2.8T parameters and TRT-LLM engines
+
+# Mandatory Resource Compliance Labels (ensure strict adherence to prevent cleanup)
+owner_label = "your-username-kimi3" # Lowercase alphanumeric and hyphens only
+ttl_label   = "7d"                  # e.g., 24h, 7d, 14d
+env_label   = "kimi-k3-prod"
+
+# Database & Gateway Security Credentials
+db_tier     = "db-custom-2-8192"
+db_password = "REPLACE_WITH_SECURE_PASSWORD" # Required sensitive password for LiteLLM DB

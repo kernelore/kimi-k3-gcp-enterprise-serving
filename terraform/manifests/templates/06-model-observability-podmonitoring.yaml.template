@@ -1,0 +1,22 @@
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: kimi-k3-podmonitoring
+  namespace: llm-serving
+  labels:
+    app: kimi-k3-serving
+    app.kubernetes.io/name: ${INFERENCE_SERVER_LABEL}
+    app.kubernetes.io/part-of: google-cloud-managed-prometheus
+    ai.gke.io/model: "${SERVING_MODEL_NAME}"
+    ai.gke.io/inference-server: "${INFERENCE_SERVER_LABEL}"
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  selector:
+    matchLabels:
+      app: kimi-k3-serving
+      apps.kubernetes.io/pod-index: "0"
+  endpoints:
+  - port: 8000
+    path: /metrics
+    interval: 15s

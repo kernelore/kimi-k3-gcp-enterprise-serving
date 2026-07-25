@@ -1,0 +1,151 @@
+displayName: "Kimi K3 (2.8T MXFP4 MoE) & TensorRT-LLM MPI Production Observability (Hamina europe-north1)"
+gridLayout:
+  columns: 2
+  widgets:
+  - title: "NVIDIA Blackwell B200 GPU Utilization (%)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="kubernetes.io/container/accelerator/duty_cycle" AND resource.type="k8s_container"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+  - title: "GPU HBM3e Memory Used vs Total (Bytes)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="kubernetes.io/container/accelerator/memory_used" AND resource.type="k8s_container"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "Used - ${resource.labels.pod_name}"
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="kubernetes.io/container/accelerator/memory_total" AND resource.type="k8s_container"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "Total - ${resource.labels.pod_name}"
+  - title: "TensorCore & Memory Bandwidth Utilization (%)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/DCGM_FI_PROF_PIPE_TENSOR_ACTIVE/gauge" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "TensorCore Active"
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/DCGM_FI_PROF_DRAM_ACTIVE/gauge" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "DRAM Bandwidth Active"
+  # TRT-LLM widgets: add after verifying real metric names against a live trtllm-serve /metrics endpoint
+  - title: "Kimi K3 PagedAttention KV Cache Saturation (%) / Cache Hit Rate"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/sglang:cache_hit_rate/gauge" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "SGLang Cache Hit Rate"
+  - title: "Token Throughput Rate (Tokens/sec)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/sglang:gen_throughput/gauge" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "SGLang Generation Throughput (t/s)"
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/sglang:token_usage/counter" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_RATE
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "SGLang Token Usage Rate (t/s)"
+  - title: "Time-to-First-Token (TTFT Latency Distribution)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/sglang:time_to_first_token_seconds/histogram" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_PERCENTILE_99
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "SGLang TTFT P99 (s)"
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/sglang:time_to_first_token_seconds/histogram" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_PERCENTILE_50
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "SGLang TTFT P50 (s)"
+  - title: "Time-Per-Output-Token (TPOT Inter-Token Latency)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/sglang:time_per_output_token_seconds/histogram" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_PERCENTILE_99
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "SGLang TPOT P99 (s)"
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/sglang:time_per_output_token_seconds/histogram" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_PERCENTILE_50
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "SGLang TPOT P50 (s)"
+  - title: "Active Concurrency & Queue Length"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/sglang:num_queue_reqs/gauge" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "SGLang Queued Requests"
+  - title: "E2E Request Latency Distribution"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/sglang:e2e_request_latency_seconds/histogram" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_PERCENTILE_99
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "SGLang E2E Request Latency P99 (s)"
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/sglang:e2e_request_latency_seconds/histogram" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_PERCENTILE_50
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "SGLang E2E Request Latency P50 (s)"

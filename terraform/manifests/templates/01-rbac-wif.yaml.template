@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm-serving
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kimi-k3-gateway-sa
+  namespace: llm-serving
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+  annotations:
+    iam.gke.io/gcp-service-account: "kimi-k3-gateway-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kimi-k3-serving-sa
+  namespace: llm-serving
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+  annotations:
+    iam.gke.io/gcp-service-account: "kimi-k3-serving-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hf-secret
+  namespace: llm-serving
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+type: Opaque
+data:
+  HF_TOKEN: ${HF_TOKEN_BASE64}

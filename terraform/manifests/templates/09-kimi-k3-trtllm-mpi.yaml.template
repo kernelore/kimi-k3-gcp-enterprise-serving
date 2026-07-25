@@ -1,0 +1,213 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-kimi-k3-weights-rox
+spec:
+  storageClassName: ""
+  capacity:
+    storage: 2000Gi
+  accessModes:
+    - ReadOnlyMany
+  mountOptions:
+    - nouuid
+    - ro
+    - norecovery
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: projects/${PROJECT_ID}/zones/${ZONE}/disks/kimi-k3-weights-rox
+    fsType: xfs
+    readOnly: true
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-kimi-k3-weights-rox
+  namespace: llm-serving
+spec:
+  storageClassName: ""
+  volumeName: pv-kimi-k3-weights-rox
+  accessModes:
+    - ReadOnlyMany
+  resources:
+    requests:
+      storage: 2000Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kimi-k3-workers-headless
+  namespace: llm-serving
+spec:
+  clusterIP: None
+  selector:
+    app: kimi-k3-serving
+  ports:
+  - port: 2222
+    name: mpi-ring
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kimi-k3-serving-svc
+  namespace: llm-serving
+  annotations:
+    networking.gke.io/load-balancer-type: "Internal"
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http-api
+  selector:
+    app: kimi-k3-serving
+    apps.kubernetes.io/pod-index: "0"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kimi-k3-serving
+  namespace: llm-serving
+spec:
+  replicas: 2
+  serviceName: kimi-k3-workers-headless
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: kimi-k3-serving
+  template:
+    metadata:
+      labels:
+        app: kimi-k3-serving
+        engine: trtllm
+      annotations:
+        networking.gke.io/default-interface: 'eth0'
+        networking.gke.io/interfaces: |
+          [
+            {"interfaceName":"eth0","network":"default"},
+            {"interfaceName":"eth2","network":"rdma-0"},
+            {"interfaceName":"eth3","network":"rdma-1"},
+            {"interfaceName":"eth4","network":"rdma-2"},
+            {"interfaceName":"eth5","network":"rdma-3"},
+            {"interfaceName":"eth6","network":"rdma-4"},
+            {"interfaceName":"eth7","network":"rdma-5"},
+            {"interfaceName":"eth8","network":"rdma-6"},
+            {"interfaceName":"eth9","network":"rdma-7"}
+          ]
+    spec:
+      terminationGracePeriodSeconds: 120
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-b200
+        cloud.google.com/gke-spot: "true"
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: trtllm-mpi-node
+        image: ${SERVING_IMAGE}
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_INDEX
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
+        - name: LD_LIBRARY_PATH
+          value: "/usr/local/nvidia/lib64:/usr/local/gib/lib64:/usr/local/nvidia/lib:/usr/local/gib/lib"
+        securityContext:
+          capabilities:
+            add:
+            - IPC_LOCK
+        startupProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - "if [ \"${HOSTNAME##*-}\" = \"0\" ]; then curl -sf http://localhost:8000/health; else pgrep -f \"sshd.*2222\" >/dev/null; fi"
+          periodSeconds: 30
+          failureThreshold: 120
+          timeoutSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - "if [ \"${HOSTNAME##*-}\" = \"0\" ]; then curl -sf http://localhost:8000/health; else pgrep -f \"sshd.*2222\" >/dev/null; fi"
+          periodSeconds: 15
+          failureThreshold: 4
+          timeoutSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - "if [ \"${HOSTNAME##*-}\" = \"0\" ]; then pgrep -f trtllm-serve >/dev/null; else pgrep -f \"sshd.*2222\" >/dev/null; fi"
+          periodSeconds: 60
+          failureThreshold: 10
+          timeoutSeconds: 5
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 20"]
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          source /usr/local/gib/scripts/set_nccl_env.sh 2>/dev/null || true
+          NODE_RANK=${POD_INDEX:-${HOSTNAME##*-}}
+          if [ "${NODE_RANK}" = "0" ]; then
+            echo -e "kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local slots=8\nkimi-k3-serving-1.kimi-k3-workers-headless.llm-serving.svc.cluster.local slots=8" > /tmp/hostfile
+            echo "Starting TRT-LLM MPI leader node rank 0. Launching mpirun across 16 GPUs..."
+            exec mpirun -n 16 --allow-run-as-root --hostfile /tmp/hostfile \
+              --mca plm_rsh_args "-p 2222" \
+              -x LD_LIBRARY_PATH -x NCCL_SOCKET_IFNAME -x PATH \
+              trtllm-llmapi-launch trtllm-serve /mnt/rox/Kimi-K3-2.8T-MXFP4 \
+                --backend pytorch --host 0.0.0.0 --port 8000 \
+                --tp_size "${TRTLLM_TP_SIZE}" --pp_size "${TRTLLM_PP_SIZE}" --ep_size "${TRTLLM_EP_SIZE}" \
+                --kv_cache_free_gpu_memory_fraction 0.90 \
+                --trust_remote_code
+          else
+            echo "Starting TRT-LLM worker node rank ${NODE_RANK}. Waiting for MPI leader connection on port 2222..."
+            exec /usr/sbin/sshd -D -p 2222
+          fi
+        ports:
+        - containerPort: 8000
+          name: http
+        volumeMounts:
+        - name: model-rox
+          mountPath: /mnt/rox
+          readOnly: true
+        - name: dshm
+          mountPath: /dev/shm
+        - name: nvidia-dir
+          mountPath: /usr/local/nvidia
+          readOnly: true
+        - name: gib-dir
+          mountPath: /usr/local/gib
+          readOnly: true
+        resources:
+          limits:
+            nvidia.com/gpu: 8
+      volumes:
+      - name: model-rox
+        persistentVolumeClaim:
+          claimName: pvc-kimi-k3-weights-rox
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 512Gi
+      - name: nvidia-dir
+        hostPath:
+          path: /home/kubernetes/bin/nvidia
+      - name: gib-dir
+        hostPath:
+          path: /home/kubernetes/bin/gib

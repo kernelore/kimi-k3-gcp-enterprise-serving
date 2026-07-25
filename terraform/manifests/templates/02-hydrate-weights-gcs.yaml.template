@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kimi-k3-weight-staging-job
+  namespace: llm-serving
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  template:
+    metadata:
+      labels:
+        app: kimi-k3-weight-staging
+    spec:
+      serviceAccountName: kimi-k3-serving-sa
+      restartPolicy: OnFailure
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-b200
+        cloud.google.com/gke-spot: "true"
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: gcs-hydrator
+        image: google/cloud-sdk:slim
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "======================================================================"
+          set -euo pipefail
+          echo "Starting GCS weight hydration to Hyperdisk ML from ${GCS_WEIGHTS_BUCKET}..."
+          mkdir -p /mnt/staging/Kimi-K3-2.8T-MXFP4
+          gcloud storage rsync -r ${GCS_WEIGHTS_BUCKET}/Kimi-K3-2.8T-MXFP4 /mnt/staging/Kimi-K3-2.8T-MXFP4/
+          echo "Hydration complete."
+        volumeMounts:
+        - name: staging
+          mountPath: /mnt/staging
+      volumes:
+      - name: staging
+        persistentVolumeClaim:
+          claimName: pvc-kimi-k3-weights-staging
+          readOnly: false

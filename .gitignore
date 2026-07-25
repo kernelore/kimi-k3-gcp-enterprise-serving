@@ -1,0 +1,112 @@
+# ==============================================================================
+# Build System & Workspace Tooling Exclusions
+# ==============================================================================
+# Build system files, configuration, and output symlinks
+BUILD
+BUILD.bazel
+WORKSPACE
+WORKSPACE.bazel
+*.bzl
+bazel-*
+bazel-bin/
+bazel-genfiles/
+bazel-out/
+bazel-testlogs/
+
+# Version control metadata & internal sync artifacts
+.hg/
+.jj/
+.p4config
+METADATA
+DIR_METADATA
+OWNERS
+COPYBARA.*
+copybara.*
+*.citc
+*.piper
+*.orig
+*.rej
+
+# Test execution logs and diagnostic artifacts
+sponge_log.*
+tricorder.*
+*.sponge
+TEST_SUMMARY.log
+test_summary.*
+
+# Local scratch space and temporary agent directories
+scratch/
+.system_generated/
+.gemini/
+.jetski/
+.agents/
+
+# ==============================================================================
+# Terraform Directories, Caches, State, and Overrides
+# ==============================================================================
+**/.terraform/*
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# ==============================================================================
+# Dynamically Generated Manifests, Local Environment Config, and Logs
+# ==============================================================================
+terraform/manifests/generated/*
+scripts/config.env
+*.log
+*.tmp
+.*.yaml.*
+
+# ==============================================================================
+# Python Runtime & Byte-Compiled Files
+# ==============================================================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# ==============================================================================
+# Binary Downloads, Archives, and Benchmarking Results
+# ==============================================================================
+kubeconform
+kubeconform-linux-amd64.tar.gz
+benchmarks/*.json
+benchmarks/results/
+*_results*.json
+results/
+workbench/
+
+# ==============================================================================
+# Documentation Exclusions
+# ==============================================================================
+# Exclude auxiliary markdown files from external Git pushes.
+# Only README.md is permitted in external Git source control.
+*.md
+!README.md
+.*md
+.*.md
+.*.md.*
+.*md*
+
+# ==============================================================================
+# Local-Only Test Suite Harness
+# ==============================================================================
+tests/

@@ -1,0 +1,62 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kimi-k3-incluster-benchmark
+  namespace: llm-serving
+  labels:
+    app: kimi-k3-benchmark
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: 3600
+  template:
+    metadata:
+      labels:
+        app: kimi-k3-benchmark
+        env: ${ENV_LABEL}
+    spec:
+      serviceAccountName: kimi-k3-serving-sa
+      restartPolicy: Never
+      nodeSelector:
+        cloud.google.com/gke-nodepool: "np-system"
+      containers:
+      - name: bench-runner
+        image: python:3.11-slim
+        env:
+        - name: GATEWAY_MASTER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: kimi-k3-gateway-secrets
+              key: GATEWAY_MASTER_KEY
+        - name: SERVING_MODEL_NAME
+          value: "${SERVING_MODEL_NAME}"
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          echo "======================================================================"
+          echo "Starting Kimi K3 In-Cluster Benchmark Suite (Soak Endurance Test)..."
+          echo "======================================================================"
+          mkdir -p /tmp/results
+          python3 /workspace/benchmarks/soak_benchmark_kimi_k3.py \
+            --endpoint="http://kimi-k3-gateway-svc:4000/v1/completions" \
+            --api-key="${GATEWAY_MASTER_KEY}" \
+            --model="${SERVING_MODEL_NAME}" \
+            --output="/tmp/results/incluster_soak_results.json"
+          echo "In-cluster benchmark execution finished successfully."
+        volumeMounts:
+        - name: bench-scripts
+          mountPath: /workspace/benchmarks
+      volumes:
+      - name: bench-scripts
+        configMap:
+          name: kimi-k3-benchmark-scripts

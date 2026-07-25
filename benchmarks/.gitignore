@@ -1,0 +1,4 @@
+# Ignore generated benchmark results and logs in root benchmarks dir or scratch
+*.json
+*.log
+results/

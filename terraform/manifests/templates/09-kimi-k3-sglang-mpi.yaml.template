@@ -1,0 +1,251 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-kimi-k3-weights-rox
+spec:
+  storageClassName: ""
+  capacity:
+    storage: 2000Gi
+  accessModes:
+    - ReadOnlyMany
+  mountOptions:
+    - nouuid
+    - ro
+    - norecovery
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: projects/${PROJECT_ID}/zones/${ZONE}/disks/kimi-k3-weights-rox
+    fsType: xfs
+    readOnly: true
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-kimi-k3-weights-rox
+  namespace: llm-serving
+spec:
+  storageClassName: ""
+  volumeName: pv-kimi-k3-weights-rox
+  accessModes:
+    - ReadOnlyMany
+  resources:
+    requests:
+      storage: 2000Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kimi-k3-workers-headless
+  namespace: llm-serving
+spec:
+  clusterIP: None
+  selector:
+    app: kimi-k3-serving
+  ports:
+  - port: 5000
+    name: dist-init
+  - port: 2222
+    name: mpi-ring
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kimi-k3-serving-svc
+  namespace: llm-serving
+  annotations:
+    networking.gke.io/load-balancer-type: "Internal"
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http-api
+  selector:
+    app: kimi-k3-serving
+    apps.kubernetes.io/pod-index: "0"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kimi-k3-serving
+  namespace: llm-serving
+spec:
+  replicas: 2
+  serviceName: kimi-k3-workers-headless
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: kimi-k3-serving
+  template:
+    metadata:
+      labels:
+        app: kimi-k3-serving
+        engine: sglang
+      annotations:
+        networking.gke.io/default-interface: 'eth0'
+        networking.gke.io/interfaces: |
+          [
+            {"interfaceName":"eth0","network":"default"},
+            {"interfaceName":"eth2","network":"rdma-0"},
+            {"interfaceName":"eth3","network":"rdma-1"},
+            {"interfaceName":"eth4","network":"rdma-2"},
+            {"interfaceName":"eth5","network":"rdma-3"},
+            {"interfaceName":"eth6","network":"rdma-4"},
+            {"interfaceName":"eth7","network":"rdma-5"},
+            {"interfaceName":"eth8","network":"rdma-6"},
+            {"interfaceName":"eth9","network":"rdma-7"}
+          ]
+    spec:
+      terminationGracePeriodSeconds: 120
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-b200
+        cloud.google.com/gke-spot: "true"
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: sglang-mpi-node
+        image: ${SERVING_IMAGE}
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_INDEX
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
+        - name: LD_LIBRARY_PATH
+          value: "/usr/local/nvidia/lib64:/usr/local/gib/lib64:/usr/local/nvidia/lib:/usr/local/gib/lib"
+        - name: SGLANG_TP_SIZE
+          value: "${SGLANG_TP_SIZE}"
+        - name: SGLANG_PP_SIZE
+          value: "${SGLANG_PP_SIZE}"
+        - name: SGLANG_EP_SIZE
+          value: "${SGLANG_EP_SIZE}"
+        - name: SGLANG_PORT
+          value: "${SGLANG_PORT}"
+        - name: SGLANG_MEM_FRACTION_STATIC
+          value: "${SGLANG_MEM_FRACTION_STATIC}"
+        - name: SGLANG_SCHEDULE_POLICY
+          value: "${SGLANG_SCHEDULE_POLICY}"
+        - name: SGLANG_QUANTIZATION
+          value: "${SGLANG_QUANTIZATION}"
+        - name: SGLANG_ENABLE_TORCH_COMPILE
+          value: "${SGLANG_ENABLE_TORCH_COMPILE}"
+        - name: SGLANG_ATTENTION_BACKEND
+          value: "${SGLANG_ATTENTION_BACKEND}"
+        securityContext:
+          capabilities:
+            add:
+            - IPC_LOCK
+        startupProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - "if [ \"${HOSTNAME##*-}\" = \"0\" ]; then curl -sf http://localhost:8000/health; else pgrep -f sglang.launch_server >/dev/null; fi"
+          periodSeconds: 30
+          failureThreshold: 120
+          timeoutSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - "if [ \"${HOSTNAME##*-}\" = \"0\" ]; then curl -sf http://localhost:8000/health; else pgrep -f sglang.launch_server >/dev/null; fi"
+          periodSeconds: 15
+          failureThreshold: 4
+          timeoutSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - "pgrep -f sglang.launch_server >/dev/null"
+          periodSeconds: 60
+          failureThreshold: 10
+          timeoutSeconds: 5
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 20"]
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -euo pipefail
+          source /usr/local/gib/scripts/set_nccl_env.sh 2>/dev/null || true
+          NODE_RANK=${POD_INDEX:-${HOSTNAME##*-}}
+          LEADER_HOST="${LEADER_ADDR}:5000"
+          echo "Starting SGLang worker node rank ${NODE_RANK} connecting to leader ${LEADER_HOST}..."
+          EXTRA_ARGS=""
+          if [ -n "${SGLANG_QUANTIZATION}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --quantization ${SGLANG_QUANTIZATION}"
+          fi
+          if [ "${SGLANG_ENABLE_TORCH_COMPILE}" = "true" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --enable-torch-compile"
+          fi
+          if [ -n "${SGLANG_ATTENTION_BACKEND}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --attention-backend ${SGLANG_ATTENTION_BACKEND}"
+          fi
+          # DAY-0: --reasoning-parser <parser_name>
+          # DAY-0: --tool-call-parser <parser_name>
+          exec python3 -m sglang.launch_server \
+            --model-path /mnt/rox/Kimi-K3-2.8T-MXFP4 \
+            --dist-init-addr "${LEADER_HOST}" \
+            --nnodes 2 \
+            --node-rank "${NODE_RANK}" \
+            --port "${SGLANG_PORT}" \
+            --host 0.0.0.0 \
+            --trust-remote-code \
+            --enable-metrics \
+            --context-length 131072 \
+            --tp-size "${SGLANG_TP_SIZE}" \
+            --pp-size "${SGLANG_PP_SIZE}" \
+            --ep-size "${SGLANG_EP_SIZE}" \
+            --mem-fraction-static "${SGLANG_MEM_FRACTION_STATIC}" \
+            --schedule-policy "${SGLANG_SCHEDULE_POLICY}" \
+            ${EXTRA_ARGS}
+        ports:
+        - containerPort: 8000
+          name: http
+        - containerPort: 5000
+          name: dist-init
+        volumeMounts:
+        - name: model-rox
+          mountPath: /mnt/rox
+          readOnly: true
+        - name: dshm
+          mountPath: /dev/shm
+        - name: nvidia-dir
+          mountPath: /usr/local/nvidia
+          readOnly: true
+        - name: gib-dir
+          mountPath: /usr/local/gib
+          readOnly: true
+        resources:
+          limits:
+            nvidia.com/gpu: 8
+      volumes:
+      - name: model-rox
+        persistentVolumeClaim:
+          claimName: pvc-kimi-k3-weights-rox
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 512Gi
+      - name: nvidia-dir
+        hostPath:
+          path: /home/kubernetes/bin/nvidia
+      - name: gib-dir
+        hostPath:
+          path: /home/kubernetes/bin/gib

@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: local-nvme-raid-formatter
+  namespace: kube-system
+  labels:
+    app: local-nvme-raid0
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  selector:
+    matchLabels:
+      app: local-nvme-raid0
+  template:
+    metadata:
+      labels:
+        app: local-nvme-raid0
+    spec:
+      hostPID: true
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-b200
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: formatter
+        image: google/cloud-sdk:slim
+        securityContext:
+          privileged: true
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          echo "Checking for local NVMe SSD drives on B200 host..."
+          nsenter -t 1 -m -u -i -n -- bash -c '
+            set -euo pipefail
+            if ls /dev/disk/by-id/google-local-nvme-ssd-* >/dev/null 2>&1; then
+              echo "Local NVMe SSD drives matching /dev/disk/by-id/google-local-nvme-ssd-* detected."
+              mkdir -p /mnt/disks/local-scratch
+              if ! mountpoint -q /mnt/disks/local-scratch; then
+                if [ ! -e /dev/md0 ]; then
+                  DEVICES=$(ls -1 /dev/disk/by-id/google-local-nvme-ssd-*)
+                  DEV_COUNT=$(echo "$DEVICES" | wc -l)
+                  if ! mdadm --detail /dev/md0 >/dev/null 2>&1; then
+                    mdadm --assemble /dev/md0 $DEVICES 2>/dev/null || mdadm --create /dev/md0 --run --level=0 --force --raid-devices=$DEV_COUNT $DEVICES
+                    mkfs.xfs -f /dev/md0
+                  fi
+                fi
+                echo "Mounting /dev/md0 to /mnt/disks/local-scratch..."
+                mount -o defaults,noatime,nodiratime /dev/md0 /mnt/disks/local-scratch || mount /dev/md0 /mnt/disks/local-scratch
+                chmod 777 /mnt/disks/local-scratch
+              fi
+              touch /mnt/disks/local-scratch/.mounted
+              echo "RAID-0 NVMe scratch volume ready and mounted at /mnt/disks/local-scratch."
+            else
+              echo "No local NVMe SSDs matching /dev/disk/by-id/google-local-nvme-ssd-* found on this node."
+            fi
+          '
+          echo "RAID-0 NVMe scratch volume initialized. Sleeping indefinitely..."
+          sleep infinity
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
