@@ -58,7 +58,7 @@ def main():
     trtllm_ver = get_engine_version("trtllm", root=Path(__file__).resolve().parent.parent)
     engines = {
         "sglang": {"expected_ver_norm": sglang_ver, "expected_img_sub": "sglang-blackwell", "expected_ver_raw_options": [f"v{sglang_ver}", sglang_ver]},
-        "trtllm": {"expected_ver_norm": trtllm_ver, "expected_img_sub": "trtllm-blackwell", "expected_ver_raw_options": [f"v{trtllm_ver}", trtllm_ver, "0.16.0"]}
+        "trtllm": {"expected_ver_norm": trtllm_ver, "expected_img_sub": "trtllm-blackwell", "expected_ver_raw_options": [f"v{trtllm_ver}", trtllm_ver]}
     }
     suites = ["standard", "massive", "soak", "saturation", "prefill"]
 
@@ -101,8 +101,6 @@ def main():
             norm_ver = normalize_version(ver)
             if norm_ver != rules["expected_ver_norm"] and ver not in rules["expected_ver_raw_options"]:
                 errors.append(f"[{eng}/{s}] Version mismatch: found '{ver}' (norm '{norm_ver}'), expected norm '{rules['expected_ver_norm']}' or {rules['expected_ver_raw_options']}")
-            if ver not in rules["expected_ver_raw_options"] and norm_ver != rules["expected_ver_norm"]:
-                errors.append(f"[{eng}/{s}] Unexpected version string: '{ver}'")
 
             # Check image
             if rules["expected_img_sub"] not in img:
