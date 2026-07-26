@@ -28,7 +28,7 @@ spec:
         effect: "NoSchedule"
       containers:
       - name: formatter
-        image: google/cloud-sdk:slim
+        image: google/cloud-sdk:500.0.0-slim
         securityContext:
           privileged: true
         command: ["/bin/bash", "-c"]

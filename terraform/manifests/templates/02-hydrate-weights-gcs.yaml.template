@@ -26,7 +26,7 @@ spec:
         effect: "NoSchedule"
       containers:
       - name: gcs-hydrator
-        image: google/cloud-sdk:slim
+        image: google/cloud-sdk:500.0.0-slim
         resources:
           requests:
             cpu: "16"
