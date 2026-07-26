@@ -28,8 +28,9 @@ variable "hyperdisk_ml_size_gb" {
 }
 
 variable "hyperdisk_ml_throughput_mibps" {
-  description = "Provisioned throughput in MiB/s for Hyperdisk ML staging volume"
+  description = "Provisioned throughput (MiB/s) for the Hyperdisk ML weights volume. Volume max is MIN(2097152, 1600 * size_gib). The binding limit is the regional HDML_TOTAL_THROUGHPUT quota (30720 MiB/s), so 24576 leaves headroom for one concurrent stack. Throughput is shared across all attached instances and can only be modified once every 6 hours, so it must be chosen at creation time. If quota is unavailable, 6144 is a known-good fallback."
   type        = number
+  default     = 24576
 }
 
 variable "owner_label" {

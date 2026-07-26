@@ -27,6 +27,13 @@ spec:
       containers:
       - name: gcs-hydrator
         image: google/cloud-sdk:slim
+        resources:
+          requests:
+            cpu: "16"
+            memory: "32Gi"
+          limits:
+            cpu: "32"
+            memory: "64Gi"
         command: ["/bin/sh", "-c"]
         args:
         - |

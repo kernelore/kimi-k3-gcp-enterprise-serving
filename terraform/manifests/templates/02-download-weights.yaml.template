@@ -29,11 +29,11 @@ spec:
         image: ${SERVING_IMAGE}
         resources:
           requests:
-            memory: "16Gi"
-            cpu: "4"
+            cpu: "32"
+            memory: "128Gi"
           limits:
-            memory: "28Gi"
-            cpu: "7"
+            cpu: "64"
+            memory: "256Gi"
         command: ["/bin/bash", "-c"]
         args:
         - |
@@ -48,7 +48,7 @@ spec:
           token = os.environ.get('HF_TOKEN')
           dest = '/mnt/staging/Kimi-K3-2.8T-MXFP4'
           print(f'Downloading {repo_id} to {dest}...')
-          snapshot_download(repo_id=repo_id, local_dir=dest, token=token)
+          snapshot_download(repo_id=repo_id, local_dir=dest, token=token, max_workers=32)
 
           idx_path = os.path.join(dest, 'model.safetensors.index.json')
           if os.path.isfile(idx_path):
@@ -56,18 +56,22 @@ spec:
                   data = json.load(f)
               weight_map = data.get('weight_map', {})
               files = set(weight_map.values())
+              total_size = 0
               for fname in files:
                   fpath = os.path.join(dest, fname)
                   if not os.path.isfile(fpath):
                       raise RuntimeError(f'Missing required weight shard: {fname}')
-              print(f'Verified all {len(files)} safetensors weight shards referenced in index.')
+                  total_size += os.path.getsize(fpath)
+              print(f'Verified all {len(files)} safetensors weight shards referenced in index. Total size: {total_size} bytes ({total_size / (1024**3):.2f} GiB)')
           else:
               shards = glob.glob(os.path.join(dest, '*.safetensors'))
               if not shards:
                   raise RuntimeError('No *.safetensors files found in download destination.')
-              print(f'Verified {len(shards)} safetensors files present.')
+              total_size = 0
+              for fpath in shards:
+                  total_size += os.path.getsize(fpath)
+              print(f'Verified {len(shards)} safetensors files present. Total size: {total_size} bytes ({total_size / (1024**3):.2f} GiB)')
           "
-          du -sh /mnt/staging/Kimi-K3-2.8T-MXFP4
           echo "${MODEL_REPO_ID} weights successfully downloaded to Hyperdisk ML."
         env:
         - name: HF_TOKEN
