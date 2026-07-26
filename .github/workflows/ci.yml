@@ -72,7 +72,7 @@ jobs:
         kubeconform -strict -summary -schema-location default -skip CustomMetricsStackdriverAdapter,PodMonitoring,GKENetworkParamSet,Network terraform/manifests/generated/*.yaml
     - name: Render Manifests & Validate (SGLang Engine)
       run: |
-        export INFERENCE_ENGINE="sglang" INFERENCE_SERVER_LABEL="sglang" SERVING_IMAGE="lmsysorg/sglang:latest"
+        export INFERENCE_ENGINE="sglang" INFERENCE_SERVER_LABEL="sglang" SERVING_IMAGE="lmsysorg/sglang:v0.5.16-cu130"
         for t in terraform/manifests/templates/*.template; do
           out="terraform/manifests/generated/$(basename "${t}" .template)"
           envsubst < "${t}" > "${out}"
