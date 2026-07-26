@@ -2,22 +2,26 @@
 # ==============================================================================
 # DAY-1 SWEEP MATRIX (Pre-launch Parameter Grid for Monday Benchmark Execution)
 # ==============================================================================
-# 1. Concurrency Levels: 1, 2, 4, 8, 16, 32, 64, 128
-# 2. Input / Output Token Pairs: (128, 128), (512, 512), (2048, 512), (8192, 1024)
-# 3. Target Metrics per Cell:
+# 1. Engine: sglang, trtllm
+# 2. Parallelism: TP=16 / PP=1, TP=8 / PP=2
+# 3. Concurrency Levels: 1, 8, 32, 128
+# 4. ISL / OSL (Input/Output Token Pairs): 1k/1k, 8k/1k, 32k/2k, 128k/2k
+# 5. Target Metrics per Cell:
 #    - TTFT (p50, p95, p99)
 #    - TPOT (p50, p95, p99)
-#    - Aggregate Throughput (tok/s)
-#    - Request Success Rate
+#    - Aggregate output throughput (tok/s)
+#    - Output tok/s per GPU (aggregate divided by 16.0)
+#    - Peak KV-cache utilization
+#    - Request success rate
 #    - Leader GPU Memory Utilization Percentage
-# 4. Hardware Envelope Reminder: Do NOT modify SGLANG_TP_SIZE (16) or EP_SIZE (16)
-#    between cells — those are fixed by the 16-GPU hardware envelope.
+# 6. Parallelism Invariants Note: EP_SIZE must equal the total GPU count (16) in
+#    every cell, and TP * PP must equal 16 — those are the real invariants.
 # ==============================================================================
 """Kimi K3 (2.8T MXFP4) Saturation & Throughput-Ceiling Sweep
 
 Measures peak GPU-generated aggregate throughput, per-user tok/s, TTFT/TPOT
 percentiles, and the interactive SLA knee across concurrency levels c in [1, 8,
-16, 32, 64].
+32, 128].
 Connects directly to TensorRT-LLM on port 8000 with 16-character cryptographic
 nonce injection to guarantee 0% cache hit rate.
 Normalizes per-GPU throughput by dividing aggregate tokens/sec by 16.0 (16x B200
