@@ -33,19 +33,15 @@ echo "    [OK] Check 1 passed: Zero legacy model/engine matches found."
 PASSED=$((PASSED + 1))
 
 # ------------------------------------------------------------------------------
-# Check 2: Pinned kubectl tag in 01-rbac-wif.yaml.template (no :slim)
+# Check 2: Pinned image tags across all templates (no unpinned :slim or :latest)
 # ------------------------------------------------------------------------------
-echo "--> Check 2: Verifying terraform/manifests/templates/01-rbac-wif.yaml.template uses pinned kubectl tag..."
-RBAC_TEMPLATE="terraform/manifests/templates/01-rbac-wif.yaml.template"
-if [ ! -f "${RBAC_TEMPLATE}" ]; then
-  echo "ERROR: Check 2 failed: ${RBAC_TEMPLATE} not found!" >&2
+echo "--> Check 2: Verifying terraform/manifests/templates/*.template use pinned image tags..."
+if grep -rnE 'image:[[:space:]]*[^[:space:]]+(:slim|:latest)([[:space:]]|$|"'\'')' terraform/manifests/templates/ \
+   | grep -vE 'python:[0-9]+\.[0-9]+-slim|\$\{SERVING_IMAGE\}'; then
+  echo "ERROR: Check 2 failed: Found unpinned ':slim' or ':latest' tag in templates!" >&2
   exit 1
 fi
-if grep -q ":slim" "${RBAC_TEMPLATE}"; then
-  echo "ERROR: Check 2 failed: Found unpinned ':slim' tag in ${RBAC_TEMPLATE}!" >&2
-  exit 1
-fi
-echo "    [OK] Check 2 passed: No unpinned ':slim' tag found in RBAC template."
+echo "    [OK] Check 2 passed: All templates use pinned image tags."
 PASSED=$((PASSED + 1))
 
 # ------------------------------------------------------------------------------
