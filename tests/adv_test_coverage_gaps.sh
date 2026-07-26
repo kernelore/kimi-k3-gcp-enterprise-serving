@@ -1,13 +1,16 @@
 #!/bin/bash
-# shellcheck disable=SC1091,SC2155
+# shellcheck disable=SC1091
 # ==============================================================================
 # adv_test_coverage_gaps.sh - Wrapper for Tier 5 Adversarial Test Suite
 # ==============================================================================
 # Restored to eliminate VCS missing file anomaly and execute test_cases_t5.sh.
 # ==============================================================================
 set -euo pipefail
+
+# Define project root and source helpers
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export PROJECT_ROOT
 
 # shellcheck source=./test_helpers.sh
 source "${SCRIPT_DIR}/test_helpers.sh"

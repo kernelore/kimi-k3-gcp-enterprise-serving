@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC1091,SC2155
+# shellcheck disable=SC1091
 # ==============================================================================
 # test_e2e_kimi_k3.sh - Master E2E Test Suite Runner for Kimi K3 Architecture
 # ==============================================================================
@@ -7,8 +7,10 @@
 # ==============================================================================
 set -euo pipefail
 
+# Define project root and source helpers
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export PROJECT_ROOT
 
 # Source test helpers
 # shellcheck source=./test_helpers.sh
