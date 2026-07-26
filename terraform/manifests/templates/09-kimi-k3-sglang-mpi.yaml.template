@@ -39,6 +39,7 @@ metadata:
   namespace: llm-serving
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
   selector:
     app: kimi-k3-serving
   ports:
@@ -137,6 +138,8 @@ spec:
           value: "${SGLANG_TP_SIZE}"
         - name: SGLANG_PP_SIZE
           value: "${SGLANG_PP_SIZE}"
+        - name: SGLANG_PP_LAYER_PARTITION
+          value: "38,40"
         - name: SGLANG_EP_SIZE
           value: "${SGLANG_EP_SIZE}"
         - name: SGLANG_PORT
@@ -202,6 +205,15 @@ spec:
           echo "--- Resolved NCCL environment ---"
           env | grep -E '^NCCL_' | sort
           echo "---------------------------------"
+          echo "Populating peer short hostnames in /etc/hosts..."
+          while ! getent hosts kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local >/dev/null || ! getent hosts kimi-k3-serving-1.kimi-k3-workers-headless.llm-serving.svc.cluster.local >/dev/null; do
+            echo "Waiting for peer DNS A-records..."
+            sleep 2
+          done
+          IP0=$(getent hosts kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local | awk '{print $1}')
+          IP1=$(getent hosts kimi-k3-serving-1.kimi-k3-workers-headless.llm-serving.svc.cluster.local | awk '{print $1}')
+          echo -e "${IP0}\tkimi-k3-serving-0\n${IP1}\tkimi-k3-serving-1" >> /etc/hosts
+          cat /etc/hosts | tail -n 2
           NODE_RANK=${POD_INDEX:-${HOSTNAME##*-}}
           LEADER_HOST="${LEADER_ADDR}:5000"
           echo "Starting SGLang worker node rank ${NODE_RANK} connecting to leader ${LEADER_HOST}..."
@@ -210,7 +222,7 @@ spec:
             EXTRA_ARGS="${EXTRA_ARGS} --quantization ${SGLANG_QUANTIZATION}"
           fi
           if [ "${SGLANG_ENABLE_TORCH_COMPILE}" = "true" ]; then
-            EXTRA_ARGS="${EXTRA_ARGS} --enable-torch-compile"
+            EXTRA_ARGS="${EXTRA_ARGS} --enable-torch-compile --cuda-graph-backend-decode=disabled --disable-cuda-graph"
           fi
           if [ -n "${SGLANG_ATTENTION_BACKEND}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --attention-backend ${SGLANG_ATTENTION_BACKEND}"

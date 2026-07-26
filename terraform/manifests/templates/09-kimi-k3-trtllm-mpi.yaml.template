@@ -39,6 +39,7 @@ metadata:
   namespace: llm-serving
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
   selector:
     app: kimi-k3-serving
   ports:
@@ -179,6 +180,15 @@ spec:
           echo "--- Resolved NCCL environment ---"
           env | grep -E '^NCCL_' | sort
           echo "---------------------------------"
+          echo "Populating peer short hostnames in /etc/hosts..."
+          while ! getent hosts kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local >/dev/null || ! getent hosts kimi-k3-serving-1.kimi-k3-workers-headless.llm-serving.svc.cluster.local >/dev/null; do
+            echo "Waiting for peer DNS A-records..."
+            sleep 2
+          done
+          IP0=$(getent hosts kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local | awk '{print $1}')
+          IP1=$(getent hosts kimi-k3-serving-1.kimi-k3-workers-headless.llm-serving.svc.cluster.local | awk '{print $1}')
+          echo -e "${IP0}\tkimi-k3-serving-0\n${IP1}\tkimi-k3-serving-1" >> /etc/hosts
+          cat /etc/hosts | tail -n 2
           NODE_RANK=${POD_INDEX:-${HOSTNAME##*-}}
           if [ "${NODE_RANK}" = "0" ]; then
             echo -e "kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local slots=8\nkimi-k3-serving-1.kimi-k3-workers-headless.llm-serving.svc.cluster.local slots=8" > /tmp/hostfile
