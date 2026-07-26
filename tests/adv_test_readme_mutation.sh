@@ -18,7 +18,8 @@ echo "==========================================================================
 echo "Adversarial Proof: README Mutation Rejection & Clean Revert"
 echo "=============================================================================="
 
-if compgen -G "benchmarks/results/*/*.json" > /dev/null; then
+RESULTS_DIR="${COMPARISON_RESULTS_DIR:-benchmarks/results}"
+if compgen -G "${RESULTS_DIR}/*/*.json" > /dev/null; then
   # Ensure README.md is synchronized with generate_comparison.py before starting check
   python3 benchmarks/generate_comparison.py >/dev/null 2>&1
   git add README.md >/dev/null 2>&1 || true

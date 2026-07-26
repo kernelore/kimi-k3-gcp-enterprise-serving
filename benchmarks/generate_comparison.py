@@ -369,10 +369,13 @@ def generate_markdown(sglang: dict | None, trtllm: dict | None) -> str:
         img = meta.get("image", "unknown").split("/")[-1]
         ts_list = [f"{s.capitalize()} ({get_metadata(eng_data[s]).get('run_timestamp', 'N/A')})" for s in ["standard", "massive", "soak", "saturation", "prefill"]]
 
+        other_eng_name = "NVIDIA TensorRT-LLM" if eng_name == "sglang" else "SGLang"
         lines = []
         lines.append(f"### Live Benchmark Performance ({heading_name})")
         lines.append("")
         lines.append("All benchmarks were executed on the live GKE serving cluster with identical hardware allocations (16x NVIDIA B200 HGX across 2 nodes, GKE `a4-highgpu-8g` node pool, NVLink 5th-gen, RoCEv2 GPUDirect RDMA fabric) and identical model weights mounted read-only from a shared Hyperdisk ML volume. The engine served via the LiteLLM Enterprise Gateway on port 4000 (Standard, Massive, Soak) and direct container port 8000 (Saturation Sweep, Prefill Ingestion).")
+        lines.append("")
+        lines.append(f"**Note:** {other_eng_name} was not benchmarked in this run, so comparative delta columns and selection guidance are omitted.")
         lines.append("")
         lines.append("#### Methodology & Provenance Protocol")
         lines.append("* **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000, utilizing unique prompt sets and radix cache flushing to ensure 0% prefix-cache hits (measuring true cold decoding and prefill throughput).")
