@@ -44,37 +44,32 @@ jobs:
       run: |
         python3 -m py_compile benchmarks/*.py scripts/*.py
 
-  manifest-validation:
+  manifests:
     name: Dual-Engine Manifest Rendering & Kubeconform
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        engine: [sglang, trtllm]
     steps:
-    - uses: actions/checkout@v4
-    - name: Install Kubeconform & gettext
-      run: |
-        sudo apt-get update && sudo apt-get install -y gettext-base curl
-        curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
-        sudo mv kubeconform /usr/local/bin/
-    - name: Render Manifests & Validate (TensorRT-LLM Engine)
-      run: |
-        export PROJECT_ID="ci-test-project" REGION="europe-north1" ZONE="europe-north1-b"
-        export CLUSTER_NAME="ci-cluster" OWNER_LABEL="ci-user" TTL_LABEL="24h" ENV_LABEL="ci-prod"
-        export HF_TOKEN="ci-token" MODEL_REPO_ID="moonshotai/Kimi-K3-2.8T-MXFP4" SERVING_MODEL_NAME="kimi-k3-2.8t-mxfp4"
-        export INFERENCE_ENGINE="trtllm" INFERENCE_SERVER_LABEL="tensorrt-llm" SERVING_IMAGE="nvcr.io/nvidia/tensorrt-llm/release:1.2.1-py3"
-        export TRTLLM_TP_SIZE="8" TRTLLM_PP_SIZE="2" TRTLLM_EP_SIZE="8" SGLANG_TP_SIZE="8" SGLANG_PP_SIZE="2" SGLANG_EP_SIZE="8"
-        export HYPERDISK_ML_SIZE_GB="2000" GCS_WEIGHTS_BUCKET="gs://ci-bucket" GATEWAY_MASTER_KEY="ci-key"
-        export DB_CONNECTION_NAME="ci-db" DB_PASSWORD="ci-pass" REDIS_HOST="10.0.0.1" REDIS_PASSWORD="ci-pass" REDIS_PASSWORD_ENCODED="Y2ktcGFzcw=="
-        export TRTLLM_VIP="10.0.0.100" GPU_MAX_NODES="2" SERVING_REPLICAS="1" NODES_PER_REPLICA="2" HPA_QUEUE_METRIC="queue" HPA_RUNNING_METRIC="running"
-        mkdir -p terraform/manifests/generated
-        for t in terraform/manifests/templates/*.template; do
-          out="terraform/manifests/generated/$(basename "${t}" .template)"
-          envsubst < "${t}" > "${out}"
-        done
-        kubeconform -strict -summary -schema-location default -skip CustomMetricsStackdriverAdapter,PodMonitoring,GKENetworkParamSet,Network terraform/manifests/generated/*.yaml
-    - name: Render Manifests & Validate (SGLang Engine)
-      run: |
-        export INFERENCE_ENGINE="sglang" INFERENCE_SERVER_LABEL="sglang" SERVING_IMAGE="lmsysorg/sglang:v0.5.16-cu130"
-        for t in terraform/manifests/templates/*.template; do
-          out="terraform/manifests/generated/$(basename "${t}" .template)"
-          envsubst < "${t}" > "${out}"
-        done
-        kubeconform -strict -summary -schema-location default -skip CustomMetricsStackdriverAdapter,PodMonitoring,GKENetworkParamSet,Network terraform/manifests/generated/*.yaml
+      - uses: actions/checkout@v4
+      - name: Install Kubeconform & gettext
+        run: |
+          sudo apt-get update && sudo apt-get install -y gettext-base curl
+          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+      - name: Render Workload Manifests
+        env:
+          INFERENCE_ENGINE: ${{ matrix.engine }}
+        run: |
+          cp scripts/config.env.example scripts/config.env
+          sed -i 's|export PROJECT_ID="YOUR_PROJECT_ID"|export PROJECT_ID="ci-test"|' scripts/config.env
+          ./scripts/03_deploy_workloads.sh --render-only
+      - name: Assert no unintended unrendered variables
+        run: |
+          grep -rhoE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' terraform/manifests/generated/ \
+            | tr -d '${}' | sort -u > /tmp/survivors.txt
+          diff -u terraform/manifests/.render-exceptions /tmp/survivors.txt
+      - name: Validate with Kubeconform
+        run: |
+          kubeconform -strict -summary -schema-location default -skip CustomMetricsStackdriverAdapter,PodMonitoring,GKENetworkParamSet,Network terraform/manifests/generated/*.yaml
