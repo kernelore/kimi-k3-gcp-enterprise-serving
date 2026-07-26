@@ -45,23 +45,26 @@ echo "    [OK] Check 2 passed: All templates use pinned image tags."
 PASSED=$((PASSED + 1))
 
 # ------------------------------------------------------------------------------
-# Check 3: Pinned init container SDK and engine names in scripts/03_deploy_workloads.sh
+# Check 3: Pinned engine Dockerfiles and deploy script references
 # ------------------------------------------------------------------------------
-echo "--> Check 3: Verifying pinned sdk and engine names in scripts/03_deploy_workloads.sh..."
-DEPLOY_SCRIPT="scripts/03_deploy_workloads.sh"
-if [ ! -f "${DEPLOY_SCRIPT}" ]; then
-  echo "ERROR: Check 3 failed: ${DEPLOY_SCRIPT} not found!" >&2
+echo "--> Check 3: Verifying pinned engine Dockerfiles and sdk pin in scripts/03_deploy_workloads.sh..."
+if ! grep -q "^FROM lmsysorg/sglang:v0.5.16-cu130" docker/Dockerfile.sglang; then
+  echo "ERROR: Check 3 failed: docker/Dockerfile.sglang is not pinned to lmsysorg/sglang:v0.5.16-cu130!" >&2
   exit 1
 fi
-if ! grep -q "500.0.0-slim" "${DEPLOY_SCRIPT}"; then
-  echo "ERROR: Check 3 failed: google/cloud-sdk is not pinned to 500.0.0-slim in ${DEPLOY_SCRIPT}!" >&2
+if ! grep -q "^FROM nvcr.io/nvidia/tensorrt-llm/release:1.2.1" docker/Dockerfile; then
+  echo "ERROR: Check 3 failed: docker/Dockerfile is not pinned to nvcr.io/nvidia/tensorrt-llm/release:1.2.1!" >&2
   exit 1
 fi
-if ! grep -q "sglang-blackwell" "${DEPLOY_SCRIPT}" || ! grep -q "trtllm-blackwell" "${DEPLOY_SCRIPT}"; then
-  echo "ERROR: Check 3 failed: sglang/trtllm image names not found in ${DEPLOY_SCRIPT}!" >&2
+if grep -rnE '^FROM[[:space:]]+[^[:space:]]+(:latest|:slim)([[:space:]]|$)' docker/; then
+  echo "ERROR: Check 3 failed: Found unpinned ':latest' or ':slim' base image in docker/!" >&2
   exit 1
 fi
-echo "    [OK] Check 3 passed: SDK and engine image names are properly configured."
+if ! grep -q "500.0.0-slim" scripts/03_deploy_workloads.sh || ! grep -q "sglang-blackwell" scripts/03_deploy_workloads.sh || ! grep -q "trtllm-blackwell" scripts/03_deploy_workloads.sh; then
+  echo "ERROR: Check 3 failed: SDK and engine image names not properly configured in scripts/03_deploy_workloads.sh!" >&2
+  exit 1
+fi
+echo "    [OK] Check 3 passed: Dockerfile base images and deploy script references are properly pinned."
 PASSED=$((PASSED + 1))
 
 # ------------------------------------------------------------------------------
