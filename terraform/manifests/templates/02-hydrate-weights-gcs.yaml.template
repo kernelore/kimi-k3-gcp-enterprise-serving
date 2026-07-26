@@ -68,7 +68,7 @@ spec:
               if expected_arch and arch != expected_arch:
                   raise RuntimeError(f'FATAL: Found architecture {arch} but EXPECTED_MODEL_ARCHITECTURE={expected_arch}.')
           else:
-              print('WARNING: config.json not found; skipping architecture check.')
+              raise RuntimeError(f'FATAL: config.json not found in {dest}; cannot verify model architecture.')
           "
           echo "Hydration complete."
         env:

@@ -42,11 +42,38 @@ spec:
           export HF_HUB_ENABLE_HF_TRANSFER=1
           mkdir -p /mnt/staging/Kimi-K3-2.8T-MXFP4
           python3 -c "
-          import os, json, glob
-          from huggingface_hub import snapshot_download
+          import os, json, glob, sys
+          from huggingface_hub import snapshot_download, HfApi
+          from huggingface_hub.utils import RepositoryNotFoundError, GatedRepoError, HfHubHTTPError
           repo_id = os.environ['MODEL_REPO_ID']
           token = os.environ.get('HF_TOKEN')
           dest = '/mnt/staging/Kimi-K3-2.8T-MXFP4'
+          print(f'=== HUGGING FACE PRE-FLIGHT CHECK FOR {repo_id} ===')
+          api = HfApi(token=token)
+          try:
+              info = api.model_info(repo_id, files_metadata=True)
+          except RepositoryNotFoundError:
+              raise RuntimeError(f'FATAL [PRE-FLIGHT]: Repository {repo_id} not found on Hugging Face Hub. Verify MODEL_REPO_ID.')
+          except GatedRepoError:
+              raise RuntimeError(f'FATAL [PRE-FLIGHT]: Repository {repo_id} is gated. The HF account holding HF_TOKEN must accept the model licence on the model page.')
+          except HfHubHTTPError as e:
+              if getattr(e, 'response', None) is not None and getattr(e.response, 'status_code', 0) in (401, 403):
+                  raise RuntimeError(f'FATAL [PRE-FLIGHT]: Authentication or licence access denied (HTTP {e.response.status_code}) for {repo_id}. Ensure HF_TOKEN is valid and licence is accepted.')
+              raise RuntimeError(f'FATAL [PRE-FLIGHT]: HTTP error communicating with Hugging Face Hub for {repo_id}: {e}')
+          except Exception as e:
+              raise RuntimeError(f'FATAL [PRE-FLIGHT]: Failed to query repository info for {repo_id}: {e}')
+          
+          siblings = getattr(info, 'siblings', []) or []
+          st_siblings = [s for s in siblings if getattr(s, 'rfilename', '').endswith('.safetensors')]
+          remote_size = sum(getattr(s, 'size', 0) or 0 for s in st_siblings)
+          remote_gib = remote_size / (1024**3)
+          min_gib = float(os.getenv('MIN_WEIGHTS_GIB', '1000'))
+          print(f'Resolved repo_id: {repo_id}')
+          print(f'Remote .safetensors siblings count: {len(st_siblings)}')
+          print(f'Remote total weight size: {remote_size} bytes ({remote_gib:.2f} GiB) | Required floor: MIN_WEIGHTS_GIB={min_gib:.2f} GiB')
+          if remote_gib < min_gib:
+              raise RuntimeError(f'FATAL [PRE-FLIGHT]: Remote repository {repo_id} total size ({remote_gib:.2f} GiB) is below required floor MIN_WEIGHTS_GIB={min_gib:.2f} GiB. Aborting before download.')
+          print('===========================================================')
           print(f'Downloading {repo_id} to {dest}...')
           snapshot_download(repo_id=repo_id, local_dir=dest, token=token, max_workers=32)
 
@@ -92,7 +119,7 @@ spec:
               if expected_arch and arch != expected_arch:
                   raise RuntimeError(f'FATAL: Found architecture {arch} but EXPECTED_MODEL_ARCHITECTURE={expected_arch}.')
           else:
-              print('WARNING: config.json not found; skipping architecture check.')
+              raise RuntimeError(f'FATAL: config.json not found in {dest}; cannot verify model architecture.')
           "
           echo "${MODEL_REPO_ID} weights successfully downloaded to Hyperdisk ML."
         env:
