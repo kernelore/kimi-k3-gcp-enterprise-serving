@@ -231,6 +231,42 @@ else
   SKIPPED=$((SKIPPED + 1))
 fi
 
+# ------------------------------------------------------------------------------
+# Check 11: NCCL fabric environment parity and RDMA network definitions
+# ------------------------------------------------------------------------------
+echo "--> Check 11: Verifying NCCL fabric environment parity and network definitions..."
+GET_NCCL_KV() {
+  local file="$1"
+  awk '/- name: NCCL_/ { key=$3; getline; val=$2; gsub(/["'\'' ]/, "", val); print key "=" val }' "$file" || true
+  (grep -oE "NCCL_[A-Za-z0-9_]+=[^[:space:]\"'+]+" "$file" 2>/dev/null || true) | tr -d " \"'"
+}
+REF_KV="$(GET_NCCL_KV terraform/manifests/templates/00c-nccl-test-job.yaml.template | sort -u)"
+for tmpl in 09-kimi-k3-sglang-mpi.yaml.template 09-kimi-k3-trtllm-mpi.yaml.template; do
+  TARGET_KV="$(GET_NCCL_KV "terraform/manifests/templates/${tmpl}" | sort -u)"
+  DIFF_OUT="$(comm -23 <(echo "${REF_KV}") <(echo "${TARGET_KV}"))" || true
+  if [ -n "${DIFF_OUT}" ]; then
+    echo "ERROR: Check 11 failed: ${tmpl} is missing or has differing values for NCCL keys from 00c:" >&2
+    echo "${DIFF_OUT}" >&2
+    exit 1
+  fi
+  if grep -q "2>/dev/null || true" "terraform/manifests/templates/${tmpl}"; then
+    echo "ERROR: Check 11 failed: ${tmpl} swallows NCCL preamble with '2>/dev/null || true'!" >&2
+    exit 1
+  fi
+done
+PARAMSET_COUNT="$(grep -c '^kind: GKENetworkParamSet' terraform/manifests/templates/00b-rdma-networks.yaml.template || true)"
+NETWORK_COUNT="$(grep -c '^kind: Network' terraform/manifests/templates/00b-rdma-networks.yaml.template || true)"
+if [ "${PARAMSET_COUNT}" -ne 8 ] || [ "${NETWORK_COUNT}" -ne 8 ]; then
+  echo "ERROR: Check 11 failed: 00b declared ${PARAMSET_COUNT} GKENetworkParamSet and ${NETWORK_COUNT} Network resources (expected 8 each)!" >&2
+  exit 1
+fi
+if (grep -i "mtu" terraform/manifests/templates/00b-rdma-networks.yaml.template 2>/dev/null || true) | grep -qv "8896"; then
+  echo "ERROR: Check 11 failed: Found non-8896 MTU in 00b!" >&2
+  exit 1
+fi
+echo "    [OK] Check 11 passed: NCCL fabric environment parity and RDMA network resources verified."
+PASSED=$((PASSED + 1))
+
 echo "=============================================================================="
 echo "=== SERVING REMEDIATION SUITE: ${PASSED} passed, ${SKIPPED} skipped ==="
 echo "=============================================================================="
