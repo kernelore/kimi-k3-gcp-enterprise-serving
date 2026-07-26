@@ -9,6 +9,7 @@ Verifies all 10 JSON result files in benchmarks/results/{sglang,trtllm}/ to ensu
 """
 
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -39,7 +40,8 @@ def normalize_version(ver: str) -> str:
     return ver
 
 def main():
-    root = Path(__file__).resolve().parent.parent / "benchmarks" / "results"
+    default_root = Path(__file__).resolve().parent.parent / "benchmarks" / "results"
+    root = Path(os.getenv("AUDIT_RESULTS_DIR", default_root))
     if not root.exists() or not any(root.glob("*/*.json")):
         print(f"[SKIP] Results directory {root} is empty or absent (pre-launch state). Skipping benchmark integrity audit.")
         sys.exit(0)
@@ -75,6 +77,9 @@ def main():
             except Exception as e:
                 errors.append(f"Invalid JSON in {fpath}: {e}")
                 continue
+
+            if data.get("dry_run") is True or str(data.get("dry_run", "")).lower() == "true":
+                errors.append(f"[{eng}/{s}] Dry-run contamination: file has top-level dry_run=True")
 
             # 1. Inspect Metadata & Engine References
             meta = get_metadata(data)
@@ -133,10 +138,16 @@ def main():
                 print(f"    [OK] {s:<10} | ver={ver:<14} | ts={ts_str:<22} | succ={succ}/{tot} | tps={tps:6.2f} | tok_src={tok_src}")
 
             elif s == "saturation":
+                grid = data.get("grid", {})
+                expected = len(grid.get("isl_osl", [])) * len(grid.get("concurrency", []))
                 sweep = data.get("sweep_results", [])
-                if not sweep or len(sweep) < 5:
-                    errors.append(f"[{eng}/{s}] Incomplete saturation sweep: found {len(sweep)} concurrency levels")
+                if not expected:
+                    errors.append(f"[{eng}/{s}] Missing or empty top-level 'grid' block — cannot verify sweep completeness")
+                elif len(sweep) != expected:
+                    errors.append(f"[{eng}/{s}] Sweep has {len(sweep)} cells, grid declares {expected}")
                 for item in sweep:
+                    if item.get("dry_run") is True or str(item.get("dry_run", "")).lower() == "true":
+                        errors.append(f"[{eng}/{s}] Dry-run contamination: sweep record has dry_run=True")
                     c = item.get("concurrency")
                     status = item.get("status", "ok")
                     if status == "skipped":
