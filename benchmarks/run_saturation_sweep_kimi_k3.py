@@ -615,6 +615,7 @@ def main():
       "ISL_OSL_GRID": ISL_OSL_GRID,
       "sweep_levels": sweep_levels,
       "MAX_INFLIGHT_PROMPT_TOKENS": max_inflight,
+      "BASE_TOKENS_APPROX": BASE_TOKENS_APPROX,
       "suite_start_ts": suite_start_ts,
       "suite_end_ts": suite_end_ts,
       "suite_duration_s": suite_duration_s,

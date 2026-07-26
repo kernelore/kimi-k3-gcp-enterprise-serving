@@ -34,8 +34,8 @@ if compgen -G "benchmarks/results/*/*.json" > /dev/null; then
   # 2. Mutate a numerical benchmark value in README.md (in a safe, reversible manner)
   echo "--> Step 2: Deliberately mutating a numerical benchmark value in README.md..."
   cp README.md /tmp/README.md.adv_backup
-  # Mutate first occurrence of a measurement to 9999.99
-  sed -i 's/[0-9]\+\.[0-9]\+/9999.99/' README.md
+  # Mutate first occurrence of a measurement inside comparison block to 9999.99
+  sed -i '/ENGINE_COMPARISON_START/,/ENGINE_COMPARISON_END/ s/[0-9]\+\.[0-9]\+/9999.99/' README.md
 
   if grep -q "9999.99" README.md; then
     echo "    [OK] Successfully mutated value to '9999.99' in README.md."
@@ -59,7 +59,7 @@ if compgen -G "benchmarks/results/*/*.json" > /dev/null; then
   # 4. Re-apply mutation and prove git diff --exit-code fails when staged
   echo "--> Step 4: Testing reproducibility rejection on staged mutated README.md..."
   cp /tmp/README.md.adv_backup README.md
-  sed -i 's/[0-9]\+\.[0-9]\+/9999.99/' README.md
+  sed -i '/ENGINE_COMPARISON_START/,/ENGINE_COMPARISON_END/ s/[0-9]\+\.[0-9]\+/9999.99/' README.md
   git add README.md >/dev/null 2>&1 || true
   python3 benchmarks/generate_comparison.py >/dev/null 2>&1
   if ! git diff --exit-code README.md > /dev/null 2>&1; then

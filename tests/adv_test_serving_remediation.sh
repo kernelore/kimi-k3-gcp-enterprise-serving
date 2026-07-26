@@ -48,7 +48,7 @@ PASSED=$((PASSED + 1))
 # Check 3: Pinned engine Dockerfiles and deploy script references
 # ------------------------------------------------------------------------------
 echo "--> Check 3: Verifying pinned engine Dockerfiles and sdk pin in scripts/03_deploy_workloads.sh..."
-# shellcheck source=./lib/engine_versions.sh
+# shellcheck source=tests/lib/engine_versions.sh disable=SC1091
 source tests/lib/engine_versions.sh
 for eng in sglang trtllm; do
   ver="$(get_engine_version "${eng}")"

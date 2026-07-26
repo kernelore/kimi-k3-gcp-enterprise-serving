@@ -72,7 +72,29 @@ def main():
     total_files = 0
     passed_files = 0
 
+    eng_status = {}
+    for eng in engines.keys():
+        present = [s for s in suites if (root / eng / f"{s}_results.json").exists()]
+        missing = [s for s in suites if not (root / eng / f"{s}_results.json").exists()]
+        if len(present) == len(suites):
+            eng_status[eng] = "complete"
+        elif len(present) == 0:
+            eng_status[eng] = "absent"
+        else:
+            eng_status[eng] = "partial"
+            errors.append(f"[{eng}] Partial benchmark data: present={present}, missing={missing}. All 5 suite files required.")
+
+    if all(status == "absent" for status in eng_status.values()):
+        print(f"[SKIP] No benchmark results found in {root} (0 complete engines). Skipping benchmark integrity audit.")
+        sys.exit(0)
+
     for eng, rules in engines.items():
+        if eng_status[eng] == "absent":
+            print(f"\n--> Auditing Engine: {eng.upper()}... [SKIP] Engine results absent (0/5 files present).")
+            continue
+        if eng_status[eng] == "partial":
+            print(f"\n--> Auditing Engine: {eng.upper()}... [FAIL] Partial benchmark data.")
+            continue
         print(f"\n--> Auditing Engine: {eng.upper()} (Expected Normalized Version: {rules['expected_ver_norm']})")
         for s in suites:
             fpath = root / eng / f"{s}_results.json"
