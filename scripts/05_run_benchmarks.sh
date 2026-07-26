@@ -193,14 +193,14 @@ if [ "${IN_CLUSTER}" != "true" ]; then
   SERVING_POD=$(kubectl get pod -n llm-serving -l app=kimi-k3-serving -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
   if [ -n "${SERVING_POD}" ]; then
     if [ "${ENGINE}" = "sglang" ]; then
-      ENGINE_VERSION=$(kubectl exec -n llm-serving "${SERVING_POD}" -c sglang-mpi-node -- python3 -c "import sglang; print(getattr(sglang, '__version__', 'v0.5.16'))" 2>/dev/null || echo "v0.5.16")
+      ENGINE_VERSION=$(kubectl exec -n llm-serving "${SERVING_POD}" -c sglang-mpi-node -- python3 -c "import sglang; print(getattr(sglang, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
     else
-      ENGINE_VERSION=$(kubectl exec -n llm-serving "${SERVING_POD}" -c trtllm-mpi-node -- python3 -c "import tensorrt_llm; print(getattr(tensorrt_llm, '__version__', '0.16.0'))" 2>/dev/null || echo "0.16.0")
+      ENGINE_VERSION=$(kubectl exec -n llm-serving "${SERVING_POD}" -c trtllm-mpi-node -- python3 -c "import tensorrt_llm; print(getattr(tensorrt_llm, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
     fi
   fi
 fi
-if [ "${ENGINE_VERSION}" = "unknown" ] || [ -z "${ENGINE_VERSION}" ]; then
-  if [ "${ENGINE}" = "sglang" ]; then ENGINE_VERSION="v0.5.16"; else ENGINE_VERSION="0.16.0"; fi
+if [ -z "${ENGINE_VERSION}" ]; then
+  ENGINE_VERSION="unknown"
 fi
 
 if [ -z "${SERVING_IMAGE:-}" ]; then
