@@ -125,6 +125,14 @@ spec:
               fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
         - name: LD_LIBRARY_PATH
           value: "/usr/local/nvidia/lib64:/usr/local/gib/lib64:/usr/local/nvidia/lib:/usr/local/gib/lib"
+        - name: NCCL_CONF_FILE
+          value: "/usr/local/gib/scripts/nccl.conf"
+        - name: NCCL_DEBUG
+          value: "INFO"
+        - name: NCCL_DEBUG_SUBSYS
+          value: "INIT,NET,GRAPH"
+        - name: NCCL_SOCKET_IFNAME
+          value: "eth0"
         - name: SGLANG_TP_SIZE
           value: "${SGLANG_TP_SIZE}"
         - name: SGLANG_PP_SIZE
@@ -143,6 +151,8 @@ spec:
           value: "${SGLANG_ENABLE_TORCH_COMPILE}"
         - name: SGLANG_ATTENTION_BACKEND
           value: "${SGLANG_ATTENTION_BACKEND}"
+        - name: SGLANG_CONTEXT_LENGTH
+          value: "${SGLANG_CONTEXT_LENGTH}"
         securityContext:
           capabilities:
             add:
@@ -183,7 +193,15 @@ spec:
         - -c
         - |
           set -euo pipefail
-          source /usr/local/gib/scripts/set_nccl_env.sh 2>/dev/null || true
+          if [ ! -r /usr/local/gib/scripts/set_nccl_env.sh ]; then
+            echo "FATAL: gIB NCCL env script not readable at /usr/local/gib/scripts/set_nccl_env.sh." >&2
+            echo "FATAL: Refusing to start — NCCL would silently fall back to TCP sockets (~50x bandwidth loss)." >&2
+            exit 1
+          fi
+          source /usr/local/gib/scripts/set_nccl_env.sh
+          echo "--- Resolved NCCL environment ---"
+          env | grep -E '^NCCL_' | sort
+          echo "---------------------------------"
           NODE_RANK=${POD_INDEX:-${HOSTNAME##*-}}
           LEADER_HOST="${LEADER_ADDR}:5000"
           echo "Starting SGLang worker node rank ${NODE_RANK} connecting to leader ${LEADER_HOST}..."
@@ -208,7 +226,7 @@ spec:
             --host 0.0.0.0 \
             --trust-remote-code \
             --enable-metrics \
-            --context-length 131072 \
+            --context-length "${SGLANG_CONTEXT_LENGTH}" \
             --tp-size "${SGLANG_TP_SIZE}" \
             --pp-size "${SGLANG_PP_SIZE}" \
             --ep-size "${SGLANG_EP_SIZE}" \
@@ -233,6 +251,9 @@ spec:
           mountPath: /usr/local/gib
           readOnly: true
         resources:
+          requests:
+            cpu: "32"
+            memory: "64Gi"
           limits:
             nvidia.com/gpu: 8
       volumes:
