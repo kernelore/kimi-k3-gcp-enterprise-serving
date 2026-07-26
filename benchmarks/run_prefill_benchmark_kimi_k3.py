@@ -9,6 +9,7 @@ Normalizes per-GPU throughput by dividing system prompt tokens/sec by 16.0.
 """
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 import sys
@@ -94,8 +95,11 @@ def measure_prefill(
   )
 
   t_start = time.time()
+  start_dt = datetime.now(timezone.utc)
+  suite_start_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
   t_first = None
   prompt_tokens = 8192
+  has_exact_usage = False
 
   try:
     with urllib.request.urlopen(req, timeout=300) as resp:
@@ -117,7 +121,9 @@ def measure_prefill(
               t_first = time.time()
           usage = chunk.get("usage")
           if usage and isinstance(usage, dict):
-            prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+            if "prompt_tokens" in usage:
+              prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+              has_exact_usage = True
         except (
             json.JSONDecodeError,
             KeyError,
@@ -131,6 +137,8 @@ def measure_prefill(
     print(f"Warning: Prefill request failed or timed out: {e}")
 
   t_end = time.time()
+  end_dt = datetime.now(timezone.utc)
+  suite_end_ts = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
   ttft = (t_first - t_start) if t_first else (t_end - t_start)
   prefill_tok_s = prompt_tokens / ttft if ttft > 0 else 0.0
 
@@ -144,20 +152,32 @@ def measure_prefill(
         "engine": engine,
         "metadata": meta_dict,
         "prompt_tokens": prompt_tokens,
+        "token_count_source": "openai_usage" if has_exact_usage else "chunk_count_fallback",
         "ttft_sec": ttft,
         "ttft_ms": ttft * 1000.0,
         "prefill_tok_s_system": prefill_tok_s,
         "prefill_tok_s_per_gpu": prefill_tok_s / 16.0,
+        "prefill_config": {
+            "suite_start_ts": suite_start_ts,
+            "suite_end_ts": suite_end_ts,
+            "suite_duration_s": round((t_end - t_start), 4),
+        },
     }
   except (ZeroDivisionError, KeyError, TypeError, ValueError, Exception):
     result = {
         "engine": engine,
         "metadata": meta_dict,
         "prompt_tokens": 0,
+        "token_count_source": "none",
         "ttft_sec": 0.0,
         "ttft_ms": 0.0,
         "prefill_tok_s_system": 0.0,
         "prefill_tok_s_per_gpu": 0.0,
+        "prefill_config": {
+            "suite_start_ts": suite_start_ts,
+            "suite_end_ts": suite_end_ts,
+            "suite_duration_s": round((t_end - t_start), 4),
+        },
     }
   print(
       f"=== Kimi K3 PREFILL (PROMPT INGESTION) BENCHMARK (Engine: {engine}) ==="

@@ -31,6 +31,7 @@ GPUs in 2-node pool).
 
 import argparse
 import concurrent.futures
+from datetime import datetime, timezone
 import json
 import os
 import secrets
@@ -118,6 +119,7 @@ def execute_single_request(
   token_timestamps = []
   generated_tokens = 0
   prompt_tokens = 0
+  has_exact_usage = False
 
   try:
     with urllib.request.urlopen(req, timeout=300) as resp:
@@ -146,6 +148,7 @@ def execute_single_request(
             usage = chunk["usage"]
             if usage.get("completion_tokens"):
               generated_tokens = usage["completion_tokens"]
+              has_exact_usage = True
             prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
         except (
             json.JSONDecodeError,
@@ -177,12 +180,13 @@ def execute_single_request(
         "mean_tpot_ms": mean_tpot,
         "all_tpots_ms": tpots,
         "tokens": generated_tokens,
+        "token_count_source": "openai_usage" if has_exact_usage else "chunk_count_fallback",
         "prompt_tokens": prompt_tokens,
         "duration": duration,
         "throughput": throughput,
     }
   except Exception as e:
-    return {"success": False, "error": str(e), "prompt_tokens": 0}
+    return {"success": False, "error": str(e), "prompt_tokens": 0, "token_count_source": "none"}
 
 
 class MetricsScraper:
@@ -350,6 +354,13 @@ def run_sweep_concurrency(
           "p90": pctl(tpots, 90),
           "p99": pctl(tpots, 99),
       }
+      sources_used = sorted(list(set(r.get("token_count_source", "unknown") for r in successful)))
+      if len(sources_used) == 1:
+        cell_source = sources_used[0]
+      elif len(sources_used) > 1:
+        cell_source = "mixed: " + ", ".join(sources_used)
+      else:
+        cell_source = "none"
       summary = {
           "isl_target": isl_target,
           "osl": osl_target,
@@ -360,6 +371,7 @@ def run_sweep_concurrency(
           "successful": len(successful),
           "error_rate_pct": err_rate,
           "total_tokens": total_tokens,
+          "token_count_source": cell_source,
           "total_duration_sec": total_duration,
           "aggregate_tok_s": agg_tok_s,
           "per_gpu_tok_s": per_gpu_tok_s,
@@ -388,6 +400,7 @@ def run_sweep_concurrency(
           "successful": 0,
           "error_rate_pct": 100.0,
           "total_tokens": 0,
+          "token_count_source": "none",
           "total_duration_sec": 0.0,
           "aggregate_tok_s": 0.0,
           "per_gpu_tok_s": 0.0,
@@ -423,6 +436,7 @@ def run_sweep_concurrency(
         "successful": 0,
         "error_rate_pct": 100.0,
         "total_tokens": 0,
+        "token_count_source": "none",
         "total_duration_sec": total_duration,
         "aggregate_tok_s": 0.0,
         "per_gpu_tok_s": 0.0,
@@ -501,6 +515,9 @@ def main():
     print("[INFO] Executing dry-run syntax and matrix validation...")
 
   print(f"\n=== KIMI K3 SATURATION SWEEP (Engine: {args.engine}) ===")
+  start_bench_time = time.perf_counter()
+  start_dt = datetime.now(timezone.utc)
+  suite_start_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
   sweep_levels = args.concurrency_levels
   max_inflight = args.max_inflight_prompt_tokens
 
@@ -582,10 +599,25 @@ def main():
   except (json.JSONDecodeError, TypeError, ValueError, Exception):
     meta_dict = {"raw": args.metadata}
 
+  end_dt = datetime.now(timezone.utc)
+  suite_end_ts = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+  suite_duration_s = round((end_dt - start_dt).total_seconds(), 4)
+
+  sources_used = sorted(list(set(r.get("token_count_source", "unknown") for r in sweep_results if r.get("status") == "ok")))
+  if len(sources_used) == 1:
+    agg_source = sources_used[0]
+  elif len(sources_used) > 1:
+    agg_source = "mixed: " + ", ".join(sources_used)
+  else:
+    agg_source = "none"
+
   grid_meta = {
       "ISL_OSL_GRID": ISL_OSL_GRID,
       "sweep_levels": sweep_levels,
       "MAX_INFLIGHT_PROMPT_TOKENS": max_inflight,
+      "suite_start_ts": suite_start_ts,
+      "suite_end_ts": suite_end_ts,
+      "suite_duration_s": suite_duration_s,
   }
 
   try:
@@ -596,6 +628,7 @@ def main():
   out_payload = {
       "engine": args.engine,
       "metadata": meta_dict,
+      "token_count_source": agg_source,
       "grid": grid_meta,
       "sweep_results": sweep_results,
   }

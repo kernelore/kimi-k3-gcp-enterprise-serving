@@ -203,9 +203,15 @@ if [ "${ENGINE_VERSION}" = "unknown" ] || [ -z "${ENGINE_VERSION}" ]; then
   if [ "${ENGINE}" = "sglang" ]; then ENGINE_VERSION="v0.5.16"; else ENGINE_VERSION="0.16.0"; fi
 fi
 
+if [ -z "${SERVING_IMAGE:-}" ]; then
+  SERVING_IMAGE=$(kubectl get pod -n llm-serving -l app=kimi-k3-serving -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || echo "unknown")
+  if [ -z "${SERVING_IMAGE}" ]; then SERVING_IMAGE="unknown"; fi
+fi
+RUN_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
 RESULTS_DIR="${PROJECT_ROOT}/benchmarks/results/${ENGINE}"
 mkdir -p "${RESULTS_DIR}"
-METADATA_JSON="{\"engine\": \"${ENGINE}\", \"version\": \"${ENGINE_VERSION}\", \"tp\": ${SGLANG_TP_SIZE:-${TRTLLM_TP_SIZE:-16}}, \"pp\": ${SGLANG_PP_SIZE:-${TRTLLM_PP_SIZE:-1}}, \"ep\": ${SGLANG_EP_SIZE:-${TRTLLM_EP_SIZE:-16}}, \"nodes\": 2, \"gpus\": 16}"
+METADATA_JSON="{\"engine\": \"${ENGINE}\", \"version\": \"${ENGINE_VERSION}\", \"engine_version\": \"${ENGINE_VERSION}\", \"image\": \"${SERVING_IMAGE}\", \"run_timestamp\": \"${RUN_TIMESTAMP}\", \"tp\": ${SGLANG_TP_SIZE:-${TRTLLM_TP_SIZE:-16}}, \"pp\": ${SGLANG_PP_SIZE:-${TRTLLM_PP_SIZE:-1}}, \"ep\": ${SGLANG_EP_SIZE:-${TRTLLM_EP_SIZE:-16}}, \"nodes\": 2, \"gpus\": 16}"
 echo "    Active Engine: ${ENGINE} (version: ${ENGINE_VERSION})"
 echo "    Results Dir:   ${RESULTS_DIR}"
 

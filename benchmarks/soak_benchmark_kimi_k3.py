@@ -14,6 +14,7 @@ percentiles and stability proof.
 
 import argparse
 import concurrent.futures
+from datetime import datetime, timezone
 import json
 import os
 import statistics
@@ -238,6 +239,7 @@ def execute_stream_request(
       "success": success,
       "error": error_msg,
       "tokens": tokens_received,
+      "token_count_source": "openai_usage" if has_exact_usage else "chunk_count_fallback",
       "prompt_tokens": prompt_tokens,
       "ttft_ms": ttft * 1000,
       "tpot_ms": tpot * 1000,
@@ -274,6 +276,8 @@ def main():
   print("-" * 75)
 
   start_soak_time = time.perf_counter()
+  start_dt = datetime.now(timezone.utc)
+  suite_start_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
   results = []
   completed_requests = 0
   failed_requests = 0
@@ -412,6 +416,18 @@ def main():
   tpot_mean = round(statistics.mean(tpot_vals), 2) if tpot_vals else 0.0
   throughput_tps = round(cluster_throughput, 2)
 
+  end_dt = datetime.now(timezone.utc)
+  suite_end_ts = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+  suite_duration_s = round((end_dt - start_dt).total_seconds(), 4)
+
+  sources_used = sorted(list(set(r.get("token_count_source", "unknown") for r in successful_results)))
+  if len(sources_used) == 1:
+    agg_source = sources_used[0]
+  elif len(sources_used) > 1:
+    agg_source = "mixed: " + ", ".join(sources_used)
+  else:
+    agg_source = "none"
+
   try:
     meta_dict = json.loads(args.metadata) if args.metadata else {}
   except Exception:
@@ -423,10 +439,16 @@ def main():
       "successful_requests": completed_requests,
       "total_requests": len(results),
       "total_completed": completed_requests,
+      "token_count_source": agg_source,
       "ttft_mean_ms": ttft_mean,
       "tpot_mean_ms": tpot_mean,
       "throughput_tokens_sec": throughput_tps,
-      "soak_config": vars(args),
+      "soak_config": {
+          **vars(args),
+          "suite_start_ts": suite_start_ts,
+          "suite_end_ts": suite_end_ts,
+          "suite_duration_s": suite_duration_s,
+      },
       "execution_summary": {
           "total_duration_seconds": round(total_soak_time, 3),
           "total_requests_completed": completed_requests,
@@ -434,6 +456,7 @@ def main():
           "success_rate_percent": round(
               100.0 * completed_requests / max(1, len(results)), 3
           ),
+          "token_count_source": agg_source,
       },
       "metrics": {},
   }
