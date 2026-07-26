@@ -80,3 +80,28 @@ jobs:
       - name: Validate with Kubeconform
         run: |
           kubeconform -strict -summary -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' -skip GKENetworkParamSet,Network terraform/manifests/generated/*.yaml
+
+  reproducibility:
+    name: Check Benchmark Reproducibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Check Benchmark Reproducibility
+        run: |
+          if compgen -G "benchmarks/results/*/*.json" > /dev/null; then
+            echo "--> Raw results present. Regenerating comparison table..."
+            python3 benchmarks/generate_comparison.py
+            git diff --exit-code README.md
+          else
+            echo "--> No raw results. Asserting README table carries no measurements..."
+            BLOCK=$(sed -n '/ENGINE_COMPARISON_START/,/ENGINE_COMPARISON_END/p' README.md)
+            if echo "$BLOCK" | grep -nE '[0-9]+(\.[0-9]+)?[[:space:]]*(ms|s|tok/s|tokens/s|GB|GiB|%)'; then
+              echo "ERROR: README publishes measurements but benchmarks/results/ is empty." >&2
+              exit 1
+            fi
+            echo "Placeholder table contains no measurements. OK."
+          fi
