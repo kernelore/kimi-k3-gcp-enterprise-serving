@@ -176,6 +176,12 @@ def measure_prefill(
       " tok/s/GPU (normalized by 16.0)"
   )
 
+  try:
+    from telemetry_sanitizer import sanitize_telemetry
+  except ImportError:
+    from benchmarks.telemetry_sanitizer import sanitize_telemetry
+  result = sanitize_telemetry(result, output_path)
+
   output_dir = os.path.dirname(output_path)
   if output_dir:
     os.makedirs(output_dir, exist_ok=True)

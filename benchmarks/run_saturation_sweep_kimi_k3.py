@@ -588,17 +588,25 @@ def main():
       "MAX_INFLIGHT_PROMPT_TOKENS": max_inflight,
   }
 
+  try:
+    from telemetry_sanitizer import sanitize_telemetry
+  except ImportError:
+    from benchmarks.telemetry_sanitizer import sanitize_telemetry
+
+  out_payload = {
+      "engine": args.engine,
+      "metadata": meta_dict,
+      "grid": grid_meta,
+      "sweep_results": sweep_results,
+  }
+  out_payload = sanitize_telemetry(out_payload, args.output)
+
   output_dir = os.path.dirname(args.output)
   if output_dir:
     os.makedirs(output_dir, exist_ok=True)
   with open(args.output, "w") as f:
     json.dump(
-        {
-            "engine": args.engine,
-            "metadata": meta_dict,
-            "grid": grid_meta,
-            "sweep_results": sweep_results,
-        },
+        out_payload,
         f,
         indent=2,
     )

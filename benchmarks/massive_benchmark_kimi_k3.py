@@ -450,6 +450,12 @@ def main():
     )
     print("=" * 70)
 
+  try:
+    from telemetry_sanitizer import sanitize_telemetry
+  except ImportError:
+    from benchmarks.telemetry_sanitizer import sanitize_telemetry
+  summary = sanitize_telemetry(summary, args.output)
+
   output_dir = os.path.dirname(args.output)
   if output_dir:
     os.makedirs(output_dir, exist_ok=True)
