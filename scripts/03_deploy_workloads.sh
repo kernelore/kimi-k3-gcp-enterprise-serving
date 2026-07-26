@@ -44,7 +44,7 @@ validate_hf_token() {
     exit 1
   fi
 }
-if [ "${1:-}" != "--render-only" ] && [ "${1:-}" != "--stage-only" ]; then
+if [ "${1:-}" != "--render-only" ]; then
   validate_hf_token
 fi
 
