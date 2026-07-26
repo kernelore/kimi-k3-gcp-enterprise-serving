@@ -30,6 +30,24 @@ fi
 # shellcheck source=/dev/null
 source "${CONFIG_FILE}"
 
+validate_hf_token() {
+  local token="${HF_TOKEN:-}"
+  if [[ -z "${token}" ]] || \
+     [[ "${token}" != hf_* ]] || \
+     [[ "${token}" =~ [Pp][Ll][Aa][Cc][Ee][Hh][Oo][Ll][Dd][Ee][Rr] ]] || \
+     [[ "${token}" =~ [Yy][Oo][Uu][Rr]_ ]] || \
+     [[ "${token}" =~ [Xx][Xx][Xx] ]] || \
+     [[ "${token}" =~ [Tt][Oo][Dd][Oo] ]] || \
+     [[ "${token}" == *"<"* ]] || \
+     [[ "${token}" == *">"* ]]; then
+    echo "ERROR: Invalid or placeholder HF_TOKEN detected in scripts/config.env. Please configure a valid Hugging Face access token (starting with 'hf_') with gated-repo licence access." >&2
+    exit 1
+  fi
+}
+if [ "${1:-}" != "--render-only" ] && [ "${1:-}" != "--stage-only" ]; then
+  validate_hf_token
+fi
+
 export MODEL_REPO_ID="${MODEL_REPO_ID:-moonshotai/Kimi-K3-2.8T-MXFP4}"
 export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-kimi-k3-2.8t-mxfp4}"
 export TRTLLM_TP_SIZE="${TRTLLM_TP_SIZE:-8}"

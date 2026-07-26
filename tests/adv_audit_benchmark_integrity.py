@@ -68,7 +68,6 @@ def main():
 
     errors = []
     warnings = []
-    runs = []
     total_files = 0
     passed_files = 0
 
@@ -96,6 +95,7 @@ def main():
             print(f"\n--> Auditing Engine: {eng.upper()}... [FAIL] Partial benchmark data.")
             continue
         print(f"\n--> Auditing Engine: {eng.upper()} (Expected Normalized Version: {rules['expected_ver_norm']})")
+        runs = []
         for s in suites:
             fpath = root / eng / f"{s}_results.json"
             total_files += 1
@@ -169,7 +169,9 @@ def main():
 
             elif s == "saturation":
                 grid = data.get("grid", {})
-                expected = len(grid.get("isl_osl", [])) * len(grid.get("concurrency", []))
+                isl_osl = grid.get("ISL_OSL_GRID", grid.get("isl_osl", []))
+                levels  = grid.get("sweep_levels", grid.get("concurrency", []))
+                expected = len(isl_osl) * len(levels)
                 sweep = data.get("sweep_results", [])
                 if not expected:
                     errors.append(f"[{eng}/{s}] Missing or empty top-level 'grid' block — cannot verify sweep completeness")

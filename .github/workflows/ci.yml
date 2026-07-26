@@ -45,6 +45,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Run Secret Scan
+        env:
+          FORBIDDEN_PROJECT_ID: ${{ vars.FORBIDDEN_PROJECT_ID }}
         run: bash tests/check_secret_scan.sh
 
   dependency-floors:
@@ -77,7 +79,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Compile Python Scripts
-        run: python3 -m py_compile benchmarks/*.py scripts/*.py tests/*.py
+        run: python3 -m py_compile benchmarks/*.py scripts/*.py tests/*.py tests/lib/*.py
       - name: Run Telemetry Sanitizer Unit Tests
         run: python3 -m unittest discover -s tests -p "test_*.py"
 
@@ -93,7 +95,7 @@ jobs:
           curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
           sudo mv kubeconform /usr/local/bin/
       - name: Run ShellCheck
-        run: shellcheck scripts/*.sh tests/*.sh
+        run: shellcheck scripts/*.sh tests/*.sh tests/lib/*.sh
       - name: Run Serving Remediation Test Suite
         run: bash tests/adv_test_serving_remediation.sh
 

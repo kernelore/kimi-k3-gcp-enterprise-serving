@@ -19,6 +19,10 @@ echo "Adversarial Proof: README Mutation Rejection & Clean Revert"
 echo "=============================================================================="
 
 RESULTS_DIR="${COMPARISON_RESULTS_DIR:-benchmarks/results}"
+if [[ -n "${COMPARISON_RESULTS_DIR:-}" && -z "${COMPARISON_README_PATH:-}" ]]; then
+  echo "ERROR: COMPARISON_RESULTS_DIR is set without COMPARISON_README_PATH; refusing to mutate real README.md." >&2
+  exit 1
+fi
 if compgen -G "${RESULTS_DIR}/*/*.json" > /dev/null; then
   # Ensure README.md is synchronized with generate_comparison.py before starting check
   python3 benchmarks/generate_comparison.py >/dev/null 2>&1
