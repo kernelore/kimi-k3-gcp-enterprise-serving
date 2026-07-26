@@ -146,8 +146,10 @@ While **1x 2-Node Replica (DP=1, 16x B200 GPUs) serves as the turnkey MVP baseli
 | **4x Replicas (DP=4)** | 8 Nodes | 64 | 11,520 GB | 4,520 GB | ~168 sessions | 4.0x (4 R<sub>base</sub>) |
 | **Nx Replicas (DP=N)** | 2N Nodes | 16N | N x 2,880 GB | N x 1,130 GB | N x 42 sessions | Nx (N R<sub>base</sub>) |
 
-> [!CAUTION]
 > **Per-GPU Normalization Rule:** In all benchmark normalization calculations and performance reporting, aggregate cluster throughput must be divided by **`16.0`** (for a 1-replica 2-node pool) rather than 8.0, reflecting the 16x B200 GPUs required to host Kimi K3's 2.8T parameter footprint.
+
+> [!NOTE]
+> **Horizontal Autoscaling Absence:** Unlike reference stacks such as GLM, Kimi K3 serves as a single 2-node MPI replica across 16 B200s (`SERVING_REPLICAS=1`, `NODES_PER_REPLICA=2`, and `GPU_MAX_NODES=2`), leaving no spare GPU capacity in the cluster to scale into. Furthermore, dynamic pod scale-out events would require re-hydrating ~1.4 TB of model weights from GCS or local disk. Horizontal Pod Autoscaling (HPA) is therefore intentionally not implemented in this repository.
 
 ---
 
