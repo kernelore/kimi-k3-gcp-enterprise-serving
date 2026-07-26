@@ -238,7 +238,8 @@ spec:
                   print(f'FATAL: Found architecture {arch} but EXPECTED_MODEL_ARCHITECTURE={expected_arch}.', file=sys.stderr)
                   sys.exit(1)
           else:
-              print('WARNING: config.json not found; skipping architecture check.')
+              print(f'FATAL: config.json not found in {dest}; cannot verify model architecture.', file=sys.stderr)
+              sys.exit(1)
           "
           echo "Populating peer short hostnames in /etc/hosts..."
           while ! getent hosts kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local >/dev/null || ! getent hosts kimi-k3-serving-1.kimi-k3-workers-headless.llm-serving.svc.cluster.local >/dev/null; do

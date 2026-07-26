@@ -213,7 +213,8 @@ spec:
                   print(f'FATAL: Found architecture {arch} but EXPECTED_MODEL_ARCHITECTURE={expected_arch}.', file=sys.stderr)
                   sys.exit(1)
           else:
-              print('WARNING: config.json not found; skipping architecture check.')
+              print(f'FATAL: config.json not found in {dest}; cannot verify model architecture.', file=sys.stderr)
+              sys.exit(1)
           "
           echo "Populating peer short hostnames in /etc/hosts..."
           while ! getent hosts kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local >/dev/null || ! getent hosts kimi-k3-serving-1.kimi-k3-workers-headless.llm-serving.svc.cluster.local >/dev/null; do
@@ -239,6 +240,7 @@ spec:
               trtllm-llmapi-launch trtllm-serve /mnt/rox/Kimi-K3-2.8T-MXFP4 \
                 --backend pytorch --host 0.0.0.0 --port 8000 \
                 --tp_size "${TRTLLM_TP_SIZE}" --pp_size "${TRTLLM_PP_SIZE}" --ep_size "${TRTLLM_EP_SIZE}" \
+                --max_seq_len "${TRTLLM_MAX_SEQ_LEN}" \
                 --kv_cache_free_gpu_memory_fraction 0.90 \
                 --trust_remote_code
           else
