@@ -88,10 +88,6 @@ build/
 # ==============================================================================
 kubeconform
 kubeconform-linux-amd64.tar.gz
-benchmarks/*.json
-benchmarks/results/
-*_results*.json
-results/
 workbench/
 
 # ==============================================================================

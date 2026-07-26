@@ -2,3 +2,8 @@
 *.json
 *.log
 results/
+
+# Allow committed raw benchmark result JSONs under results/{sglang,trtllm}/
+!results/
+!results/*/
+!results/**/*.json
