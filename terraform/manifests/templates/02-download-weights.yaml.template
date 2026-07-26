@@ -52,10 +52,10 @@ spec:
           api = HfApi(token=token)
           try:
               info = api.model_info(repo_id, files_metadata=True)
-          except RepositoryNotFoundError:
-              raise RuntimeError(f'FATAL [PRE-FLIGHT]: Repository {repo_id} not found on Hugging Face Hub. Verify MODEL_REPO_ID.')
           except GatedRepoError:
               raise RuntimeError(f'FATAL [PRE-FLIGHT]: Repository {repo_id} is gated. The HF account holding HF_TOKEN must accept the model licence on the model page.')
+          except RepositoryNotFoundError:
+              raise RuntimeError(f'FATAL [PRE-FLIGHT]: Repository {repo_id} not found on Hugging Face Hub. Verify MODEL_REPO_ID.')
           except HfHubHTTPError as e:
               if getattr(e, 'response', None) is not None and getattr(e.response, 'status_code', 0) in (401, 403):
                   raise RuntimeError(f'FATAL [PRE-FLIGHT]: Authentication or licence access denied (HTTP {e.response.status_code}) for {repo_id}. Ensure HF_TOKEN is valid and licence is accepted.')
