@@ -48,14 +48,15 @@ PASSED=$((PASSED + 1))
 # Check 3: Pinned engine Dockerfiles and deploy script references
 # ------------------------------------------------------------------------------
 echo "--> Check 3: Verifying pinned engine Dockerfiles and sdk pin in scripts/03_deploy_workloads.sh..."
-if ! grep -q "^FROM lmsysorg/sglang:v0.5.16-cu130" docker/Dockerfile.sglang; then
-  echo "ERROR: Check 3 failed: docker/Dockerfile.sglang is not pinned to lmsysorg/sglang:v0.5.16-cu130!" >&2
-  exit 1
-fi
-if ! grep -q "^FROM nvcr.io/nvidia/tensorrt-llm/release:1.2.1" docker/Dockerfile; then
-  echo "ERROR: Check 3 failed: docker/Dockerfile is not pinned to nvcr.io/nvidia/tensorrt-llm/release:1.2.1!" >&2
-  exit 1
-fi
+# shellcheck source=./lib/engine_versions.sh
+source tests/lib/engine_versions.sh
+for eng in sglang trtllm; do
+  ver="$(get_engine_version "${eng}")"
+  if [ -z "${ver}" ] || [[ "${ver}" =~ ^(latest|slim|main|master|dev|nightly)$ ]] || ! [[ "${ver}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)? ]]; then
+    echo "ERROR: Check 3 failed: Dockerfile for ${eng} is not pinned to a valid semver tag (got '${ver}')!" >&2
+    exit 1
+  fi
+done
 if grep -rnE '^FROM[[:space:]]+[^[:space:]]+(:latest|:slim)([[:space:]]|$)' docker/; then
   echo "ERROR: Check 3 failed: Found unpinned ':latest' or ':slim' base image in docker/!" >&2
   exit 1

@@ -46,9 +46,19 @@ def main():
         print(f"[SKIP] Results directory {root} is empty or absent (pre-launch state). Skipping benchmark integrity audit.")
         sys.exit(0)
 
+    try:
+        from tests.lib.engine_versions import get_engine_version
+    except ImportError:
+        lib_dir = str(Path(__file__).resolve().parent / "lib")
+        if lib_dir not in sys.path:
+            sys.path.insert(0, lib_dir)
+        from engine_versions import get_engine_version
+
+    sglang_ver = get_engine_version("sglang", root=Path(__file__).resolve().parent.parent)
+    trtllm_ver = get_engine_version("trtllm", root=Path(__file__).resolve().parent.parent)
     engines = {
-        "sglang": {"expected_ver_norm": "0.5.16", "expected_img_sub": "sglang-blackwell", "expected_ver_raw_options": ["v0.5.16", "0.5.16"]},
-        "trtllm": {"expected_ver_norm": "1.2.1", "expected_img_sub": "trtllm-blackwell", "expected_ver_raw_options": ["v1.2.1", "1.2.1", "0.16.0"]}
+        "sglang": {"expected_ver_norm": sglang_ver, "expected_img_sub": "sglang-blackwell", "expected_ver_raw_options": [f"v{sglang_ver}", sglang_ver]},
+        "trtllm": {"expected_ver_norm": trtllm_ver, "expected_img_sub": "trtllm-blackwell", "expected_ver_raw_options": [f"v{trtllm_ver}", trtllm_ver, "0.16.0"]}
     }
     suites = ["standard", "massive", "soak", "saturation", "prefill"]
 
@@ -58,17 +68,17 @@ def main():
 
     errors = []
     warnings = []
+    runs = []
     total_files = 0
     passed_files = 0
 
     for eng, rules in engines.items():
         print(f"\n--> Auditing Engine: {eng.upper()} (Expected Normalized Version: {rules['expected_ver_norm']})")
-        runs = []
         for s in suites:
             fpath = root / eng / f"{s}_results.json"
             total_files += 1
             if not fpath.exists():
-                errors.append(f"Missing benchmark result file: {fpath}")
+                errors.append(f"[{eng}/{s}] Missing benchmark result file: {fpath}")
                 continue
 
             try:

@@ -16,6 +16,14 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+try:
+    from tests.lib.engine_versions import get_engine_version
+except ImportError:
+    lib_dir = str(Path(__file__).resolve().parent.parent / "tests" / "lib")
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    from engine_versions import get_engine_version
+
 def load_json(path: Path):
     if not path.exists():
         print(f"ERROR: Missing benchmark result file: {path}", file=sys.stderr)
@@ -102,19 +110,21 @@ def validate_provenance(sglang: dict, trtllm: dict):
         if t_eng != "trtllm" or "trtllm-blackwell" not in t_img:
             raise ValueError(f"PROVENANCE GATE FAILURE: results/trtllm/{s}_results.json has mismatched metadata (engine='{t_eng}', image='{t_img}')")
 
+        exp_sglang_ver = get_engine_version("sglang", root=Path(__file__).resolve().parent.parent)
         g_ver_raw = g_meta.get("engine_version", "")
         if g_ver_raw == "unknown":
             raise ValueError(f"PROVENANCE GATE FAILURE: results/sglang/{s}_results.json engine_version is 'unknown'")
         g_ver_norm = normalize_version(g_ver_raw)
-        if g_ver_norm != "0.5.16":
-            raise ValueError(f"PROVENANCE GATE FAILURE: results/sglang/{s}_results.json engine_version '{g_ver_raw}' does not match expected '0.5.16'")
+        if g_ver_norm != exp_sglang_ver:
+            raise ValueError(f"PROVENANCE GATE FAILURE: results/sglang/{s}_results.json engine_version '{g_ver_raw}' does not match expected '{exp_sglang_ver}'")
 
+        exp_trtllm_ver = get_engine_version("trtllm", root=Path(__file__).resolve().parent.parent)
         t_ver_raw = t_meta.get("engine_version", "")
         if t_ver_raw == "unknown":
             raise ValueError(f"PROVENANCE GATE FAILURE: results/trtllm/{s}_results.json engine_version is 'unknown'")
         t_ver_norm = normalize_version(t_ver_raw)
-        if t_ver_norm != "1.2.1":
-            raise ValueError(f"PROVENANCE GATE FAILURE: results/trtllm/{s}_results.json engine_version '{t_ver_raw}' does not match expected '1.2.1'")
+        if t_ver_norm != exp_trtllm_ver:
+            raise ValueError(f"PROVENANCE GATE FAILURE: results/trtllm/{s}_results.json engine_version '{t_ver_raw}' does not match expected '{exp_trtllm_ver}'")
 
     for eng_name, eng_data in [("sglang", sglang), ("trtllm", trtllm)]:
         prev_end_dt = None
@@ -220,8 +230,10 @@ def calc_delta(val_sglang: float, val_trtllm: float, higher_is_better: bool = Tr
 def generate_markdown(sglang: dict, trtllm: dict) -> str:
     g_meta = get_metadata(sglang["standard"])
     t_meta = get_metadata(trtllm["standard"])
-    g_ver = g_meta.get("engine_version", "v0.5.16")
-    t_ver = t_meta.get("engine_version", "1.2.1")
+    exp_sglang_ver = get_engine_version("sglang", root=Path(__file__).resolve().parent.parent)
+    exp_trtllm_ver = get_engine_version("trtllm", root=Path(__file__).resolve().parent.parent)
+    g_ver = g_meta.get("engine_version", f"v{exp_sglang_ver}")
+    t_ver = t_meta.get("engine_version", exp_trtllm_ver)
     
     g_label = f"SGLang ({g_ver})"
     t_label = f"NVIDIA TensorRT-LLM ({t_ver})"
