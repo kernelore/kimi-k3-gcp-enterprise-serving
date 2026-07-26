@@ -192,7 +192,8 @@ if command -v gcloud >/dev/null 2>&1; then
     BUILD_DIR=$(mktemp -d)
     cp -r "${PROJECT_ROOT}/docker/." "${BUILD_DIR}/"
     cp "${PROJECT_ROOT}/docker/${DOCKERFILE}" "${BUILD_DIR}/Dockerfile"
-    gcloud builds submit "${BUILD_DIR}" --tag "${SERVING_IMAGE}" --project="${PROJECT_ID}" --quiet || true
+    echo "    --> Submitting build for docker/${DOCKERFILE} to Cloud Build..."
+    gcloud builds submit "${BUILD_DIR}" --tag "${SERVING_IMAGE}" --project="${PROJECT_ID}" --quiet
     rm -rf "${BUILD_DIR}"
     echo "    [OK] Self-healing container build step finished."
   else
