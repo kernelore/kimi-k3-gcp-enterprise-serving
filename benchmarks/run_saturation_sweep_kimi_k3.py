@@ -22,8 +22,9 @@
 Measures peak GPU-generated aggregate throughput, per-user tok/s, TTFT/TPOT
 percentiles, and the interactive SLA knee across concurrency levels c in [1, 8,
 32, 128].
-Connects directly to TensorRT-LLM on port 8000 with 16-character cryptographic
-nonce injection to guarantee 0% cache hit rate.
+Connects directly to the serving engine's OpenAI-compatible endpoint (default
+port 8000) with 16-character cryptographic nonce injection to guarantee 0%
+cache hit rate.
 Normalizes per-GPU throughput by dividing aggregate tokens/sec by 16.0 (16x B200
 GPUs in 2-node pool).
 """
@@ -36,9 +37,26 @@ import secrets
 import statistics
 import string
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+
+# Approximate token count of SYNTHETIC_BASE_1K (authoritative count is reported by engine in usage block).
+BASE_TOKENS_APPROX = 1024
+
+# (input_tokens_target, output_tokens) — the documented DAY-1 ISL/OSL grid.
+ISL_OSL_GRID = [
+    (1024, 1024),
+    (8192, 1024),
+    (32768, 2048),
+    (131072, 2048),
+]
+
+# Maximum simultaneous prompt tokens the 16x B200 KV cache is expected to hold.
+# Cells above this are reported as skipped rather than run — see the printed
+# SKIPPED lines and the "status" field in the results JSON.
+MAX_INFLIGHT_PROMPT_TOKENS = 2_000_000
 
 SYNTHETIC_BASE_1K = (
     "In large-scale distributed artificial intelligence deployments on"
@@ -55,17 +73,19 @@ SYNTHETIC_BASE_1K = (
 ) * 6  # ~1024 tokens (~6400 chars)
 
 
-def generate_unique_prompt(idx, c):
+def generate_unique_prompt(idx, c, isl_target):
   nonce = "".join(
       secrets.choice(string.ascii_letters + string.digits) for _ in range(16)
   )
-  return f"[Sweep C={c} ReqId={idx} Nonce={nonce}] {SYNTHETIC_BASE_1K}"
+  header = f"[Sweep C={c} ReqId={idx} ISL={isl_target} Nonce={nonce}] "
+  reps = max(1, round(isl_target / BASE_TOKENS_APPROX))
+  return header + (SYNTHETIC_BASE_1K * reps)
 
 
 def execute_single_request(
-    req_idx, c, endpoint, model, max_tokens, temperature, api_key=""
+    req_idx, c, isl_target, endpoint, model, max_tokens, temperature, api_key=""
 ):
-  prompt = generate_unique_prompt(req_idx, c)
+  prompt = generate_unique_prompt(req_idx, c, isl_target)
   payload = {
       "model": model,
       "max_tokens": max_tokens,
@@ -162,23 +182,124 @@ def execute_single_request(
         "throughput": throughput,
     }
   except Exception as e:
-    return {"success": False, "error": str(e)}
+    return {"success": False, "error": str(e), "prompt_tokens": 0}
 
 
-def run_sweep_concurrency(c, requests_per_c, endpoint, model, max_tokens, api_key=""):
+class MetricsScraper:
+
+  def __init__(self, endpoint, names_list, interval=2.0):
+    self.endpoint = endpoint
+    self.names_list = names_list
+    self.interval = interval
+    self.stop_event = threading.Event()
+    self.peaks = {name: None for name in names_list}
+    self.lock = threading.Lock()
+    self.thread = None
+    self.scrape_error_warned = False
+
+  def _scrape_once(self):
+    try:
+      req = urllib.request.Request(
+          self.endpoint,
+          headers={"User-Agent": "KIMI3-Saturation-Sweep-Metrics/1.0"},
+          method="GET",
+      )
+      with urllib.request.urlopen(req, timeout=5) as resp:
+        content = resp.read().decode("utf-8", errors="replace")
+
+      for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+          continue
+        parts = line.split()
+        if not parts:
+          continue
+        token = parts[0]
+        m_name = token.split("{")[0]
+        if m_name in self.peaks:
+          try:
+            val = float(parts[1])
+            with self.lock:
+              curr = self.peaks[m_name]
+              if curr is None or val > curr:
+                self.peaks[m_name] = val
+          except (ValueError, IndexError):
+            pass
+    except Exception as e:
+      if not self.scrape_error_warned:
+        print(
+            f"WARNING: Failed to scrape metrics endpoint {self.endpoint}: {e}",
+            file=sys.stderr,
+        )
+        self.scrape_error_warned = True
+
+  def _run_loop(self):
+    while not self.stop_event.is_set():
+      self._scrape_once()
+      self.stop_event.wait(self.interval)
+
+  def start(self):
+    if not self.endpoint or not self.names_list:
+      return
+    self.thread = threading.Thread(target=self._run_loop, daemon=True)
+    self.thread.start()
+
+  def stop_and_get_peaks(self):
+    if not self.endpoint or not self.names_list:
+      return None
+    self.stop_event.set()
+    if self.thread and self.thread.is_alive():
+      self.thread.join(timeout=3.0)
+    self._scrape_once()
+
+    with self.lock:
+      result = dict(self.peaks)
+
+    for name, val in result.items():
+      if val is None:
+        print(
+            f"WARNING: Requested metric name '{name}' never appeared in scraped"
+            f" output from {self.endpoint}; recording as null.",
+            file=sys.stderr,
+        )
+    return result
+
+
+def run_sweep_concurrency(
+    c,
+    isl_target,
+    osl_target,
+    requests_per_c,
+    endpoint,
+    model,
+    api_key="",
+    metrics_endpoint="",
+    metrics_names=[],
+):
   print(f"\n============================================================")
   print(
-      f"Executing Saturation Sweep at Concurrency = {c} ({requests_per_c} total"
-      " requests)..."
+      f"Executing Saturation Sweep at ISL={isl_target}, OSL={osl_target},"
+      f" Concurrency={c} ({requests_per_c} total requests)..."
   )
   print(f"============================================================")
+
+  scraper = MetricsScraper(metrics_endpoint, metrics_names)
+  scraper.start()
 
   results = []
   start_time = time.time()
   with concurrent.futures.ThreadPoolExecutor(max_workers=c) as executor:
     futures = [
         executor.submit(
-            execute_single_request, i, c, endpoint, model, max_tokens, 0.2, api_key
+            execute_single_request,
+            i,
+            c,
+            isl_target,
+            endpoint,
+            model,
+            osl_target,
+            0.2,
+            api_key,
         )
         for i in range(requests_per_c)
     ]
@@ -186,9 +307,18 @@ def run_sweep_concurrency(c, requests_per_c, endpoint, model, max_tokens, api_ke
       results.append(f.result())
   total_duration = time.time() - start_time
 
+  peak_metrics = scraper.stop_and_get_peaks()
+
   successful = [r for r in results if r["success"]]
   failed = [r for r in results if not r["success"]]
   err_rate = (len(failed) / len(results)) * 100.0 if results else 100.0
+
+  observed_prompts = [
+      r["prompt_tokens"] for r in results if r.get("prompt_tokens", 0) > 0
+  ]
+  mean_prompt_tokens = (
+      statistics.mean(observed_prompts) if observed_prompts else 0.0
+  )
 
   if successful:
     ttfts = sorted([r["ttft_ms"] for r in successful])
@@ -221,7 +351,11 @@ def run_sweep_concurrency(c, requests_per_c, endpoint, model, max_tokens, api_ke
           "p99": pctl(tpots, 99),
       }
       summary = {
+          "isl_target": isl_target,
+          "osl": osl_target,
           "concurrency": c,
+          "prompt_tokens_observed": mean_prompt_tokens,
+          "status": "ok",
           "requests": len(results),
           "successful": len(successful),
           "error_rate_pct": err_rate,
@@ -232,6 +366,7 @@ def run_sweep_concurrency(c, requests_per_c, endpoint, model, max_tokens, api_ke
           "per_user_tok_s": per_user_tok_s,
           "ttft_ms": ttft_stats,
           "tpot_ms": tpot_stats,
+          "peak_metrics": peak_metrics,
       }
     except (
         ZeroDivisionError,
@@ -244,7 +379,11 @@ def run_sweep_concurrency(c, requests_per_c, endpoint, model, max_tokens, api_ke
       ttft_stats = {"mean": 0.0, "p50": 0.0, "p90": 0.0, "p99": 0.0}
       tpot_stats = {"mean": 0.0, "p50": 0.0, "p90": 0.0, "p99": 0.0}
       summary = {
+          "isl_target": isl_target,
+          "osl": osl_target,
           "concurrency": c,
+          "prompt_tokens_observed": mean_prompt_tokens,
+          "status": "error",
           "requests": len(results),
           "successful": 0,
           "error_rate_pct": 100.0,
@@ -255,6 +394,7 @@ def run_sweep_concurrency(c, requests_per_c, endpoint, model, max_tokens, api_ke
           "per_user_tok_s": 0.0,
           "ttft_ms": ttft_stats,
           "tpot_ms": tpot_stats,
+          "peak_metrics": peak_metrics,
       }
     print(
         f"  Agg Throughput:  {agg_tok_s:.2f} tok/s ({per_gpu_tok_s:.2f}"
@@ -273,7 +413,24 @@ def run_sweep_concurrency(c, requests_per_c, endpoint, model, max_tokens, api_ke
     return summary
   else:
     print(f"  All requests failed at Concurrency={c}!")
-    return {"concurrency": c, "error_rate_pct": 100.0, "aggregate_tok_s": 0.0}
+    return {
+        "isl_target": isl_target,
+        "osl": osl_target,
+        "concurrency": c,
+        "prompt_tokens_observed": mean_prompt_tokens,
+        "status": "error",
+        "requests": len(results),
+        "successful": 0,
+        "error_rate_pct": 100.0,
+        "total_tokens": 0,
+        "total_duration_sec": total_duration,
+        "aggregate_tok_s": 0.0,
+        "per_gpu_tok_s": 0.0,
+        "per_user_tok_s": 0.0,
+        "ttft_ms": {"mean": 0.0, "p50": 0.0, "p90": 0.0, "p99": 0.0},
+        "tpot_ms": {"mean": 0.0, "p50": 0.0, "p90": 0.0, "p99": 0.0},
+        "peak_metrics": peak_metrics,
+    }
 
 
 def parse_args():
@@ -308,31 +465,128 @@ def parse_args():
   parser.add_argument(
       "--api-key", default="", help="Optional API key for gateway authentication"
   )
+  parser.add_argument(
+      "--concurrency-levels",
+      dest="concurrency_levels",
+      default="1,8,32,128",
+      type=lambda s: [int(x) for x in s.split(",") if x.strip()],
+      help="Comma-separated concurrency levels to sweep",
+  )
+  parser.add_argument(
+      "--max-inflight-prompt-tokens",
+      dest="max_inflight_prompt_tokens",
+      default=2_000_000,
+      type=int,
+      help="Maximum simultaneous in-flight prompt tokens before skipping cell",
+  )
+  parser.add_argument(
+      "--metrics-endpoint",
+      default="",
+      help="Optional Prometheus /metrics URL of the serving engine leader",
+  )
+  parser.add_argument(
+      "--metrics-names",
+      default="",
+      help=(
+          "Comma-separated exact metric names to sample (e.g. KV-cache usage,"
+          " GPU memory)"
+      ),
+  )
   return parser.parse_args()
 
 
 def main():
   args = parse_args()
   if args.dry_run:
-    print("[SUCCESS] Kimi K3 saturation sweep harness syntax verified.")
-    sys.exit(0)
+    print("[INFO] Executing dry-run syntax and matrix validation...")
 
   print(f"\n=== KIMI K3 SATURATION SWEEP (Engine: {args.engine}) ===")
-  sweep_levels = [1, 8, 16, 32, 64]
+  sweep_levels = args.concurrency_levels
+  max_inflight = args.max_inflight_prompt_tokens
+
+  if not args.metrics_endpoint or not args.metrics_names:
+    print(
+        "NOTE: --metrics-endpoint/--metrics-names not supplied; peak KV-cache"
+        " and GPU memory not captured for any cell."
+    )
+    metrics_names_list = []
+  else:
+    metrics_names_list = [
+        x.strip() for x in args.metrics_names.split(",") if x.strip()
+    ]
+
   sweep_results = []
 
-  for c in sweep_levels:
-    requests = max(c * 2, 8)  # Run at least 2 full waves per concurrency level
-    res = run_sweep_concurrency(
-        c, requests, args.endpoint, args.model, max_tokens=1024, api_key=args.api_key
+  for isl, osl in ISL_OSL_GRID:
+    for c in sweep_levels:
+      inflight_tokens = c * isl
+      if inflight_tokens > max_inflight:
+        reason = (
+            f"{inflight_tokens:,} in-flight prompt tokens exceeds"
+            f" MAX_INFLIGHT_PROMPT_TOKENS={max_inflight:,}"
+        )
+        print(f"SKIPPED cell ISL={isl} OSL={osl} c={c} -> {reason}")
+        sweep_results.append({
+            "isl_target": isl,
+            "osl": osl,
+            "concurrency": c,
+            "prompt_tokens_observed": 0,
+            "status": "skipped",
+            "reason": reason,
+            "peak_metrics": None,
+        })
+        continue
+
+      print(
+          f"RUN cell ISL={isl} OSL={osl} c={c} -> {inflight_tokens:,} in-flight"
+          f" prompt tokens (within limit {max_inflight:,})"
+      )
+      if args.dry_run:
+        sweep_results.append({
+            "isl_target": isl,
+            "osl": osl,
+            "concurrency": c,
+            "prompt_tokens_observed": isl,
+            "status": "ok",
+            "dry_run": True,
+            "peak_metrics": None,
+        })
+        continue
+
+      requests = max(c * 2, 8)  # Run at least 2 full waves per concurrency level
+      res = run_sweep_concurrency(
+          c,
+          isl,
+          osl,
+          requests,
+          args.endpoint,
+          args.model,
+          api_key=args.api_key,
+          metrics_endpoint=args.metrics_endpoint,
+          metrics_names=metrics_names_list,
+      )
+      sweep_results.append(res)
+      time.sleep(2)
+
+  if args.dry_run:
+    run_count = sum(1 for r in sweep_results if r.get("status") != "skipped")
+    skip_count = sum(1 for r in sweep_results if r.get("status") == "skipped")
+    print(
+        "\n[SUCCESS] Kimi K3 saturation sweep harness syntax and matrix verified"
+        f" (RUN: {run_count}, SKIPPED: {skip_count})."
     )
-    sweep_results.append(res)
-    time.sleep(2)
+    sys.exit(0)
 
   try:
     meta_dict = json.loads(args.metadata) if args.metadata else {}
   except (json.JSONDecodeError, TypeError, ValueError, Exception):
     meta_dict = {"raw": args.metadata}
+
+  grid_meta = {
+      "ISL_OSL_GRID": ISL_OSL_GRID,
+      "sweep_levels": sweep_levels,
+      "MAX_INFLIGHT_PROMPT_TOKENS": max_inflight,
+  }
 
   output_dir = os.path.dirname(args.output)
   if output_dir:
@@ -342,6 +596,7 @@ def main():
         {
             "engine": args.engine,
             "metadata": meta_dict,
+            "grid": grid_meta,
             "sweep_results": sweep_results,
         },
         f,

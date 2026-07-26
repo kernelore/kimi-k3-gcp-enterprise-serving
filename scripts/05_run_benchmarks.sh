@@ -64,7 +64,7 @@ Options:
                                    - massive:    20 concurrent requests, 256 tokens (stress test)
                                    - soak:       30-minute continuous stability endurance test
                                    - prefill:    8192 prompt tokens ingestion stress test
-                                   - saturation: Concurrency sweep (c=1..64) throughput ceiling
+                                   - saturation: ISL/OSL x concurrency sweep (1k-128k input, c=1..128) throughput ceiling
                                    - all:        Run all 5 benchmark suites sequentially
   --target <gateway|serving>     Target endpoint for benchmarking (default: gateway)
                                    - gateway: LiteLLM Enterprise Proxy (port 4000) with virtual keys & Redis auth
@@ -384,6 +384,10 @@ if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
     "--engine=${ENGINE}"
     "--metadata=${METADATA_JSON}"
   )
+  [ -n "${SWEEP_METRICS_ENDPOINT:-}" ] && SAT_ARGS+=("--metrics-endpoint=${SWEEP_METRICS_ENDPOINT}")
+  [ -n "${SWEEP_METRICS_NAMES:-}" ]    && SAT_ARGS+=("--metrics-names=${SWEEP_METRICS_NAMES}")
+  [ -n "${SWEEP_CONCURRENCY_LEVELS:-}" ] && SAT_ARGS+=("--concurrency-levels=${SWEEP_CONCURRENCY_LEVELS}")
+  [ -n "${SWEEP_MAX_INFLIGHT:-}" ]       && SAT_ARGS+=("--max-inflight-prompt-tokens=${SWEEP_MAX_INFLIGHT}")
   if [ -f "${PROJECT_ROOT}/benchmarks/run_saturation_sweep_kimi_k3.py" ]; then
     python3 "${PROJECT_ROOT}/benchmarks/run_saturation_sweep_kimi_k3.py" "${SAT_ARGS[@]}" || echo "WARNING: Saturation sweep reported errors or timeouts."
   fi
