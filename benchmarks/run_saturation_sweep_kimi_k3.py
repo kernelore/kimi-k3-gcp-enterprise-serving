@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# DAY-1 SWEEP MATRIX (Pre-launch Parameter Grid for Monday Benchmark Execution)
+# ==============================================================================
+# 1. Concurrency Levels: 1, 2, 4, 8, 16, 32, 64, 128
+# 2. Input / Output Token Pairs: (128, 128), (512, 512), (2048, 512), (8192, 1024)
+# 3. Target Metrics per Cell:
+#    - TTFT (p50, p95, p99)
+#    - TPOT (p50, p95, p99)
+#    - Aggregate Throughput (tok/s)
+#    - Request Success Rate
+#    - Leader GPU Memory Utilization Percentage
+# 4. Hardware Envelope Reminder: Do NOT modify SGLANG_TP_SIZE (16) or EP_SIZE (16)
+#    between cells — those are fixed by the 16-GPU hardware envelope.
+# ==============================================================================
 """Kimi K3 (2.8T MXFP4) Saturation & Throughput-Ceiling Sweep
 
 Measures peak GPU-generated aggregate throughput, per-user tok/s, TTFT/TPOT
