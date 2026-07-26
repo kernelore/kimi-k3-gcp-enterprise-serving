@@ -71,6 +71,28 @@ spec:
               for fpath in shards:
                   total_size += os.path.getsize(fpath)
               print(f'Verified {len(shards)} safetensors files present. Total size: {total_size} bytes ({total_size / (1024**3):.2f} GiB)')
+          min_gib = float(os.getenv('MIN_WEIGHTS_GIB', '1000'))
+          total_gib = total_size / (1024**3)
+          if total_gib < min_gib:
+              raise RuntimeError(f'FATAL: Total weight size {total_gib:.2f} GiB is below required floor MIN_WEIGHTS_GIB={min_gib:.2f} GiB.')
+          cfg_path = os.path.join(dest, 'config.json')
+          if os.path.isfile(cfg_path):
+              with open(cfg_path, 'r') as f:
+                  cfg = json.load(f)
+              archs = cfg.get('architectures', ['Unknown'])
+              arch = archs[0] if archs else 'Unknown'
+              mtype = cfg.get('model_type', 'unknown')
+              layers = cfg.get('num_hidden_layers', 'unknown')
+              n_exp = cfg.get('n_routed_experts', cfg.get('num_local_experts', 'unknown'))
+              print(f'=== MODEL PROVENANCE GATE ===\nArchitectures: {archs}\nModel Type: {mtype}\nHidden Layers: {layers}\nExperts: {n_exp}\n=============================')
+              denylist = ['GlmMoeDsaForCausalLM', 'Glm4MoeForCausalLM', 'DeepseekV3ForCausalLM', 'DeepseekV32ForCausalLM']
+              if arch in denylist:
+                  raise RuntimeError(f'FATAL: Model architecture {arch} is in the known-wrong denylist. Refusing to proceed.')
+              expected_arch = os.getenv('EXPECTED_MODEL_ARCHITECTURE', '')
+              if expected_arch and arch != expected_arch:
+                  raise RuntimeError(f'FATAL: Found architecture {arch} but EXPECTED_MODEL_ARCHITECTURE={expected_arch}.')
+          else:
+              print('WARNING: config.json not found; skipping architecture check.')
           "
           echo "${MODEL_REPO_ID} weights successfully downloaded to Hyperdisk ML."
         env:
@@ -81,6 +103,10 @@ spec:
               key: HF_TOKEN
         - name: MODEL_REPO_ID
           value: "${MODEL_REPO_ID}"
+        - name: MIN_WEIGHTS_GIB
+          value: "${MIN_WEIGHTS_GIB}"
+        - name: EXPECTED_MODEL_ARCHITECTURE
+          value: "${EXPECTED_MODEL_ARCHITECTURE}"
         volumeMounts:
         - name: staging
           mountPath: /mnt/staging

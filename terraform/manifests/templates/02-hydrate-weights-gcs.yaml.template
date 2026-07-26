@@ -42,7 +42,40 @@ spec:
           echo "Starting GCS weight hydration to Hyperdisk ML from ${GCS_WEIGHTS_BUCKET}..."
           mkdir -p /mnt/staging/Kimi-K3-2.8T-MXFP4
           gcloud storage rsync -r ${GCS_WEIGHTS_BUCKET}/Kimi-K3-2.8T-MXFP4 /mnt/staging/Kimi-K3-2.8T-MXFP4/
+          python3 -c "
+          import os, glob, json
+          dest = '/mnt/staging/Kimi-K3-2.8T-MXFP4'
+          shards = glob.glob(os.path.join(dest, '*.safetensors'))
+          total_size = sum(os.path.getsize(f) for f in shards)
+          min_gib = float(os.getenv('MIN_WEIGHTS_GIB', '1000'))
+          total_gib = total_size / (1024**3)
+          if total_gib < min_gib:
+              raise RuntimeError(f'FATAL: Total weight size {total_gib:.2f} GiB is below required floor MIN_WEIGHTS_GIB={min_gib:.2f} GiB.')
+          cfg_path = os.path.join(dest, 'config.json')
+          if os.path.isfile(cfg_path):
+              with open(cfg_path, 'r') as f:
+                  cfg = json.load(f)
+              archs = cfg.get('architectures', ['Unknown'])
+              arch = archs[0] if archs else 'Unknown'
+              mtype = cfg.get('model_type', 'unknown')
+              layers = cfg.get('num_hidden_layers', 'unknown')
+              n_exp = cfg.get('n_routed_experts', cfg.get('num_local_experts', 'unknown'))
+              print(f'=== MODEL PROVENANCE GATE ===\nArchitectures: {archs}\nModel Type: {mtype}\nHidden Layers: {layers}\nExperts: {n_exp}\n=============================')
+              denylist = ['GlmMoeDsaForCausalLM', 'Glm4MoeForCausalLM', 'DeepseekV3ForCausalLM', 'DeepseekV32ForCausalLM']
+              if arch in denylist:
+                  raise RuntimeError(f'FATAL: Model architecture {arch} is in the known-wrong denylist. Refusing to proceed.')
+              expected_arch = os.getenv('EXPECTED_MODEL_ARCHITECTURE', '')
+              if expected_arch and arch != expected_arch:
+                  raise RuntimeError(f'FATAL: Found architecture {arch} but EXPECTED_MODEL_ARCHITECTURE={expected_arch}.')
+          else:
+              print('WARNING: config.json not found; skipping architecture check.')
+          "
           echo "Hydration complete."
+        env:
+        - name: MIN_WEIGHTS_GIB
+          value: "${MIN_WEIGHTS_GIB}"
+        - name: EXPECTED_MODEL_ARCHITECTURE
+          value: "${EXPECTED_MODEL_ARCHITECTURE}"
         volumeMounts:
         - name: staging
           mountPath: /mnt/staging
