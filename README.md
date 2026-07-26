@@ -294,7 +294,7 @@ To eliminate multi-hour weight downloads when scaling compute pods (the volume h
 
 ### Weight Cache Hydration Lifecycle
 
-When deploying a fresh cluster or recovering from a disaster, downloading 1.4 TB of weights from external model hubs can take hours. Using a pre-populated GCS weight cache bucket (`Tier 3`), the automated hydration job (`02-hydrate-weights-gcs.yaml.template`) transfers the entire 1.4 TB weight footprint into the 2,000 GB Hyperdisk ML volume in ***TBD — to be measured at first deployment*** (hydration throughput scales with hyperdisk_ml_throughput_mibps (default 6,144 MiB/s)).
+When deploying a fresh cluster or recovering from a disaster, downloading 1.4 TB of weights from external model hubs can take hours. Using a pre-populated GCS weight cache bucket (`Tier 3`), the automated hydration job (`02-hydrate-weights-gcs.yaml.template`) transfers the entire 1.4 TB weight footprint into the 2,000 GB Hyperdisk ML volume in ***TBD — to be measured at first deployment*** (hydration throughput scales with hyperdisk_ml_throughput_mibps (default 24,576 MiB/s; 6,144 MiB/s is a known-good fallback if regional quota is unavailable)).
 
 #### Operational Seeding & Hydration Commands
 
