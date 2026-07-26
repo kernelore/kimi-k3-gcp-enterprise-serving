@@ -72,4 +72,4 @@ jobs:
           diff -u terraform/manifests/.render-exceptions /tmp/survivors.txt
       - name: Validate with Kubeconform
         run: |
-          kubeconform -strict -summary -schema-location default -skip CustomMetricsStackdriverAdapter,PodMonitoring,GKENetworkParamSet,Network terraform/manifests/generated/*.yaml
+          kubeconform -strict -summary -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' -skip GKENetworkParamSet,Network terraform/manifests/generated/*.yaml
