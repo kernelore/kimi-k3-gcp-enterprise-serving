@@ -267,6 +267,17 @@ fi
 echo "    [OK] Check 11 passed: NCCL fabric environment parity and RDMA network resources verified."
 PASSED=$((PASSED + 1))
 
+# ------------------------------------------------------------------------------
+# Check 12: Shared render allow-list gate
+# ------------------------------------------------------------------------------
+echo "--> Check 12: Verifying manifest survivor allow-list parity..."
+for eng in sglang trtllm; do
+  INFERENCE_ENGINE=$eng ./scripts/03_deploy_workloads.sh --render-only >/dev/null
+  bash tests/check_render_exceptions.sh >/dev/null
+done
+echo "    [OK] Check 12 passed: Unrendered variables match .render-exceptions allow-list."
+PASSED=$((PASSED + 1))
+
 echo "=============================================================================="
 echo "=== SERVING REMEDIATION SUITE: ${PASSED} passed, ${SKIPPED} skipped ==="
 echo "=============================================================================="

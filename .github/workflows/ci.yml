@@ -33,10 +33,7 @@ jobs:
           sed -i 's|export PROJECT_ID="YOUR_PROJECT_ID"|export PROJECT_ID="ci-test"|' scripts/config.env
           ./scripts/03_deploy_workloads.sh --render-only
       - name: Assert no unintended unrendered variables
-        run: |
-          grep -rhoE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' terraform/manifests/generated/ \
-            | tr -d '${}' | sort -u > /tmp/survivors.txt
-          diff -u terraform/manifests/.render-exceptions /tmp/survivors.txt
+        run: bash tests/check_render_exceptions.sh
       - name: Validate with Kubeconform
         run: |
           kubeconform -strict -summary -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' -skip GKENetworkParamSet,Network terraform/manifests/generated/*.yaml
