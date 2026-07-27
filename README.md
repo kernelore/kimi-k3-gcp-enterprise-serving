@@ -22,7 +22,8 @@ a4-highgpu-8g` nodes — 16x NVIDIA B200 HGX total per serving pod replica over
 RoCEv2 fabric) \
 **Target Workload:** High-Throughput Enterprise AI Engineering & Autonomous
 Agentic Workflows (`32k` to `128k` active context window out of `1M` maximum
-capacity)
+capacity) \
+**Deployment Scope (Zonal Baseline → Regional HA Ready):** By default, the entire stack is provisioned with Zonal scope (`europe-north1-b` for the GKE cluster, Cloud SQL instance, Memorystore Redis cache, and Hyperdisk ML volume) to eliminate cross-zone network egress charges and accelerate deployment. The deployment can be easily extended to a Regional HA architecture by configuring `location = var.region` on the GKE cluster, setting `availability_type = "REGIONAL"` on Cloud SQL, upgrading Memorystore Redis to `tier = "STANDARD_HA"`, and distributing GPU worker replicas (`DP=N`) across multiple availability zones behind the internal load balancer.
 
 ---
 
