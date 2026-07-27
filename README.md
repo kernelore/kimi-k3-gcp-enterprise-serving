@@ -7,15 +7,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE)
 
 > [!NOTE]
-> **Disclaimer:** This repository is a **personal
-> engineering project and reference architecture** for deploying Moonshot AI's
-> **Kimi K3 (`2.8T` total parameters, `896` MoE experts, `16` active per
-> token)** in a secure, private Google Cloud environment. It is **not** an
-> official Google product, is **not** covered by any Google Cloud Service Level
-> Agreements (SLAs), and is **not** subject to official Google support channels.
-> All code, scripts, and architectural models are provided *"as-is"* without
-> warranty for educational, experimental, capacity planning, and benchmarking
-> purposes.
+> **Disclaimer:** This repository is a personal engineering project and reference architecture. It is not an official Google product, is not covered by any Google Cloud Service Level Agreements (SLAs), and is not subject to official Google support channels. All code, scripts, and architectural models are provided "as-is" without warranty for educational, experimental, and benchmarking purposes.
 
 **Target Hardware:** Google Kubernetes Engine (GKE) Blackwell (`2x
 a4-highgpu-8g` nodes — 16x NVIDIA B200 HGX total per serving pod replica over
