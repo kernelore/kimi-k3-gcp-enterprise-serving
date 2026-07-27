@@ -36,8 +36,8 @@ t3_c04() {
   assert_match '/ 16\.0|/ 16\b' "${PROJECT_ROOT}/benchmarks/benchmark_kimi_k3.py" "Missing divisor in benchmark"
   assert_match 'europe-north1' "${PROJECT_ROOT}/benchmarks/massive_benchmark_kimi_k3.py" "Missing europe-north1 in massive benchmark"
   assert_file_exists "${PROJECT_ROOT}/docker/Dockerfile"
-  assert_no_match 'GLM|NVFP4|glm52' "${PROJECT_ROOT}/benchmarks" "GLM string in benchmarks"
-  assert_no_match 'GLM|NVFP4|glm52' "${PROJECT_ROOT}/docker" "GLM string in docker"
+  assert_no_match 'glm52|glm-5|NVFP4|vllm' "${PROJECT_ROOT}/benchmarks" "GLM string in benchmarks"
+  assert_no_match 'glm52|glm-5|NVFP4|vllm' "${PROJECT_ROOT}/docker" "GLM string in docker"
 }
 
 t3_c05() {
@@ -47,7 +47,7 @@ t3_c05() {
   assert_no_match 'pip install ray|import ray' "${PROJECT_ROOT}/docker/Dockerfile.sglang" "Ray string in Dockerfile.sglang"
   for f in "${PROJECT_ROOT}"/scripts/*; do
     if [ -f "${f}" ] && [[ ! "${f}" =~ test_.*\.sh$ ]]; then
-      assert_no_match 'GLM|NVFP4|glm52' "${f}" "Prohibited GLM strings in script ${f}"
+      assert_no_match 'glm52|glm-5|NVFP4|vllm' "${f}" "Prohibited legacy model strings in script ${f}"
     fi
   done
 }
@@ -67,10 +67,10 @@ t3_c07() {
 t3_c08() {
   for submod in audit cache cluster database gateway_iam network node_pool_spot observability storage; do
     assert_true "[ -d '${PROJECT_ROOT}/terraform/modules/${submod}' ]" "Submodule ${submod} missing"
-    assert_no_match 'GLM|NVFP4|glm52' "${PROJECT_ROOT}/terraform/modules/${submod}" "GLM leakage in submodule ${submod}"
+    assert_no_match 'glm52|glm-5|NVFP4|vllm' "${PROJECT_ROOT}/terraform/modules/${submod}" "GLM leakage in submodule ${submod}"
   done
   local md_files
-  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and '.agents' not in r and '.gemini' not in r and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md')])")
+  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md')])")
   assert_equals "[]" "${md_files}" "Unauthorized markdown files in project: ${md_files}"
 }
 

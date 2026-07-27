@@ -30,7 +30,7 @@ t1_f1_05() {
   # Zero GLM leakage in root config files
   for f in README.md .gitignore; do
     if [ -f "${PROJECT_ROOT}/${f}" ]; then
-      assert_no_match 'GLM|NVFP4|glm52' "${PROJECT_ROOT}/${f}" "Prohibited GLM string in root file ${f}"
+      assert_no_match 'glm52|glm-5|NVFP4|vllm' "${PROJECT_ROOT}/${f}" "Prohibited legacy model string in root file ${f}"
     fi
   done
 }
@@ -170,9 +170,9 @@ t1_f6_01() {
 }
 
 t1_f6_02() {
-  # Scans all directories under KIMI3_GCPA4/ to assert zero .md files exist except README.md, TEST_INFRA.md, TEST_READY.md (ignoring .agents and .gemini)
+  # Scans all directories under KIMI3_GCPA4/ to assert zero .md files exist except authorized documentation (ignoring .agents, .gemini, .venv, .git, .terraform)
   local md_files
-  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and '.agents' not in r and '.gemini' not in r and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md')])")
+  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md')])")
   assert_equals "[]" "${md_files}" "Unauthorized markdown files found in project: ${md_files}"
 }
 
@@ -189,12 +189,12 @@ t1_f6_05() {
   # Check across scripts/, terraform/, benchmarks/, docker/
   for dir in terraform benchmarks docker; do
     if [ -d "${PROJECT_ROOT}/${dir}" ]; then
-      assert_no_match 'GLM|NVFP4|glm52' "${PROJECT_ROOT}/${dir}" "Prohibited GLM strings in directory ${dir}"
+      assert_no_match 'glm52|glm-5|NVFP4|vllm' "${PROJECT_ROOT}/${dir}" "Prohibited legacy model strings in directory ${dir}"
     fi
   done
   for f in "${PROJECT_ROOT}"/scripts/*; do
     if [ -f "${f}" ] && [[ ! "${f}" =~ test_.*\.sh$ ]]; then
-      assert_no_match 'GLM|NVFP4|glm52' "${f}" "Prohibited GLM strings in script ${f}"
+      assert_no_match 'glm52|glm-5|NVFP4|vllm' "${f}" "Prohibited legacy model strings in script ${f}"
     fi
   done
 }

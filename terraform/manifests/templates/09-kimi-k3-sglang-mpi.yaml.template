@@ -156,6 +156,10 @@ spec:
           value: "${SGLANG_ATTENTION_BACKEND}"
         - name: SGLANG_CONTEXT_LENGTH
           value: "${SGLANG_CONTEXT_LENGTH}"
+        - name: SGLANG_REASONING_PARSER
+          value: "${SGLANG_REASONING_PARSER}"
+        - name: SGLANG_TOOL_CALL_PARSER
+          value: "${SGLANG_TOOL_CALL_PARSER}"
         - name: MIN_WEIGHTS_GIB
           value: "${MIN_WEIGHTS_GIB}"
         - name: EXPECTED_MODEL_ARCHITECTURE
@@ -263,8 +267,12 @@ spec:
           if [ -n "${SGLANG_ATTENTION_BACKEND}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --attention-backend ${SGLANG_ATTENTION_BACKEND}"
           fi
-          # DAY-0: --reasoning-parser <parser_name>
-          # DAY-0: --tool-call-parser <parser_name>
+          if [ -n "${SGLANG_REASONING_PARSER}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --reasoning-parser ${SGLANG_REASONING_PARSER}"
+          fi
+          if [ -n "${SGLANG_TOOL_CALL_PARSER}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --tool-call-parser ${SGLANG_TOOL_CALL_PARSER}"
+          fi
           # DAY-0: --disable-cuda-graph (or --cuda-graph-backend-decode=disabled) if CUDA graph capture OOMs occur on Blackwell during warmup
           if [ -z "${SGLANG_PP_LAYER_PARTITION:-}" ]; then unset SGLANG_PP_LAYER_PARTITION; fi
           exec python3 -m sglang.launch_server \

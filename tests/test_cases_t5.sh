@@ -42,7 +42,7 @@ t5_adv_01() {
   assert_match '/home/kubernetes/bin/gib' "${sglang_yaml}" "Missing /home/kubernetes/bin/gib hostPath in SGLang manifest"
   assert_match 'trust-remote-code' "${sglang_yaml}" "Missing trust-remote-code flag in SGLang manifest"
   assert_match 'enable-metrics' "${sglang_yaml}" "Missing enable-metrics flag in SGLang manifest"
-  assert_match 'context-length 131072' "${sglang_yaml}" "Missing context-length 131072 flag in SGLang manifest"
+  assert_match 'context-length ["]?131072' "${sglang_yaml}" "Missing context-length 131072 flag in SGLang manifest"
 
   local staging_pvc="${PROJECT_ROOT}/terraform/manifests/templates/02-staging-pvc.yaml.template"
   assert_match 'storage: 2000Gi' "${staging_pvc}" "Missing 2000Gi storage claim in staging PVC template"
