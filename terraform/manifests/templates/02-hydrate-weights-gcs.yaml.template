@@ -34,17 +34,17 @@ spec:
           limits:
             cpu: "32"
             memory: "64Gi"
-        command: ["/bin/sh", "-c"]
+        command: ["/bin/bash", "-c"]
         args:
         - |
           echo "======================================================================"
           set -euo pipefail
           echo "Starting GCS weight hydration to Hyperdisk ML from ${GCS_WEIGHTS_BUCKET}..."
-          mkdir -p /mnt/staging/Kimi-K3-2.8T-MXFP4
-          gcloud storage rsync -r ${GCS_WEIGHTS_BUCKET}/Kimi-K3-2.8T-MXFP4 /mnt/staging/Kimi-K3-2.8T-MXFP4/
+          mkdir -p /mnt/staging/Kimi-K3
+          gcloud storage rsync -r ${GCS_WEIGHTS_BUCKET}/Kimi-K3 /mnt/staging/Kimi-K3/
           python3 -c "
           import os, glob, json
-          dest = '/mnt/staging/Kimi-K3-2.8T-MXFP4'
+          dest = '/mnt/staging/Kimi-K3'
           shards = glob.glob(os.path.join(dest, '*.safetensors'))
           total_size = sum(os.path.getsize(f) for f in shards)
           min_gib = float(os.getenv('MIN_WEIGHTS_GIB', '1000'))

@@ -40,14 +40,14 @@ spec:
           set -euo pipefail
           echo "Starting ${MODEL_REPO_ID} weight acquisition from Hugging Face Hub via Python snapshot_download()..."
           export HF_HUB_ENABLE_HF_TRANSFER=1
-          mkdir -p /mnt/staging/Kimi-K3-2.8T-MXFP4
+          mkdir -p /mnt/staging/Kimi-K3
           python3 -c "
           import os, json, glob, sys
           from huggingface_hub import snapshot_download, HfApi
           from huggingface_hub.utils import RepositoryNotFoundError, GatedRepoError, HfHubHTTPError
           repo_id = os.environ['MODEL_REPO_ID']
           token = os.environ.get('HF_TOKEN')
-          dest = '/mnt/staging/Kimi-K3-2.8T-MXFP4'
+          dest = '/mnt/staging/Kimi-K3'
           print(f'=== HUGGING FACE PRE-FLIGHT CHECK FOR {repo_id} ===')
           api = HfApi(token=token)
           try:

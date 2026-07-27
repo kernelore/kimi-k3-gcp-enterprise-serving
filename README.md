@@ -208,7 +208,7 @@ significantly:
 
     -   **Distributed Orchestration**: OpenMPI manages rank assignment across
         the 2+ nodes via headless DNS discovery (`mpirun -n 16
-        --allow-run-as-root --hostfile /tmp/hostfile trtllm-llmapi-launch trtllm-serve /mnt/rox/Kimi-K3-2.8T-MXFP4 --backend pytorch`).
+        --allow-run-as-root --hostfile /tmp/hostfile trtllm-llmapi-launch trtllm-serve /mnt/rox/Kimi-K3 --backend pytorch`).
     -   **Inter-Node Interconnect**: NCCL handles all inter-node B200 tensor and
         pipeline synchronization directly via GPUDirect RDMA over RoCEv2
         (tuned via GKE gIB `set_nccl_env.sh`).

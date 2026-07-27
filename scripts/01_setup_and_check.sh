@@ -161,7 +161,7 @@ env_label               = "${ENV_LABEL:-kimi-k3-prod}"
 db_password             = "${DB_PASSWORD}"
 
 # SGLang Multi-Node Serving Parameters (Documented Reference):
-# model_repo_id      = "${MODEL_REPO_ID:-moonshotai/Kimi-K3-2.8T-MXFP4}"
+# model_repo_id      = "${MODEL_REPO_ID:-moonshotai/Kimi-K3}"
 # serving_model_name = "${SERVING_MODEL_NAME:-kimi-k3-2.8t-mxfp4}"
 # sglang_tp_size     = ${SGLANG_TP_SIZE:-16}
 # sglang_pp_size     = ${SGLANG_PP_SIZE:-1}
