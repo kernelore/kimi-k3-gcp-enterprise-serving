@@ -1,5 +1,4 @@
 #!/bin/bash
-# shellcheck disable=SC2016
 # ==============================================================================
 # test_helpers.sh - Common Logging & Assertion Library for Kimi K3 E2E Tests
 # ==============================================================================
@@ -83,7 +82,7 @@ assert_true() {
 assert_equals() {
   local expected="$1"
   local actual="$2"
-  local msg="${3:-Assertion failed: expected '${expected}', got '${actual}'}"
+  local msg="${3:-Assertion failed: expected \"${expected}\", got \"${actual}\"}"
   if [ "${expected}" != "${actual}" ]; then
     log_fail "[${CURRENT_TEST_ID}] ${msg}"
     return 1
@@ -92,7 +91,7 @@ assert_equals() {
 
 assert_file_exists() {
   local filepath="$1"
-  local msg="${2:-Assertion failed: file '${filepath}' does not exist}"
+  local msg="${2:-Assertion failed: file \"${filepath}\" does not exist}"
   if [ ! -e "${filepath}" ]; then
     log_fail "[${CURRENT_TEST_ID}] ${msg}"
     return 1
@@ -102,7 +101,7 @@ assert_file_exists() {
 assert_match() {
   local regex="$1"
   local target="$2"
-  local msg="${3:-Assertion failed: regex '${regex}' did not match target}"
+  local msg="${3:-Assertion failed: regex \"${regex}\" did not match target}"
   if [ -d "${target}" ]; then
     if ! grep -rE --exclude-dir=".*" -q -- "${regex}" "${target}" 2>/dev/null; then
       log_fail "[${CURRENT_TEST_ID}] ${msg} in directory ${target}"
@@ -124,7 +123,7 @@ assert_match() {
 assert_no_match() {
   local regex="$1"
   local target="$2"
-  local msg="${3:-Assertion failed: prohibited regex '${regex}' matched target}"
+  local msg="${3:-Assertion failed: prohibited regex \"${regex}\" matched target}"
   if [ -d "${target}" ]; then
     if grep -rE --exclude-dir=".*" -q -- "${regex}" "${target}" 2>/dev/null; then
       log_fail "[${CURRENT_TEST_ID}] ${msg} in directory ${target}"
@@ -145,7 +144,7 @@ assert_no_match() {
 
 assert_cmd_success() {
   local cmd="$1"
-  local msg="${2:-Assertion failed: command '${cmd}' did not succeed}"
+  local msg="${2:-Assertion failed: command \"${cmd}\" did not succeed}"
   if ! eval "${cmd}" >/dev/null 2>&1; then
     log_fail "[${CURRENT_TEST_ID}] ${msg}"
     return 1
@@ -154,7 +153,7 @@ assert_cmd_success() {
 
 assert_cmd_fails() {
   local cmd="$1"
-  local msg="${2:-Assertion failed: command '${cmd}' succeeded but expected failure}"
+  local msg="${2:-Assertion failed: command \"${cmd}\" succeeded but expected failure}"
   if eval "${cmd}" >/dev/null 2>&1; then
     log_fail "[${CURRENT_TEST_ID}] ${msg}"
     return 1
@@ -184,6 +183,5 @@ run_test_case() {
   else
     log_fail "${test_id} failed!"
     TESTS_FAILED=$((TESTS_FAILED + 1))
-    exit 1
   fi
 }

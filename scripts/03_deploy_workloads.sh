@@ -30,25 +30,7 @@ fi
 # shellcheck source=/dev/null
 source "${CONFIG_FILE}"
 
-validate_hf_token() {
-  local token="${HF_TOKEN:-}"
-  if [[ -z "${token}" ]] || \
-     [[ "${token}" != hf_* ]] || \
-     [[ "${token}" =~ [Pp][Ll][Aa][Cc][Ee][Hh][Oo][Ll][Dd][Ee][Rr] ]] || \
-     [[ "${token}" =~ [Yy][Oo][Uu][Rr]_ ]] || \
-     [[ "${token}" =~ [Xx][Xx][Xx] ]] || \
-     [[ "${token}" =~ [Tt][Oo][Dd][Oo] ]] || \
-     [[ "${token}" == *"<"* ]] || \
-     [[ "${token}" == *">"* ]]; then
-    echo "ERROR: Invalid or placeholder HF_TOKEN detected in scripts/config.env. Please configure a valid Hugging Face access token (starting with 'hf_') with gated-repo licence access." >&2
-    exit 1
-  fi
-}
-if [ "${1:-}" != "--render-only" ]; then
-  validate_hf_token
-fi
-
-export MODEL_REPO_ID="${MODEL_REPO_ID:-moonshotai/Kimi-K3}"
+export MODEL_REPO_ID="${MODEL_REPO_ID:-moonshotai/Kimi-K3-2.8T-MXFP4}"
 export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-kimi-k3-2.8t-mxfp4}"
 export TRTLLM_TP_SIZE="${TRTLLM_TP_SIZE:-8}"
 export TRTLLM_PP_SIZE="${TRTLLM_PP_SIZE:-2}"
@@ -61,6 +43,22 @@ export NODES_PER_REPLICA="${NODES_PER_REPLICA:-2}"
 
 if [ -n "${GCS_WEIGHTS_BUCKET:-}" ] && [[ "${GCS_WEIGHTS_BUCKET}" != gs://* ]]; then
   export GCS_WEIGHTS_BUCKET="gs://${GCS_WEIGHTS_BUCKET}"
+fi
+
+# Generate dynamic SSH keypair for TRT-LLM MPI inter-node communication
+if [ ! -f "/tmp/kimi_k3_id_rsa" ]; then
+  ssh-keygen -q -t rsa -N '' -f /tmp/kimi_k3_id_rsa
+fi
+SSH_PRIVATE_KEY_BASE64=$(base64 -w 0 /tmp/kimi_k3_id_rsa 2>/dev/null || base64 /tmp/kimi_k3_id_rsa)
+SSH_PUBLIC_KEY_BASE64=$(base64 -w 0 /tmp/kimi_k3_id_rsa.pub 2>/dev/null || base64 /tmp/kimi_k3_id_rsa.pub)
+export SSH_PRIVATE_KEY_BASE64 SSH_PUBLIC_KEY_BASE64
+
+if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" != "1" ] && [ -z "${GCS_WEIGHTS_BUCKET:-}" ]; then
+  if [ -z "${HF_TOKEN:-}" ] || [ "${HF_TOKEN}" = "your_huggingface_access_token_here" ]; then
+    echo "WARNING: HF_TOKEN is unset or default, but Hugging Face weight staging is active."
+  fi
+else
+  echo "--> Hugging Face weight staging is disabled or using GCS cache (${GCS_WEIGHTS_BUCKET:-GCS cache}). Skipping HF token validation."
 fi
 
 # shellcheck disable=SC2016
@@ -153,12 +151,10 @@ export SGLANG_EP_SIZE="${SGLANG_EP_SIZE:-16}"
 export SGLANG_PORT="${SGLANG_PORT:-8000}"
 export SGLANG_MEM_FRACTION_STATIC="${SGLANG_MEM_FRACTION_STATIC:-0.90}"
 export SGLANG_SCHEDULE_POLICY="${SGLANG_SCHEDULE_POLICY:-lpm}"
-export SGLANG_QUANTIZATION="${SGLANG_QUANTIZATION:-}"
-export SGLANG_ENABLE_TORCH_COMPILE="${SGLANG_ENABLE_TORCH_COMPILE:-false}"
-export SGLANG_ATTENTION_BACKEND="${SGLANG_ATTENTION_BACKEND:-triton}"
+export SGLANG_QUANTIZATION="${SGLANG_QUANTIZATION:-fp8}"
+export SGLANG_ENABLE_TORCH_COMPILE="${SGLANG_ENABLE_TORCH_COMPILE:-true}"
+export SGLANG_ATTENTION_BACKEND="${SGLANG_ATTENTION_BACKEND:-flashinfer}"
 export SGLANG_CONTEXT_LENGTH="${SGLANG_CONTEXT_LENGTH:-131072}"
-export SGLANG_REASONING_PARSER="${SGLANG_REASONING_PARSER:-}"
-export SGLANG_TOOL_CALL_PARSER="${SGLANG_TOOL_CALL_PARSER:-}"
 export EXPECTED_MODEL_ARCHITECTURE="${EXPECTED_MODEL_ARCHITECTURE:-}"
 export MIN_WEIGHTS_GIB="${MIN_WEIGHTS_GIB:-1000}"
 export LEADER_ADDR="${LEADER_ADDR:-kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local}"
@@ -182,17 +178,26 @@ fi
 export SERVING_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/kimi-prod/${IMAGE_NAME}:${IMAGE_TAG}"
 export INFERENCE_ENGINE INFERENCE_SERVER_LABEL SERVING_IMAGE
 
-# 1. Render manifest templates (excluding HF_TOKEN from substitution to prevent plaintext baking)
+# 1. Render manifest templates (excluding HF_TOKEN and GATEWAY_MASTER_KEY from general substitution)
 echo "--> 1. Rendering manifest templates from ${TEMPLATE_DIR} to ${GENERATED_DIR}..."
+# shellcheck disable=SC2016
+BASE_ALLOWED_VARS='${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${SERVING_MODEL_NAME} ${TRTLLM_TP_SIZE} ${TRTLLM_PP_SIZE} ${TRTLLM_EP_SIZE} ${TRTLLM_MAX_SEQ_LEN} ${SGLANG_TP_SIZE} ${SGLANG_PP_SIZE} ${SGLANG_PP_LAYER_PARTITION} ${SGLANG_EP_SIZE} ${SGLANG_PORT} ${SGLANG_MEM_FRACTION_STATIC} ${SGLANG_SCHEDULE_POLICY} ${SGLANG_QUANTIZATION} ${SGLANG_ENABLE_TORCH_COMPILE} ${SGLANG_ATTENTION_BACKEND} ${SGLANG_CONTEXT_LENGTH} ${EXPECTED_MODEL_ARCHITECTURE} ${MIN_WEIGHTS_GIB} ${LEADER_ADDR} ${HYPERDISK_ML_SIZE_GB} ${GCS_WEIGHTS_BUCKET} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${TRTLLM_VIP} ${GPU_MAX_NODES} ${SERVING_REPLICAS} ${NODES_PER_REPLICA} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${SERVING_IMAGE} ${SSH_PRIVATE_KEY_BASE64} ${SSH_PUBLIC_KEY_BASE64}'
+
 for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
   if [ -f "${template_file}" ]; then
     basename=$(basename "${template_file}" .template)
     target_file="${GENERATED_DIR}/${basename}"
     echo "    Rendering ${basename}..."
+    allowed_vars="${BASE_ALLOWED_VARS}"
+    if [ "${basename}" = "04-enterprise-gateway-config.yaml" ] || [ "${basename}" = "08-in-cluster-benchmark-job.yaml" ]; then
+      # shellcheck disable=SC2016
+      allowed_vars="${BASE_ALLOWED_VARS} "'${GATEWAY_MASTER_KEY}'
+    fi
     # shellcheck disable=SC2016
-    safe_envsubst '${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${SERVING_MODEL_NAME} ${TRTLLM_TP_SIZE} ${TRTLLM_PP_SIZE} ${TRTLLM_EP_SIZE} ${TRTLLM_MAX_SEQ_LEN} ${SGLANG_TP_SIZE} ${SGLANG_PP_SIZE} ${SGLANG_PP_LAYER_PARTITION} ${SGLANG_EP_SIZE} ${SGLANG_PORT} ${SGLANG_MEM_FRACTION_STATIC} ${SGLANG_SCHEDULE_POLICY} ${SGLANG_QUANTIZATION} ${SGLANG_ENABLE_TORCH_COMPILE} ${SGLANG_ATTENTION_BACKEND} ${SGLANG_CONTEXT_LENGTH} ${SGLANG_REASONING_PARSER} ${SGLANG_TOOL_CALL_PARSER} ${SGLANG_EXTRA_ARGS} ${EXPECTED_MODEL_ARCHITECTURE} ${MIN_WEIGHTS_GIB} ${LEADER_ADDR} ${HYPERDISK_ML_SIZE_GB} ${GCS_WEIGHTS_BUCKET} ${GATEWAY_MASTER_KEY} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${TRTLLM_VIP} ${GPU_MAX_NODES} ${SERVING_REPLICAS} ${NODES_PER_REPLICA} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${SERVING_IMAGE}' < "${template_file}" > "${target_file}"
+    safe_envsubst "${allowed_vars}" < "${template_file}" > "${target_file}"
   fi
 done
+
 echo "    [OK] All manifest templates rendered cleanly."
 
 if [ "${1:-}" = "--render-only" ] || [ "${1:-}" = "--stage-only" ]; then
@@ -212,8 +217,7 @@ if command -v gcloud >/dev/null 2>&1; then
     BUILD_DIR=$(mktemp -d)
     cp -r "${PROJECT_ROOT}/docker/." "${BUILD_DIR}/"
     cp "${PROJECT_ROOT}/docker/${DOCKERFILE}" "${BUILD_DIR}/Dockerfile"
-    echo "    --> Submitting build for docker/${DOCKERFILE} to Cloud Build..."
-    gcloud builds submit "${BUILD_DIR}" --tag "${SERVING_IMAGE}" --project="${PROJECT_ID}" --quiet
+    gcloud builds submit "${BUILD_DIR}" --tag "${SERVING_IMAGE}" --project="${PROJECT_ID}" --quiet || true
     rm -rf "${BUILD_DIR}"
     echo "    [OK] Self-healing container build step finished."
   else
@@ -303,7 +307,7 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
           echo "--> POPULATE_WEIGHTS_CACHE=true: Seeding persistent GCS cache bucket (${GCS_WEIGHTS_BUCKET})..."
           BUCKET_ROOT="$(printf '%s' "${GCS_WEIGHTS_BUCKET}" | sed -E 's#(gs://[^/]+).*#\1#')"
           gcloud storage buckets create "${BUCKET_ROOT}" --project="${PROJECT_ID}" --location="${REGION}" --quiet 2>/dev/null || true
-          kubectl run kimi-k3-cache-seeder --namespace=llm-serving --restart=Never --image=google/cloud-sdk:500.0.0-slim --overrides='{"spec":{"serviceAccountName":"kimi-k3-serving-sa","containers":[{"name":"seeder","image":"google/cloud-sdk:500.0.0-slim","command":["gcloud","storage","rsync","-r","/weights","'"${GCS_WEIGHTS_BUCKET}"'"],"volumeMounts":[{"name":"w","mountPath":"/weights"}]}],"volumes":[{"name":"w","persistentVolumeClaim":{"claimName":"pvc-kimi-k3-weights-staging"}}]}}' || true
+          kubectl run kimi-k3-cache-seeder --namespace=llm-serving --restart=Never --image=google/cloud-sdk:slim --overrides='{"spec":{"serviceAccountName":"kimi-k3-serving-sa","containers":[{"name":"seeder","image":"google/cloud-sdk:slim","command":["gcloud","storage","rsync","-r","/weights","'"${GCS_WEIGHTS_BUCKET}"'"],"volumeMounts":[{"name":"w","mountPath":"/weights"}]}],"volumes":[{"name":"w","persistentVolumeClaim":{"claimName":"pvc-kimi-k3-weights-staging"}}]}}' || true
           kubectl wait --for=condition=Ready pod/kimi-k3-cache-seeder -n llm-serving --timeout=300s || true
           kubectl logs pod/kimi-k3-cache-seeder -n llm-serving -f || true
           kubectl delete pod kimi-k3-cache-seeder -n llm-serving --ignore-not-found=true

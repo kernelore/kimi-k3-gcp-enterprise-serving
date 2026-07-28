@@ -90,7 +90,7 @@ module "database" {
   owner_label = var.owner_label
   ttl_label   = var.ttl_label
   env_label   = var.env_label
-  depends_on  = [module.network]
+  depends_on  = [module.network, module.cache]
 }
 
 module "audit" {

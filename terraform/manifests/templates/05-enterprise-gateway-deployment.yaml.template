@@ -50,6 +50,7 @@ spec:
         prometheus.io/port: "4000"
         prometheus.io/path: "/metrics"
     spec:
+      priorityClassName: high-priority-serving
       serviceAccountName: kimi-k3-gateway-sa
       terminationGracePeriodSeconds: 60
       nodeSelector:

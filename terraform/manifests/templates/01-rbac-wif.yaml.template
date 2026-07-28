@@ -39,3 +39,12 @@ metadata:
 type: Opaque
 data:
   HF_TOKEN: ${HF_TOKEN_BASE64}
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority-serving
+value: 1000000
+globalDefault: false
+description: "High-priority class for serving workloads."
+

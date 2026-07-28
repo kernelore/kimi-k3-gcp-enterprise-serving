@@ -58,6 +58,7 @@ data:
 
     litellm_settings:
       callbacks: ["custom_callbacks.proxy_handler_instance"]
+      preserve_thought_blocks: true
       cache: true
       cache_params:
         type: redis

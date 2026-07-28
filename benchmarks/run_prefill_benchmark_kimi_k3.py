@@ -9,7 +9,6 @@ Normalizes per-GPU throughput by dividing system prompt tokens/sec by 16.0.
 """
 
 import argparse
-from datetime import datetime, timezone
 import json
 import os
 import sys
@@ -65,9 +64,16 @@ def parse_args():
   return parser.parse_args()
 
 
+from datetime import datetime, timezone
+import uuid
+
 def measure_prefill(
     endpoint, model, output_path, engine="trtllm", metadata="{}", api_key=""
 ):
+  suite_start_ts = datetime.now(timezone.utc).isoformat()
+  nonce = uuid.uuid4().hex[:12]
+  prompt_content = f"[Prefill Nonce={nonce}] {SYNTHETIC_8K}"
+
   payload = {
       "model": model,
       "max_tokens": 16,
@@ -76,9 +82,9 @@ def measure_prefill(
       "stream_options": {"include_usage": True},
   }
   if "/chat/completions" in endpoint:
-    payload["messages"] = [{"role": "user", "content": SYNTHETIC_8K}]
+    payload["messages"] = [{"role": "user", "content": prompt_content}]
   else:
-    payload["prompt"] = SYNTHETIC_8K
+    payload["prompt"] = prompt_content
   req_body = json.dumps(payload).encode("utf-8")
   headers = {
       "Content-Type": "application/json",
@@ -95,90 +101,65 @@ def measure_prefill(
   )
 
   t_start = time.time()
-  start_dt = datetime.now(timezone.utc)
-  suite_start_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
   t_first = None
   prompt_tokens = 8192
-  has_exact_usage = False
 
+  req_success = False
   try:
     with urllib.request.urlopen(req, timeout=300) as resp:
       for line in resp:
         decoded = line.decode("utf-8").strip()
-        if not decoded.startswith("data: "):
+        if not decoded.startswith("data: ") or decoded == "data: [DONE]":
           continue
-        data_str = decoded[6:]
-        if data_str == "[DONE]":
-          break
         try:
-          chunk = json.loads(data_str)
-          if (
-              "choices" in chunk
-              and chunk["choices"]
-              and chunk["choices"][0].get("text")
-          ):
-            if t_first is None:
-              t_first = time.time()
+          chunk = json.loads(decoded[6:])
+          choices = chunk.get("choices", [])
+          if choices and choices[0]:
+            choice = choices[0]
+            if choice.get("text") or choice.get("delta", {}).get("content"):
+              if t_first is None:
+                t_first = time.time()
           usage = chunk.get("usage")
           if usage and isinstance(usage, dict):
-            if "prompt_tokens" in usage:
-              prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
-              has_exact_usage = True
-        except (
-            json.JSONDecodeError,
-            KeyError,
-            IndexError,
-            TypeError,
-            ValueError,
-            Exception,
-        ):
+            prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+        except Exception:
           pass
+      req_success = True
   except Exception as e:
     print(f"Warning: Prefill request failed or timed out: {e}")
 
   t_end = time.time()
-  end_dt = datetime.now(timezone.utc)
-  suite_end_ts = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+  suite_end_ts = datetime.now(timezone.utc).isoformat()
   ttft = (t_first - t_start) if t_first else (t_end - t_start)
-  prefill_tok_s = prompt_tokens / ttft if ttft > 0 else 0.0
+  prefill_tok_s = prompt_tokens / ttft if (ttft > 0 and req_success) else 0.0
 
   try:
     meta_dict = json.loads(metadata) if metadata else {}
-  except (json.JSONDecodeError, TypeError, ValueError, Exception):
+  except Exception:
     meta_dict = {"raw": metadata}
 
-  try:
-    result = {
-        "engine": engine,
-        "metadata": meta_dict,
-        "prompt_tokens": prompt_tokens,
-        "token_count_source": "openai_usage" if has_exact_usage else "chunk_count_fallback",
-        "ttft_sec": ttft,
-        "ttft_ms": ttft * 1000.0,
-        "prefill_tok_s_system": prefill_tok_s,
-        "prefill_tok_s_per_gpu": prefill_tok_s / 16.0,
-        "prefill_config": {
-            "suite_start_ts": suite_start_ts,
-            "suite_end_ts": suite_end_ts,
-            "suite_duration_s": round((t_end - t_start), 4),
-        },
-    }
-  except (ZeroDivisionError, KeyError, TypeError, ValueError, Exception):
-    result = {
-        "engine": engine,
-        "metadata": meta_dict,
-        "prompt_tokens": 0,
-        "token_count_source": "none",
-        "ttft_sec": 0.0,
-        "ttft_ms": 0.0,
-        "prefill_tok_s_system": 0.0,
-        "prefill_tok_s_per_gpu": 0.0,
-        "prefill_config": {
-            "suite_start_ts": suite_start_ts,
-            "suite_end_ts": suite_end_ts,
-            "suite_duration_s": round((t_end - t_start), 4),
-        },
-    }
+  if "run_timestamp" not in meta_dict:
+    meta_dict["run_timestamp"] = suite_start_ts
+
+  prefill_cfg = {
+      "metadata": meta_dict,
+      "suite_start_ts": suite_start_ts,
+      "suite_end_ts": suite_end_ts,
+  }
+
+  result = {
+      "engine": engine,
+      "metadata": meta_dict,
+      "prefill_config": prefill_cfg,
+      "prompt_tokens": prompt_tokens if req_success else 0,
+      "ttft_sec": ttft,
+      "ttft_ms": ttft * 1000.0,
+      "prefill_tok_s_system": prefill_tok_s,
+      "prefill_tok_s_per_gpu": prefill_tok_s / 16.0,
+      "success": req_success,
+      "suite_start_ts": suite_start_ts,
+      "suite_end_ts": suite_end_ts,
+  }
   print(
       f"=== Kimi K3 PREFILL (PROMPT INGESTION) BENCHMARK (Engine: {engine}) ==="
   )
@@ -195,12 +176,6 @@ def measure_prefill(
       f"Per-GPU Prefill Rate: {result['prefill_tok_s_per_gpu']:.2f} prompt"
       " tok/s/GPU (normalized by 16.0)"
   )
-
-  try:
-    from telemetry_sanitizer import sanitize_telemetry
-  except ImportError:
-    from benchmarks.telemetry_sanitizer import sanitize_telemetry
-  result = sanitize_telemetry(result, output_path)
 
   output_dir = os.path.dirname(output_path)
   if output_dir:

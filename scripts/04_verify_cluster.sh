@@ -31,7 +31,7 @@ fi
 
 PF_PIDS=()
 cleanup_port_forwards() {
-  for pid in "${PF_PIDS[@]}"; do
+  for pid in "${PF_PIDS[@]+"${PF_PIDS[@]}"}"; do
     if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
       kill "${pid}" 2>/dev/null || true
     fi

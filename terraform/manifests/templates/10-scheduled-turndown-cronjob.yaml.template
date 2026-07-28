@@ -97,4 +97,4 @@ spec:
             command:
             - "/bin/sh"
             - "-c"
-            - "kubectl scale statefulset kimi-k3-serving --replicas=${NODES_PER_REPLICA} -n llm-serving || true"
+            - "kubectl scale statefulset kimi-k3-serving --replicas=${SERVING_REPLICAS} -n llm-serving || true"

@@ -1,5 +1,4 @@
 #!/bin/bash
-# shellcheck disable=SC1091
 # ==============================================================================
 # test_e2e_kimi_k3.sh - Master E2E Test Suite Runner for Kimi K3 Architecture
 # ==============================================================================
@@ -7,33 +6,32 @@
 # ==============================================================================
 set -euo pipefail
 
-# Define project root and source helpers
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 export PROJECT_ROOT
 
 # Source test helpers
-# shellcheck source=./test_helpers.sh
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/test_helpers.sh"
 
 # Source test modules
-# shellcheck source=./test_cases_t1.sh
+# shellcheck disable=SC1091
 if [ -f "${SCRIPT_DIR}/test_cases_t1.sh" ]; then
   source "${SCRIPT_DIR}/test_cases_t1.sh"
 fi
-# shellcheck source=./test_cases_t2.sh
+# shellcheck disable=SC1091
 if [ -f "${SCRIPT_DIR}/test_cases_t2.sh" ]; then
   source "${SCRIPT_DIR}/test_cases_t2.sh"
 fi
-# shellcheck source=./test_cases_t3.sh
+# shellcheck disable=SC1091
 if [ -f "${SCRIPT_DIR}/test_cases_t3.sh" ]; then
   source "${SCRIPT_DIR}/test_cases_t3.sh"
 fi
-# shellcheck source=./test_cases_t4.sh
+# shellcheck disable=SC1091
 if [ -f "${SCRIPT_DIR}/test_cases_t4.sh" ]; then
   source "${SCRIPT_DIR}/test_cases_t4.sh"
 fi
-# shellcheck source=./test_cases_t5.sh
+# shellcheck disable=SC1091
 if [ -f "${SCRIPT_DIR}/test_cases_t5.sh" ]; then
   source "${SCRIPT_DIR}/test_cases_t5.sh"
 fi
