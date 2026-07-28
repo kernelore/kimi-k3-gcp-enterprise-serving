@@ -1,5 +1,5 @@
 # Pinned SGLang Blackwell container image for Kimi K3 MXFP4 multi-node serving
-FROM lmsysorg/sglang:v0.5.16-cu130
+FROM lmsysorg/sglang:kimi-k3@sha256:81a9c00654b3e4c7c681a4728a64fcb4853aa698dc9fea1959bbf4eb26bfb2e5
 
 LABEL org.opencontainers.image.title="Kimi K3 MXFP4 Sovereign SGLang Serving Runtime"
 LABEL org.opencontainers.image.description="Multi-node RoCEv2 RDMA distributed inference engine for Kimi K3 (2.8T parameters)"
