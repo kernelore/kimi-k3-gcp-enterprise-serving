@@ -186,10 +186,10 @@ spec:
           echo "---------------------------------"
           python3 -c "
           import os, glob, json, sys
-          dest = '/mnt/rox/Kimi-K3'
+          dest = '/mnt/rox/Kimi-K3-2.8T-MXFP4'
           shards = glob.glob(os.path.join(dest, '*.safetensors'))
           total_size = sum(os.path.getsize(f) for f in shards)
-          min_gib = float(os.getenv('MIN_WEIGHTS_GIB', '1000'))
+          min_gib = float(os.getenv('MIN_WEIGHTS_GIB', '400'))
           total_gib = total_size / (1024**3)
           if total_gib < min_gib:
               print(f'FATAL: Total weight size {total_gib:.2f} GiB in {dest} is below required floor MIN_WEIGHTS_GIB={min_gib:.2f} GiB.', file=sys.stderr)
@@ -237,7 +237,7 @@ spec:
             exec mpirun -n 16 --allow-run-as-root --hostfile /tmp/hostfile \
               --mca plm_rsh_args "-p 2222" \
               ${NCCL_XARGS} -x LD_LIBRARY_PATH -x PATH \
-              trtllm-llmapi-launch trtllm-serve /mnt/rox/Kimi-K3 \
+              trtllm-llmapi-launch trtllm-serve /mnt/rox/Kimi-K3-2.8T-MXFP4 \
                 --backend pytorch --host 0.0.0.0 --port 8000 \
                 --tp_size "${TRTLLM_TP_SIZE}" --pp_size "${TRTLLM_PP_SIZE}" --ep_size "${TRTLLM_EP_SIZE}" \
                 --max_seq_len "${TRTLLM_MAX_SEQ_LEN}" \

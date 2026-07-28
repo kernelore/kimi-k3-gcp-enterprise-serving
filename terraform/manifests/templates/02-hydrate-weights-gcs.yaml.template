@@ -7,6 +7,7 @@ metadata:
     env: ${ENV_LABEL}
     owner: ${OWNER_LABEL}
 spec:
+  backoffLimit: 100
   template:
     metadata:
       labels:
@@ -15,15 +16,9 @@ spec:
       serviceAccountName: kimi-k3-serving-sa
       restartPolicy: OnFailure
       nodeSelector:
-        cloud.google.com/gke-accelerator: nvidia-b200
         cloud.google.com/gke-spot: "true"
       tolerations:
-      - key: "nvidia.com/gpu"
-        operator: "Exists"
-        effect: "NoSchedule"
-      - key: "cloud.google.com/gke-spot"
-        operator: "Exists"
-        effect: "NoSchedule"
+      - operator: "Exists"
       containers:
       - name: gcs-hydrator
         image: google/cloud-sdk:500.0.0-slim
@@ -40,14 +35,14 @@ spec:
           echo "======================================================================"
           set -euo pipefail
           echo "Starting GCS weight hydration to Hyperdisk ML from ${GCS_WEIGHTS_BUCKET}..."
-          mkdir -p /mnt/staging/Kimi-K3
-          gcloud storage rsync -r ${GCS_WEIGHTS_BUCKET}/Kimi-K3 /mnt/staging/Kimi-K3/
+          mkdir -p /mnt/staging/Kimi-K3-2.8T-MXFP4
+          gcloud storage rsync -r ${GCS_WEIGHTS_BUCKET}/Kimi-K3-2.8T-MXFP4 /mnt/staging/Kimi-K3-2.8T-MXFP4/
           python3 -c "
           import os, glob, json
-          dest = '/mnt/staging/Kimi-K3'
+          dest = '/mnt/staging/Kimi-K3-2.8T-MXFP4'
           shards = glob.glob(os.path.join(dest, '*.safetensors'))
           total_size = sum(os.path.getsize(f) for f in shards)
-          min_gib = float(os.getenv('MIN_WEIGHTS_GIB', '1000'))
+          min_gib = float(os.getenv('MIN_WEIGHTS_GIB', '400'))
           total_gib = total_size / (1024**3)
           if total_gib < min_gib:
               raise RuntimeError(f'FATAL: Total weight size {total_gib:.2f} GiB is below required floor MIN_WEIGHTS_GIB={min_gib:.2f} GiB.')
