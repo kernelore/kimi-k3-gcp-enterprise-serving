@@ -19,11 +19,20 @@ get_engine_version() {
     echo "ERROR: Dockerfile not found at ${dockerfile}" >&2
     return 1
   fi
-  local tag
-  tag=$(grep -oE '^FROM[[:space:]]+[^[:space:]]+' "${dockerfile}" | awk -F':' '{print $2}' | head -n 1)
-  if [ -z "${tag}" ]; then
-    echo "ERROR: Could not extract image tag from ${dockerfile}" >&2
+  local line image tag digest
+  line=$(grep -E '^FROM[[:space:]]+' "${dockerfile}" | head -n 1)
+  image=$(echo "${line}" | awk '{print $2}')
+  if [ -z "${image}" ]; then
+    echo "ERROR: Could not extract image from ${dockerfile}" >&2
     return 1
+  fi
+  if [[ "${image}" == *"@"* ]]; then
+    digest="${image#*@}"
+    tag="${image%%@*}"
+    tag="${tag#*:}"
+  else
+    digest=""
+    tag="${image#*:}"
   fi
   # Normalize: strip leading v/V, trailing -cu130, trailing -py3
   tag="${tag#v}"

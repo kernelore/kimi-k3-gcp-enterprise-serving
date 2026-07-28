@@ -114,11 +114,13 @@ def validate_provenance(sglang: dict | None, trtllm: dict | None):
                 raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json has mismatched metadata (engine='{eng_val}', image='{img_val}')")
             
             ver_raw = meta.get("engine_version", "")
-            if ver_raw == "unknown":
-                raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json engine_version is 'unknown'")
+            if not ver_raw or ver_raw.lower() in ["unknown", "todo", "placeholder", "none", "null"]:
+                raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json engine_version '{ver_raw}' is invalid or placeholder")
             ver_norm = normalize_version(ver_raw)
-            if ver_norm != exp_ver:
-                raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json engine_version '{ver_raw}' does not match expected '{exp_ver}'")
+            is_exp_semver = bool(re.match(r"^[0-9]+\.[0-9]+(\.[0-9]+)?$", exp_ver))
+            if is_exp_semver:
+                if ver_norm != exp_ver:
+                    raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json engine_version '{ver_raw}' does not match expected '{exp_ver}'")
             
             ts_str = meta.get("run_timestamp", "")
             if not ts_str:

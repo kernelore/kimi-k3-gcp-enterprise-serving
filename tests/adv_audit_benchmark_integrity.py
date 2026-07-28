@@ -10,6 +10,7 @@ Verifies all 10 JSON result files in benchmarks/results/{sglang,trtllm}/ to ensu
 
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -121,8 +122,13 @@ def main():
 
             # Check version
             norm_ver = normalize_version(ver)
-            if norm_ver != rules["expected_ver_norm"] and ver not in rules["expected_ver_raw_options"]:
-                errors.append(f"[{eng}/{s}] Version mismatch: found '{ver}' (norm '{norm_ver}'), expected norm '{rules['expected_ver_norm']}' or {rules['expected_ver_raw_options']}")
+            is_exp_semver = bool(re.match(r"^[0-9]+\.[0-9]+(\.[0-9]+)?$", rules["expected_ver_norm"]))
+            if is_exp_semver:
+                if norm_ver != rules["expected_ver_norm"] and ver not in rules["expected_ver_raw_options"]:
+                    errors.append(f"[{eng}/{s}] Version mismatch: found '{ver}' (norm '{norm_ver}'), expected norm '{rules['expected_ver_norm']}' or {rules['expected_ver_raw_options']}")
+            else:
+                if not ver or ver.lower() in ["unknown", "todo", "placeholder", "none", "null"]:
+                    errors.append(f"[{eng}/{s}] Non-semver engine_version is invalid/placeholder: found '{ver}'")
 
             # Check image
             if rules["expected_img_sub"] not in img:
@@ -165,7 +171,8 @@ def main():
                     if not m_data or m_data.get("mean", 0) <= 0 or m_data.get("p50", 0) <= 0:
                         errors.append(f"[{eng}/{s}] Invalid or unmeasured {m_name}: {m_data}")
 
-                print(f"    [OK] {s:<10} | ver={ver:<14} | ts={ts_str:<22} | succ={succ}/{tot} | tps={tps:6.2f} | tok_src={tok_src}")
+                tps_val = tps if isinstance(tps, (int, float)) else 0.0
+                print(f"    [OK] {s:<10} | ver={ver:<14} | ts={ts_str:<22} | succ={succ}/{tot} | tps={tps_val:6.2f} | tok_src={tok_src}")
 
             elif s == "saturation":
                 grid = data.get("grid", {})

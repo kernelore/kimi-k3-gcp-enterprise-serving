@@ -52,8 +52,23 @@ echo "--> Check 3: Verifying pinned engine Dockerfiles and sdk pin in scripts/03
 source tests/lib/engine_versions.sh
 for eng in sglang trtllm; do
   ver="$(get_engine_version "${eng}")"
-  if [ -z "${ver}" ] || [[ "${ver}" =~ ^(latest|slim|main|master|dev|nightly)$ ]] || ! [[ "${ver}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)? ]]; then
-    echo "ERROR: Check 3 failed: Dockerfile for ${eng} is not pinned to a valid semver tag (got '${ver}')!" >&2
+  dockerfile="docker/Dockerfile.${eng}"
+  if [ "${eng}" = "trtllm" ]; then dockerfile="docker/Dockerfile"; fi
+  from_line=$(grep -E '^FROM[[:space:]]+' "${dockerfile}" | head -n 1)
+  has_digest=0
+  if echo "${from_line}" | grep -qE '@sha256:[a-fA-F0-9]{64}'; then
+    has_digest=1
+  fi
+  if [ -z "${ver}" ] || [[ "${ver}" =~ ^(latest|slim|main|master|dev|nightly)$ ]]; then
+    echo "ERROR: Check 3 failed: Dockerfile for ${eng} is unpinned or uses forbidden tag (got '${ver}')!" >&2
+    exit 1
+  fi
+  is_semver=0
+  if [[ "${ver}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)? ]]; then
+    is_semver=1
+  fi
+  if [ "${is_semver}" = "0" ] && [ "${has_digest}" = "0" ]; then
+    echo "ERROR: Check 3 failed: Dockerfile for ${eng} is non-semver ('${ver}') and NOT digest-pinned!" >&2
     exit 1
   fi
 done

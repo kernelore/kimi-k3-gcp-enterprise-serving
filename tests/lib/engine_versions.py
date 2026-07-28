@@ -31,8 +31,13 @@ def get_engine_version(engine: str, root: Path | None = None) -> str:
     for line in content.splitlines():
         line = line.strip()
         if line.startswith("FROM "):
-            parts = line.split(":")
-            if len(parts) >= 2:
-                raw_tag = parts[1].split()[0]
-                return normalize_version(raw_tag)
+            image = line.split()[1]
+            if "@" in image:
+                tag_part = image.split("@")[0]
+                raw_tag = tag_part.split(":")[1] if ":" in tag_part else tag_part
+            elif ":" in image:
+                raw_tag = image.split(":")[1]
+            else:
+                raw_tag = image
+            return normalize_version(raw_tag)
     raise ValueError(f"Could not extract FROM tag in {dockerfile}")
