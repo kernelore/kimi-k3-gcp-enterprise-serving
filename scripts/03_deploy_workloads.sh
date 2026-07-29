@@ -313,10 +313,48 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
           echo "--> POPULATE_WEIGHTS_CACHE=true: Seeding persistent GCS cache bucket (${GCS_WEIGHTS_BUCKET})..."
           BUCKET_ROOT="$(printf '%s' "${GCS_WEIGHTS_BUCKET}" | sed -E 's#(gs://[^/]+).*#\1#')"
           gcloud storage buckets create "${BUCKET_ROOT}" --project="${PROJECT_ID}" --location="${REGION}" --quiet 2>/dev/null || true
-          kubectl run kimi-k3-cache-seeder --namespace=llm-serving --restart=Never --image=google/cloud-sdk:500.0.0-slim --overrides='{"spec":{"serviceAccountName":"kimi-k3-serving-sa","containers":[{"name":"seeder","image":"google/cloud-sdk:500.0.0-slim","command":["gcloud","storage","rsync","-r","/weights","'"${GCS_WEIGHTS_BUCKET}"'"],"volumeMounts":[{"name":"w","mountPath":"/weights"}]}],"volumes":[{"name":"w","persistentVolumeClaim":{"claimName":"pvc-kimi-k3-weights-staging"}}]}}' || true
-          kubectl wait --for=condition=Ready pod/kimi-k3-cache-seeder -n llm-serving --timeout=300s || true
-          kubectl logs pod/kimi-k3-cache-seeder -n llm-serving -f || true
-          kubectl delete pod kimi-k3-cache-seeder -n llm-serving --ignore-not-found=true
+          cat <<EOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kimi-k3-cache-seeder
+  namespace: llm-serving
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: kimi-k3-cache-seeder
+    spec:
+      serviceAccountName: kimi-k3-serving-sa
+      restartPolicy: Never
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-b200
+        cloud.google.com/gke-spot: "true"
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: seeder
+        image: google/cloud-sdk:500.0.0-slim
+        command: ["gcloud", "storage", "rsync", "-r", "/weights", "${GCS_WEIGHTS_BUCKET}"]
+        volumeMounts:
+        - name: w
+          mountPath: /weights
+          readOnly: true
+      volumes:
+      - name: w
+        persistentVolumeClaim:
+          claimName: pvc-kimi-k3-weights-staging
+EOF
+          echo "    Waiting for cache seeder job to complete..."
+          kubectl wait --for=condition=complete job/kimi-k3-cache-seeder -n llm-serving --timeout=3600s
+          kubectl logs job/kimi-k3-cache-seeder -n llm-serving --tail=-1
+          kubectl delete job kimi-k3-cache-seeder -n llm-serving --ignore-not-found=true
         fi
         break
       elif [ "${FAILED}" = "True" ]; then
