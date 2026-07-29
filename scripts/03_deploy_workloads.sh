@@ -124,7 +124,14 @@ REDIS_PASSWORD=$(get_tf_output redis_auth_string)
 if [ -z "${REDIS_PASSWORD}" ]; then
   REDIS_PASSWORD=$(get_gcloud_val redis instances get-auth-string kimi-k3-gateway-cache --region="${REGION}" --format="value(authString)" --quiet)
 fi
-REDIS_PASSWORD="${REDIS_PASSWORD:-redis-secret-password-change-me}"
+if [ -z "${REDIS_PASSWORD}" ]; then
+  if [ "${1:-}" = "--render-only" ]; then
+    REDIS_PASSWORD="redis-secret-password-change-me"
+  else
+    echo "ERROR: Failed to obtain REDIS_PASSWORD from Terraform output or gcloud!" >&2
+    exit 1
+  fi
+fi
 export REDIS_PASSWORD
 
 REDIS_PASSWORD_ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote_plus(sys.argv[1]))" "${REDIS_PASSWORD}")
@@ -135,14 +142,28 @@ REDIS_HOST=$(get_tf_output redis_host)
 if [ -z "${REDIS_HOST}" ]; then
   REDIS_HOST=$(get_gcloud_val redis instances describe kimi-k3-gateway-cache --region="${REGION}" --format="value(host)" --quiet)
 fi
-REDIS_HOST="${REDIS_HOST:-redis-cache.local}"
+if [ -z "${REDIS_HOST}" ]; then
+  if [ "${1:-}" = "--render-only" ]; then
+    REDIS_HOST="redis-cache.local"
+  else
+    echo "ERROR: Failed to obtain REDIS_HOST from Terraform output or gcloud!" >&2
+    exit 1
+  fi
+fi
 export REDIS_HOST
 
 DB_CONNECTION_NAME=$(get_tf_output db_instance_connection_name)
 if [ -z "${DB_CONNECTION_NAME}" ]; then
   DB_CONNECTION_NAME=$(get_gcloud_val sql instances describe kimi-k3-gateway-db --format="value(connectionName)" --quiet)
 fi
-DB_CONNECTION_NAME="${DB_CONNECTION_NAME:-${PROJECT_ID}:${REGION}:kimi-k3-gateway-db}"
+if [ -z "${DB_CONNECTION_NAME}" ]; then
+  if [ "${1:-}" = "--render-only" ]; then
+    DB_CONNECTION_NAME="${PROJECT_ID}:${REGION}:kimi-k3-gateway-db"
+  else
+    echo "ERROR: Failed to obtain DB_CONNECTION_NAME from Terraform output or gcloud!" >&2
+    exit 1
+  fi
+fi
 export DB_CONNECTION_NAME
 
 export TRTLLM_VIP="kimi-k3-serving-svc.llm-serving.svc.cluster.local"
