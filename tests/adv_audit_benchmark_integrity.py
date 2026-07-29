@@ -30,16 +30,6 @@ def get_metadata(data: dict) -> dict:
             return {}
     return meta or {}
 
-def normalize_version(ver: str) -> str:
-    if not ver:
-        return ""
-    ver = ver.strip()
-    if ver.startswith("v") or ver.startswith("V"):
-        ver = ver[1:]
-    if ver.endswith("-cu130"):
-        ver = ver[:-6]
-    return ver
-
 def main():
     default_root = Path(__file__).resolve().parent.parent / "benchmarks" / "results"
     root = Path(os.getenv("AUDIT_RESULTS_DIR", default_root))
@@ -48,12 +38,12 @@ def main():
         sys.exit(0)
 
     try:
-        from tests.lib.engine_versions import get_engine_version
+        from tests.lib.engine_versions import get_engine_version, normalize_version
     except ImportError:
         lib_dir = str(Path(__file__).resolve().parent / "lib")
         if lib_dir not in sys.path:
             sys.path.insert(0, lib_dir)
-        from engine_versions import get_engine_version
+        from engine_versions import get_engine_version, normalize_version
 
     sglang_ver = get_engine_version("sglang", root=Path(__file__).resolve().parent.parent)
     trtllm_ver = get_engine_version("trtllm", root=Path(__file__).resolve().parent.parent)

@@ -51,17 +51,16 @@ def get_metadata(data: dict) -> dict:
             return {}
     return meta or {}
 
-def normalize_version(ver: str) -> str:
-    if not ver:
-        return ""
-    ver = ver.strip()
-    if ver.startswith("v") or ver.startswith("V"):
-        ver = ver[1:]
-    if ver.endswith("-cu130"):
-        ver = ver[:-6]
-    if ver.endswith("-py3"):
-        ver = ver[:-4]
-    return ver
+try:
+    from tests.lib.engine_versions import normalize_version
+except ImportError:
+    import sys
+    from pathlib import Path
+
+    lib_dir = str(Path(__file__).resolve().parent.parent / "tests" / "lib")
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    from engine_versions import normalize_version
 
 def get_suite_timestamps(data: dict) -> tuple:
     for key in ["benchmark_config", "soak_config", "sweep_config", "grid", "prefill_config", "metadata"]:
