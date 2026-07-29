@@ -152,18 +152,16 @@ gpu_machine_type        = "${GPU_MACHINE_TYPE:-a4-highgpu-8g}"
 gpu_pool_max_nodes      = ${GPU_POOL_MAX_NODES:-${GPU_MAX_NODES:-2}}
 nodes_per_replica       = ${NODES_PER_REPLICA:-2}
 hyperdisk_ml_size_gb    = ${HYPERDISK_ML_SIZE_GB:-2000}
-hyperdisk_ml_throughput_mibps = ${HYPERDISK_ML_THROUGHPUT_MIBPS:-24576}
 model_family            = "${MODEL_FAMILY:-kimi-k3}"
 enable_private_endpoint = ${ENABLE_PRIVATE_ENDPOINT:-false}
 master_authorized_cidrs = ${TF_AUTH_CIDRS}
 owner_label             = "${OWNER_LABEL:-opensource-user}"
 ttl_label               = "${TTL_LABEL:-7d}"
 env_label               = "${ENV_LABEL:-kimi-k3-prod}"
-db_tier                 = "${DB_TIER:-db-custom-2-8192}"
 db_password             = "${DB_PASSWORD}"
 
 # SGLang Multi-Node Serving Parameters (Documented Reference):
-# model_repo_id      = "${MODEL_REPO_ID:-moonshotai/Kimi-K3-2.8T-MXFP4}"
+# model_repo_id      = "${MODEL_REPO_ID:-moonshotai/Kimi-K3}"
 # serving_model_name = "${SERVING_MODEL_NAME:-kimi-k3-2.8t-mxfp4}"
 # sglang_tp_size     = ${SGLANG_TP_SIZE:-16}
 # sglang_pp_size     = ${SGLANG_PP_SIZE:-1}
@@ -254,14 +252,12 @@ gcloud services enable \
   cloudresourcemanager.googleapis.com \
   artifactregistry.googleapis.com \
   iam.googleapis.com \
-  iamcredentials.googleapis.com \
   servicenetworking.googleapis.com \
   sqladmin.googleapis.com \
   redis.googleapis.com \
   bigquery.googleapis.com \
   storage.googleapis.com \
   monitoring.googleapis.com \
-  logging.googleapis.com \
   cloudbuild.googleapis.com \
   --project="${PROJECT_ID}" --quiet
 echo "    [OK] All required GCP APIs enabled."

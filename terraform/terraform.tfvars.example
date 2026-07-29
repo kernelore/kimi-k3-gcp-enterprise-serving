@@ -20,7 +20,12 @@ cluster_name            = "kimi-enterprise-fi"
 gpu_machine_type        = "a4-highgpu-8g" # 8x NVIDIA B200 HGX per node
 nodes_per_replica       = 2               # 2 nodes MVP for Kimi K3 (16x B200 GPUs total)
 enable_private_endpoint = false
-master_authorized_cidrs = []
+master_authorized_cidrs = [
+  {
+    cidr_block   = "203.0.113.1/32"
+    display_name = "operator"
+  }
+]
 
 # Model & Storage Configuration
 model_family         = "kimi-k3"

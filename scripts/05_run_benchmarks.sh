@@ -64,7 +64,7 @@ Options:
                                    - massive:    20 concurrent requests, 256 tokens (stress test)
                                    - soak:       30-minute continuous stability endurance test
                                    - prefill:    8192 prompt tokens ingestion stress test
-                                   - saturation: Concurrency sweep (c=1..64) throughput ceiling
+                                   - saturation: ISL/OSL x concurrency sweep (1k-128k input, c=1..128) throughput ceiling
                                    - all:        Run all 5 benchmark suites sequentially
   --target <gateway|serving>     Target endpoint for benchmarking (default: gateway)
                                    - gateway: LiteLLM Enterprise Proxy (port 4000) with virtual keys & Redis auth
@@ -193,36 +193,25 @@ if [ "${IN_CLUSTER}" != "true" ]; then
   SERVING_POD=$(kubectl get pod -n llm-serving -l app=kimi-k3-serving -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
   if [ -n "${SERVING_POD}" ]; then
     if [ "${ENGINE}" = "sglang" ]; then
-      ENGINE_VERSION=$(kubectl exec -n llm-serving "${SERVING_POD}" -c sglang-mpi-node -- python3 -c "import sglang; print(getattr(sglang, '__version__', 'v0.5.16'))" 2>/dev/null || echo "v0.5.16")
+      ENGINE_VERSION=$(kubectl exec -n llm-serving "${SERVING_POD}" -c sglang-mpi-node -- python3 -c "import sglang; print(getattr(sglang, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
     else
-      ENGINE_VERSION=$(kubectl exec -n llm-serving "${SERVING_POD}" -c trtllm-mpi-node -- python3 -c "import tensorrt_llm; print(getattr(tensorrt_llm, '__version__', '0.16.0'))" 2>/dev/null || echo "0.16.0")
+      ENGINE_VERSION=$(kubectl exec -n llm-serving "${SERVING_POD}" -c trtllm-mpi-node -- python3 -c "import tensorrt_llm; print(getattr(tensorrt_llm, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
     fi
   fi
 fi
-if [ "${ENGINE_VERSION}" = "unknown" ] || [ -z "${ENGINE_VERSION}" ]; then
-  if [ "${ENGINE}" = "sglang" ]; then ENGINE_VERSION="v0.5.16"; else ENGINE_VERSION="0.16.0"; fi
+if [ -z "${ENGINE_VERSION}" ]; then
+  ENGINE_VERSION="unknown"
 fi
+
+if [ -z "${SERVING_IMAGE:-}" ]; then
+  SERVING_IMAGE=$(kubectl get pod -n llm-serving -l app=kimi-k3-serving -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || echo "unknown")
+  if [ -z "${SERVING_IMAGE}" ]; then SERVING_IMAGE="unknown"; fi
+fi
+RUN_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 RESULTS_DIR="${PROJECT_ROOT}/benchmarks/results/${ENGINE}"
 mkdir -p "${RESULTS_DIR}"
-
-get_metadata_json() {
-  local run_ts
-  run_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  if [ "${ENGINE}" = "trtllm" ]; then
-    local tp="${TRTLLM_TP_SIZE:-8}"
-    local pp="${TRTLLM_PP_SIZE:-2}"
-    local ep="${TRTLLM_EP_SIZE:-8}"
-    echo "{\"engine\": \"trtllm\", \"version\": \"${ENGINE_VERSION}\", \"tp\": ${tp}, \"pp\": ${pp}, \"ep\": ${ep}, \"nodes\": 2, \"gpus\": 16, \"run_timestamp\": \"${run_ts}\"}"
-  else
-    local tp="${SGLANG_TP_SIZE:-16}"
-    local pp="${SGLANG_PP_SIZE:-1}"
-    local ep="${SGLANG_EP_SIZE:-16}"
-    echo "{\"engine\": \"sglang\", \"version\": \"${ENGINE_VERSION}\", \"tp\": ${tp}, \"pp\": ${pp}, \"ep\": ${ep}, \"nodes\": 2, \"gpus\": 16, \"run_timestamp\": \"${run_ts}\"}"
-  fi
-}
-
-METADATA_JSON=$(get_metadata_json)
+METADATA_JSON="{\"engine\": \"${ENGINE}\", \"version\": \"${ENGINE_VERSION}\", \"engine_version\": \"${ENGINE_VERSION}\", \"image\": \"${SERVING_IMAGE}\", \"run_timestamp\": \"${RUN_TIMESTAMP}\", \"tp\": ${SGLANG_TP_SIZE:-${TRTLLM_TP_SIZE:-16}}, \"pp\": ${SGLANG_PP_SIZE:-${TRTLLM_PP_SIZE:-1}}, \"ep\": ${SGLANG_EP_SIZE:-${TRTLLM_EP_SIZE:-16}}, \"nodes\": 2, \"gpus\": 16}"
 echo "    Active Engine: ${ENGINE} (version: ${ENGINE_VERSION})"
 echo "    Results Dir:   ${RESULTS_DIR}"
 
@@ -300,7 +289,6 @@ fi
 
 # 3. Execute Standard Benchmark Suite
 if [ "${MODE}" = "standard" ] || [ "${MODE}" = "all" ]; then
-  METADATA_JSON=$(get_metadata_json)
   echo ""
   echo "------------------------------------------------------------------------------"
   echo "--> 2. Executing Standard Enterprise Benchmark Suite (concurrency=8, requests=16)..."
@@ -324,7 +312,6 @@ fi
 
 # 4. Execute Massive Stress Benchmark Suite
 if [ "${MODE}" = "massive" ] || [ "${MODE}" = "all" ]; then
-  METADATA_JSON=$(get_metadata_json)
   echo ""
   echo "------------------------------------------------------------------------------"
   echo "--> 3. Executing Massive Stress Benchmark Suite (concurrency=20, requests=100)..."
@@ -348,7 +335,6 @@ fi
 
 # 5. Execute Continuous Soak Benchmark Suite
 if [ "${MODE}" = "soak" ] || [ "${MODE}" = "all" ]; then
-  METADATA_JSON=$(get_metadata_json)
   echo ""
   echo "------------------------------------------------------------------------------"
   echo "--> 4. Executing Continuous Soak Suite (concurrency=18, duration=1800s)..."
@@ -371,7 +357,6 @@ fi
 
 # 6. Execute Prefill Benchmark Suite
 if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
-  METADATA_JSON=$(get_metadata_json)
   echo ""
   echo "------------------------------------------------------------------------------"
   echo "--> 5. Executing Prefill Benchmark Suite..."
@@ -392,7 +377,6 @@ fi
 
 # 7. Execute Saturation Sweep Benchmark Suite
 if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
-  METADATA_JSON=$(get_metadata_json)
   echo ""
   echo "------------------------------------------------------------------------------"
   echo "--> 6. Executing Saturation Sweep Suite..."
@@ -406,6 +390,10 @@ if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
     "--engine=${ENGINE}"
     "--metadata=${METADATA_JSON}"
   )
+  [ -n "${SWEEP_METRICS_ENDPOINT:-}" ] && SAT_ARGS+=("--metrics-endpoint=${SWEEP_METRICS_ENDPOINT}")
+  [ -n "${SWEEP_METRICS_NAMES:-}" ]    && SAT_ARGS+=("--metrics-names=${SWEEP_METRICS_NAMES}")
+  [ -n "${SWEEP_CONCURRENCY_LEVELS:-}" ] && SAT_ARGS+=("--concurrency-levels=${SWEEP_CONCURRENCY_LEVELS}")
+  [ -n "${SWEEP_MAX_INFLIGHT:-}" ]       && SAT_ARGS+=("--max-inflight-prompt-tokens=${SWEEP_MAX_INFLIGHT}")
   if [ -f "${PROJECT_ROOT}/benchmarks/run_saturation_sweep_kimi_k3.py" ]; then
     python3 "${PROJECT_ROOT}/benchmarks/run_saturation_sweep_kimi_k3.py" "${SAT_ARGS[@]}" || echo "WARNING: Saturation sweep reported errors or timeouts."
   fi

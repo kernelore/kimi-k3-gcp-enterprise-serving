@@ -5,7 +5,7 @@ metadata:
 spec:
   storageClassName: ""
   capacity:
-    storage: ${HYPERDISK_ML_SIZE_GB}Gi
+    storage: 2000Gi
   accessModes:
     - ReadOnlyMany
   mountOptions:
@@ -30,7 +30,7 @@ spec:
     - ReadOnlyMany
   resources:
     requests:
-      storage: ${HYPERDISK_ML_SIZE_GB}Gi
+      storage: 2000Gi
 ---
 apiVersion: v1
 kind: Service
@@ -58,8 +58,8 @@ metadata:
 spec:
   type: LoadBalancer
   ports:
-  - port: ${SGLANG_PORT}
-    targetPort: ${SGLANG_PORT}
+  - port: 8000
+    targetPort: 8000
     name: http-api
   selector:
     app: kimi-k3-serving
@@ -71,7 +71,7 @@ metadata:
   name: kimi-k3-serving
   namespace: llm-serving
 spec:
-  replicas: ${SERVING_REPLICAS}
+  replicas: 2
   serviceName: kimi-k3-workers-headless
   podManagementPolicy: Parallel
   selector:
@@ -97,7 +97,6 @@ spec:
             {"interfaceName":"eth9","network":"rdma-7"}
           ]
     spec:
-      priorityClassName: high-priority-serving
       terminationGracePeriodSeconds: 120
       nodeSelector:
         cloud.google.com/gke-accelerator: nvidia-b200
@@ -135,8 +134,6 @@ spec:
           value: "INIT,NET,GRAPH"
         - name: NCCL_SOCKET_IFNAME
           value: "eth0"
-        - name: NCCL_NET_GDR_LEVEL
-          value: "5"
         - name: SGLANG_TP_SIZE
           value: "${SGLANG_TP_SIZE}"
         - name: SGLANG_PP_SIZE
@@ -159,6 +156,10 @@ spec:
           value: "${SGLANG_ATTENTION_BACKEND}"
         - name: SGLANG_CONTEXT_LENGTH
           value: "${SGLANG_CONTEXT_LENGTH}"
+        - name: SGLANG_REASONING_PARSER
+          value: "${SGLANG_REASONING_PARSER}"
+        - name: SGLANG_TOOL_CALL_PARSER
+          value: "${SGLANG_TOOL_CALL_PARSER}"
         - name: MIN_WEIGHTS_GIB
           value: "${MIN_WEIGHTS_GIB}"
         - name: EXPECTED_MODEL_ARCHITECTURE
@@ -172,7 +173,7 @@ spec:
             command:
             - /bin/bash
             - -c
-            - "if [ \"${HOSTNAME##*-}\" = \"0\" ]; then curl -sf http://localhost:${SGLANG_PORT}/health; else pgrep -f sglang.launch_server >/dev/null; fi"
+            - "if [ \"${HOSTNAME##*-}\" = \"0\" ]; then curl -sf http://localhost:8000/health; else pgrep -f sglang.launch_server >/dev/null; fi"
           periodSeconds: 30
           failureThreshold: 120
           timeoutSeconds: 10
@@ -181,7 +182,7 @@ spec:
             command:
             - /bin/bash
             - -c
-            - "if [ \"${HOSTNAME##*-}\" = \"0\" ]; then curl -sf http://localhost:${SGLANG_PORT}/health; else pgrep -f sglang.launch_server >/dev/null; fi"
+            - "if [ \"${HOSTNAME##*-}\" = \"0\" ]; then curl -sf http://localhost:8000/health; else pgrep -f sglang.launch_server >/dev/null; fi"
           periodSeconds: 15
           failureThreshold: 4
           timeoutSeconds: 5
@@ -214,7 +215,7 @@ spec:
           echo "---------------------------------"
           python3 -c "
           import os, glob, json, sys
-          dest = '/mnt/rox/Kimi-K3-2.8T-MXFP4'
+          dest = '/mnt/rox/Kimi-K3'
           shards = glob.glob(os.path.join(dest, '*.safetensors'))
           total_size = sum(os.path.getsize(f) for f in shards)
           min_gib = float(os.getenv('MIN_WEIGHTS_GIB', '1000'))
@@ -266,14 +267,21 @@ spec:
           if [ -n "${SGLANG_ATTENTION_BACKEND}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --attention-backend ${SGLANG_ATTENTION_BACKEND}"
           fi
-          # DAY-0: --reasoning-parser <parser_name>
-          # DAY-0: --tool-call-parser <parser_name>
+          if [ -n "${SGLANG_REASONING_PARSER}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --reasoning-parser ${SGLANG_REASONING_PARSER}"
+          fi
+          if [ -n "${SGLANG_TOOL_CALL_PARSER}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --tool-call-parser ${SGLANG_TOOL_CALL_PARSER}"
+          fi
+          if [ -n "${SGLANG_EXTRA_ARGS:-}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} ${SGLANG_EXTRA_ARGS}"
+          fi
           # DAY-0: --disable-cuda-graph (or --cuda-graph-backend-decode=disabled) if CUDA graph capture OOMs occur on Blackwell during warmup
-          if [ -z "${SGLANG_PP_LAYER_PARTITION}" ]; then unset SGLANG_PP_LAYER_PARTITION; fi
+          if [ -z "${SGLANG_PP_LAYER_PARTITION:-}" ]; then unset SGLANG_PP_LAYER_PARTITION; fi
           exec python3 -m sglang.launch_server \
-            --model-path /mnt/rox/Kimi-K3-2.8T-MXFP4 \
+            --model-path /mnt/rox/Kimi-K3 \
             --dist-init-addr "${LEADER_HOST}" \
-            --nnodes ${NODES_PER_REPLICA} \
+            --nnodes 2 \
             --node-rank "${NODE_RANK}" \
             --port "${SGLANG_PORT}" \
             --host 0.0.0.0 \
@@ -285,12 +293,9 @@ spec:
             --ep-size "${SGLANG_EP_SIZE}" \
             --mem-fraction-static "${SGLANG_MEM_FRACTION_STATIC}" \
             --schedule-policy "${SGLANG_SCHEDULE_POLICY}" \
-            --moe-runner-backend flashinfer_mxfp4 \
-            --decode-attention-backend flashmla \
-            --kv-cache-dtype fp8_e4m3 \
             ${EXTRA_ARGS}
         ports:
-        - containerPort: ${SGLANG_PORT}
+        - containerPort: 8000
           name: http
         - containerPort: 5000
           name: dist-init
@@ -309,9 +314,8 @@ spec:
         resources:
           requests:
             cpu: "32"
-            memory: "512Gi"
+            memory: "64Gi"
           limits:
-            memory: "512Gi"
             nvidia.com/gpu: 8
       volumes:
       - name: model-rox
