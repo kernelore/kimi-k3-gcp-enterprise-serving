@@ -207,11 +207,23 @@ if [ -z "${SERVING_IMAGE:-}" ]; then
   SERVING_IMAGE=$(kubectl get pod -n llm-serving -l app=kimi-k3-serving -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || echo "unknown")
   if [ -z "${SERVING_IMAGE}" ]; then SERVING_IMAGE="unknown"; fi
 fi
-RUN_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+get_metadata_json() {
+  local ts tp pp ep
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  if [ "${ENGINE}" = "trtllm" ]; then
+    tp=${TRTLLM_TP_SIZE:-8}
+    pp=${TRTLLM_PP_SIZE:-2}
+    ep=${TRTLLM_EP_SIZE:-8}
+  else
+    tp=${SGLANG_TP_SIZE:-16}
+    pp=${SGLANG_PP_SIZE:-1}
+    ep=${SGLANG_EP_SIZE:-16}
+  fi
+  echo "{\"engine\": \"${ENGINE}\", \"version\": \"${ENGINE_VERSION}\", \"engine_version\": \"${ENGINE_VERSION}\", \"image\": \"${SERVING_IMAGE}\", \"run_timestamp\": \"${ts}\", \"tp\": ${tp}, \"pp\": ${pp}, \"ep\": ${ep}, \"nodes\": 2, \"gpus\": 16}"
+}
 
 RESULTS_DIR="${PROJECT_ROOT}/benchmarks/results/${ENGINE}"
 mkdir -p "${RESULTS_DIR}"
-METADATA_JSON="{\"engine\": \"${ENGINE}\", \"version\": \"${ENGINE_VERSION}\", \"engine_version\": \"${ENGINE_VERSION}\", \"image\": \"${SERVING_IMAGE}\", \"run_timestamp\": \"${RUN_TIMESTAMP}\", \"tp\": ${SGLANG_TP_SIZE:-${TRTLLM_TP_SIZE:-16}}, \"pp\": ${SGLANG_PP_SIZE:-${TRTLLM_PP_SIZE:-1}}, \"ep\": ${SGLANG_EP_SIZE:-${TRTLLM_EP_SIZE:-16}}, \"nodes\": 2, \"gpus\": 16}"
 echo "    Active Engine: ${ENGINE} (version: ${ENGINE_VERSION})"
 echo "    Results Dir:   ${RESULTS_DIR}"
 
@@ -291,8 +303,10 @@ fi
 if [ "${MODE}" = "standard" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
+  sleep 1
   echo "--> 2. Executing Standard Enterprise Benchmark Suite (concurrency=8, requests=16)..."
   echo "------------------------------------------------------------------------------"
+  sleep 1
   
   STD_ARGS=(
     "--endpoint=${TARGET_URL}"
@@ -300,7 +314,7 @@ if [ "${MODE}" = "standard" ] || [ "${MODE}" = "all" ]; then
     "--api-key=${DEV_KEY}"
     "--model=${SERVING_MODEL_NAME}"
     "--engine=${ENGINE}"
-    "--metadata=${METADATA_JSON}"
+    "--metadata=$(get_metadata_json)"
   )
   if [ -n "${CONCURRENCY}" ]; then STD_ARGS+=("--concurrency=${CONCURRENCY}"); fi
   if [ -n "${REQUESTS}" ]; then STD_ARGS+=("--requests=${REQUESTS}"); fi
@@ -314,8 +328,10 @@ fi
 if [ "${MODE}" = "massive" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
+  sleep 1
   echo "--> 3. Executing Massive Stress Benchmark Suite (concurrency=20, requests=100)..."
   echo "------------------------------------------------------------------------------"
+  sleep 1
   
   MAS_ARGS=(
     "--endpoint=${TARGET_URL}"
@@ -323,7 +339,7 @@ if [ "${MODE}" = "massive" ] || [ "${MODE}" = "all" ]; then
     "--api-key=${DEV_KEY}"
     "--model=${SERVING_MODEL_NAME}"
     "--engine=${ENGINE}"
-    "--metadata=${METADATA_JSON}"
+    "--metadata=$(get_metadata_json)"
   )
   if [ -n "${CONCURRENCY}" ]; then MAS_ARGS+=("--concurrency=${CONCURRENCY}"); fi
   if [ -n "${REQUESTS}" ]; then MAS_ARGS+=("--requests=${REQUESTS}"); fi
@@ -337,8 +353,10 @@ fi
 if [ "${MODE}" = "soak" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
+  sleep 1
   echo "--> 4. Executing Continuous Soak Suite (concurrency=18, duration=1800s)..."
   echo "------------------------------------------------------------------------------"
+  sleep 1
   
   SOAK_ARGS=(
     "--endpoint=${TARGET_URL}"
@@ -346,7 +364,7 @@ if [ "${MODE}" = "soak" ] || [ "${MODE}" = "all" ]; then
     "--api-key=${DEV_KEY}"
     "--model=${SERVING_MODEL_NAME}"
     "--engine=${ENGINE}"
-    "--metadata=${METADATA_JSON}"
+    "--metadata=$(get_metadata_json)"
   )
   if [ -n "${CONCURRENCY}" ]; then SOAK_ARGS+=("--concurrency=${CONCURRENCY}"); fi
   
@@ -359,8 +377,10 @@ fi
 if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
+  sleep 1
   echo "--> 5. Executing Prefill Benchmark Suite..."
   echo "------------------------------------------------------------------------------"
+  sleep 1
   
   PREFILL_ARGS=(
     "--endpoint=${TARGET_URL}"
@@ -368,7 +388,7 @@ if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
     "--api-key=${DEV_KEY}"
     "--model=${SERVING_MODEL_NAME}"
     "--engine=${ENGINE}"
-    "--metadata=${METADATA_JSON}"
+    "--metadata=$(get_metadata_json)"
   )
   if [ -f "${PROJECT_ROOT}/benchmarks/run_prefill_benchmark_kimi_k3.py" ]; then
     python3 "${PROJECT_ROOT}/benchmarks/run_prefill_benchmark_kimi_k3.py" "${PREFILL_ARGS[@]}" || echo "WARNING: Prefill benchmark reported errors or timeouts."
@@ -379,8 +399,10 @@ fi
 if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
+  sleep 1
   echo "--> 6. Executing Saturation Sweep Suite..."
   echo "------------------------------------------------------------------------------"
+  sleep 1
   
   SAT_ARGS=(
     "--endpoint=${TARGET_URL}"
@@ -388,7 +410,7 @@ if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
     "--api-key=${DEV_KEY}"
     "--model=${SERVING_MODEL_NAME}"
     "--engine=${ENGINE}"
-    "--metadata=${METADATA_JSON}"
+    "--metadata=$(get_metadata_json)"
   )
   [ -n "${SWEEP_METRICS_ENDPOINT:-}" ] && SAT_ARGS+=("--metrics-endpoint=${SWEEP_METRICS_ENDPOINT}")
   [ -n "${SWEEP_METRICS_NAMES:-}" ]    && SAT_ARGS+=("--metrics-names=${SWEEP_METRICS_NAMES}")
