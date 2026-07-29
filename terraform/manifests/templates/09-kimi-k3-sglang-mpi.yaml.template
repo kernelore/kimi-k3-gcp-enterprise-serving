@@ -273,9 +273,7 @@ spec:
           if [ -n "${SGLANG_TOOL_CALL_PARSER}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --tool-call-parser ${SGLANG_TOOL_CALL_PARSER}"
           fi
-          if [ -n "${SGLANG_EXTRA_ARGS:-}" ]; then
-            EXTRA_ARGS="${EXTRA_ARGS} ${SGLANG_EXTRA_ARGS}"
-          fi
+          EXTRA_ARGS="${EXTRA_ARGS} --moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3"
           # DAY-0: --disable-cuda-graph (or --cuda-graph-backend-decode=disabled) if CUDA graph capture OOMs occur on Blackwell during warmup
           if [ -z "${SGLANG_PP_LAYER_PARTITION:-}" ]; then unset SGLANG_PP_LAYER_PARTITION; fi
           exec python3 -m sglang.launch_server \
