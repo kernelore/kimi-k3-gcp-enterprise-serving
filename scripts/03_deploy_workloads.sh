@@ -391,12 +391,32 @@ fi
 if command -v gcloud >/dev/null 2>&1; then
   CURRENT_ACCESS_MODE=$(gcloud compute disks describe kimi-k3-weights-rox --zone="${ZONE}" --project="${PROJECT_ID}" --format='value(accessMode)' --quiet 2>/dev/null | head -n 1 || true)
   if [ "${CURRENT_ACCESS_MODE}" != "READ_ONLY_MANY" ]; then
+    echo "--> Waiting for staging volume to fully detach from GKE nodes before flipping access mode..."
+    DETACH_START=$(date +%s)
+    DETACH_TIMEOUT=300
+    while true; do
+      USERS=$(gcloud compute disks describe kimi-k3-weights-rox --zone="${ZONE}" --project="${PROJECT_ID}" --format='value(users)' --quiet 2>/dev/null || true)
+      if [ -z "${USERS}" ]; then
+        echo "    [OK] Volume kimi-k3-weights-rox detached cleanly."
+        break
+      fi
+      NOW=$(date +%s)
+      if [ $((NOW - DETACH_START)) -gt ${DETACH_TIMEOUT} ]; then
+        echo "ERROR: Timed out waiting for kimi-k3-weights-rox to detach! Users still attached: ${USERS}" >&2
+        exit 1
+      fi
+      sleep 5
+    done
     echo "--> Setting Hyperdisk ML volume access mode to READ_ONLY_MANY for multi-node MPI attach..."
-    gcloud compute disks update kimi-k3-weights-rox \
-      --access-mode=READ_ONLY_MANY --zone="${ZONE}" --project="${PROJECT_ID}" --quiet || true
+    if ! gcloud compute disks update kimi-k3-weights-rox \
+      --access-mode=READ_ONLY_MANY --zone="${ZONE}" --project="${PROJECT_ID}" --quiet; then
+      echo "ERROR: Failed to update kimi-k3-weights-rox access-mode to READ_ONLY_MANY!" >&2
+      exit 1
+    fi
     CURRENT_ACCESS_MODE=$(gcloud compute disks describe kimi-k3-weights-rox --zone="${ZONE}" --project="${PROJECT_ID}" --format='value(accessMode)' --quiet 2>/dev/null | head -n 1 || true)
     if [ "${CURRENT_ACCESS_MODE}" != "READ_ONLY_MANY" ]; then
-      echo "WARNING: Hyperdisk ML kimi-k3-weights-rox access mode is '${CURRENT_ACCESS_MODE}', not READ_ONLY_MANY. Multi-node attach will fail until flipped manually via gcloud."
+      echo "ERROR: Hyperdisk ML kimi-k3-weights-rox access mode is '${CURRENT_ACCESS_MODE}', not READ_ONLY_MANY." >&2
+      exit 1
     fi
   else
     echo "    [OK] Hyperdisk ML volume already operating in READ_ONLY_MANY mode."
