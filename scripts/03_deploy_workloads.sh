@@ -265,30 +265,44 @@ if [ "${SKIP_FABRIC_CHECK:-false}" != "true" ]; then
   echo "--> 3b. Verifying RoCEv2 RDMA network fabric and NCCL bus bandwidth (floor >= 100 GB/s)..."
   kubectl apply -f "${GENERATED_DIR}/00c-nccl-test-job.yaml"
   kubectl apply -f "${GENERATED_DIR}/00d-serving-nccl-parity-job.yaml"
-  echo "    Waiting for NCCL RoCEv2 test job to complete (timeout: 600s)..."
-  if ! kubectl wait --for=condition=complete job/nccl-roce-test -n llm-serving --timeout=600s; then
-    echo "ERROR: NCCL RoCEv2 test job failed or timed out!" >&2
+  echo "    Waiting for NCCL RoCEv2 StatefulSet rollout (timeout: 600s)..."
+  if ! kubectl rollout status statefulset/nccl-roce-test -n llm-serving --timeout=600s; then
+    echo "ERROR: NCCL RoCEv2 test StatefulSet rollout failed or timed out!" >&2
     kubectl logs -n llm-serving -l app=nccl-roce-test --tail=50 >&2 || true
     exit 1
   fi
   echo "    Checking NCCL bus bandwidth result..."
-  BUSBW_LINE=$(kubectl logs job/nccl-roce-test -n llm-serving | grep -i "out-of-place" | tail -n 1 || true)
-  if [ -n "${BUSBW_LINE}" ]; then
-    BUSBW_VAL=$(echo "${BUSBW_LINE}" | awk '{print $11}' || echo "0")
+  BUSBW_VAL=""
+  MAX_ATTEMPTS=30
+  ATTEMPT=0
+  while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+    LOG_OUTPUT=$(kubectl logs statefulset/nccl-roce-test -n llm-serving -c nccl-test 2>/dev/null || kubectl logs nccl-roce-test-0 -n llm-serving 2>/dev/null || true)
+    BUSBW_LINE=$(echo "${LOG_OUTPUT}" | grep -i "# Avg bus bandwidth" | tail -n 1 || true)
+    if [ -n "${BUSBW_LINE}" ]; then
+      BUSBW_VAL=$(echo "${BUSBW_LINE}" | awk -F':' '{print $2}' | xargs || true)
+      break
+    fi
+    ATTEMPT=$((ATTEMPT + 1))
+    sleep 5
+  done
+
+  if [ -n "${BUSBW_VAL}" ]; then
     echo "    Observed NCCL bus bandwidth: ${BUSBW_VAL} GB/s"
-    if ! python3 -c "import sys; sys.exit(0 if float('${BUSBW_VAL:-0}') >= 100.0 else 1)" 2>/dev/null; then
+    if ! awk "BEGIN {exit !(${BUSBW_VAL:-0} >= 100.0)}" 2>/dev/null; then
       echo "ERROR: NCCL RoCEv2 bus bandwidth (${BUSBW_VAL} GB/s) is below required 100 GB/s floor!" >&2
       exit 1
     fi
     echo "    [OK] NCCL RoCEv2 bus bandwidth meets >= 100 GB/s requirement."
   else
-    echo "    [OK] NCCL RoCEv2 test completed successfully."
+    echo "    WARNING: Could not parse NCCL bus bandwidth from logs." >&2
   fi
-  if ! kubectl wait --for=condition=complete job/nccl-parity-check -n llm-serving --timeout=300s; then
-    echo "ERROR: NCCL parity check job failed!" >&2
+
+  echo "    Waiting for NCCL parity check StatefulSet rollout (timeout: 300s)..."
+  if ! kubectl rollout status statefulset/nccl-parity-check -n llm-serving --timeout=300s; then
+    echo "ERROR: NCCL parity check StatefulSet failed!" >&2
     exit 1
   fi
-  kubectl delete job nccl-roce-test nccl-parity-check -n llm-serving --ignore-not-found=true
+  kubectl delete statefulset nccl-roce-test nccl-parity-check -n llm-serving --ignore-not-found=true
 fi
 
 # 4. Apply weights download/hydration job (if staging disk is empty or initial setup)

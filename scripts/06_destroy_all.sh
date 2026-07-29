@@ -44,9 +44,9 @@ fi
 echo "--> 1. Attempting clean deletion of Kubernetes workloads from GKE..."
 if kubectl get nodes >/dev/null 2>&1; then
   echo "    Deleting jobs, statefulsets, deployments, and services in namespace llm-serving..."
-  kubectl delete jobs kimi-k3-weight-staging-job preflight-nccl-roce-check nccl-roce-test nccl-parity-check kimi-k3-incluster-benchmark kimi-k3-cache-seeder -n llm-serving --ignore-not-found --timeout=60s || true
+  kubectl delete jobs kimi-k3-weight-staging-job kimi-k3-incluster-benchmark kimi-k3-cache-seeder -n llm-serving --ignore-not-found --timeout=60s || true
   kubectl delete jobs --all -n llm-serving --ignore-not-found --timeout=60s || true
-  kubectl delete statefulsets kimi-k3-serving -n llm-serving --ignore-not-found --timeout=60s || true
+  kubectl delete statefulsets kimi-k3-serving nccl-roce-test nccl-parity-check preflight-nccl-roce-check -n llm-serving --ignore-not-found --timeout=60s || true
   kubectl delete statefulsets --all -n llm-serving --ignore-not-found --timeout=60s || true
   kubectl delete deployments kimi-k3-gateway -n llm-serving --ignore-not-found --timeout=60s || true
   kubectl delete deployments --all -n llm-serving --ignore-not-found --timeout=60s || true

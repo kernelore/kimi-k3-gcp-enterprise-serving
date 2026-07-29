@@ -57,14 +57,14 @@ kubectl get pods,svc,statefulsets,deployments,jobs,pvc -n llm-serving
 echo "--> 3. Checking local-nvme-raid-formatter DaemonSet across nodes..."
 kubectl get ds local-nvme-raid-formatter -n kube-system
 
-# 4. Check NCCL RoCEv2 preflight check job status
-echo "--> 4. Checking NCCL RoCEv2 preflight check job status..."
-for job_name in nccl-roce-test nccl-parity-check preflight-nccl-roce-check; do
-  if kubectl get job "${job_name}" -n llm-serving >/dev/null 2>&1; then
-    echo "    [OK] Checking job '${job_name}'..."
-    kubectl describe job "${job_name}" -n llm-serving | grep -E "Pods Statuses|Conditions" || true
+# 4. Check NCCL RoCEv2 preflight check statefulset status
+echo "--> 4. Checking NCCL RoCEv2 preflight check status..."
+for sts_name in nccl-roce-test nccl-parity-check preflight-nccl-roce-check; do
+  if kubectl get statefulset "${sts_name}" -n llm-serving >/dev/null 2>&1; then
+    echo "    [OK] Checking statefulset '${sts_name}'..."
+    kubectl describe statefulset "${sts_name}" -n llm-serving | grep -E "Replicas|Conditions" || true
   else
-    echo "    [NOTE] Preflight NCCL job '${job_name}' not found."
+    echo "    [NOTE] Preflight NCCL statefulset '${sts_name}' not found."
   fi
 done
 
