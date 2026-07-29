@@ -64,7 +64,7 @@ def normalize_version(ver: str) -> str:
     return ver
 
 def get_suite_timestamps(data: dict) -> tuple:
-    for key in ["benchmark_config", "soak_config", "sweep_config", "prefill_config", "metadata"]:
+    for key in ["benchmark_config", "soak_config", "sweep_config", "grid", "prefill_config", "metadata"]:
         cfg = data.get(key)
         if isinstance(cfg, dict):
             start_ts = cfg.get("suite_start_ts")
