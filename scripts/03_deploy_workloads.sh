@@ -44,9 +44,6 @@ validate_hf_token() {
     exit 1
   fi
 }
-if [ "${1:-}" != "--render-only" ]; then
-  validate_hf_token
-fi
 
 export MODEL_REPO_ID="${MODEL_REPO_ID:-moonshotai/Kimi-K3}"
 export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-kimi-k3-2.8t-mxfp4}"
@@ -346,6 +343,9 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
       kubectl apply -f "${GENERATED_DIR}/02-hydrate-weights-gcs.yaml"
       echo "    You can check job logs using: kubectl logs -n llm-serving -l app=kimi-k3-weight-staging -f"
     else
+      if [ "${1:-}" != "--render-only" ]; then
+        validate_hf_token
+      fi
       echo "--> 5b. Applying Kimi K3 weight staging job from Hugging Face (${GENERATED_DIR}/02-download-weights.yaml)..."
       kubectl apply -f "${GENERATED_DIR}/02-download-weights.yaml"
       echo "    NOTE: Hugging Face download takes ~15-20 min for 2.8T checkpoints."
@@ -434,11 +434,6 @@ if [ "${SKIP_STAGING_EXEC:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" 
   kubectl delete pv pv-kimi-k3-weights-staging --ignore-not-found=true --timeout=60s || true
 fi
 
-if [ "${1:-}" = "--stage-only" ]; then
-  echo "--> Stage-only mode complete. Exiting."
-  exit 0
-fi
-
 # 6. Multi-Node ReadOnlyMany Volume Mode Flipping
 if command -v gcloud >/dev/null 2>&1; then
   CURRENT_ACCESS_MODE=$(gcloud compute disks describe kimi-k3-weights-rox --zone="${ZONE}" --project="${PROJECT_ID}" --format='value(accessMode)' --quiet 2>/dev/null | head -n 1 || true)
@@ -453,15 +448,15 @@ if command -v gcloud >/dev/null 2>&1; then
         break
       fi
       NOW=$(date +%s)
-      if [ $((NOW - DETACH_START)) -gt ${DETACH_TIMEOUT} ]; then
-        echo "ERROR: Timed out waiting for kimi-k3-weights-rox to detach! Users still attached: ${USERS}" >&2
+      ELAPSED=$((NOW - DETACH_START))
+      if [ "${ELAPSED}" -gt "${DETACH_TIMEOUT}" ]; then
+        echo "ERROR: Timed out waiting for volume kimi-k3-weights-rox to detach after ${DETACH_TIMEOUT}s." >&2
         exit 1
       fi
       sleep 5
     done
-    echo "--> Setting Hyperdisk ML volume access mode to READ_ONLY_MANY for multi-node MPI attach..."
-    if ! gcloud compute disks update kimi-k3-weights-rox \
-      --access-mode=READ_ONLY_MANY --zone="${ZONE}" --project="${PROJECT_ID}" --quiet; then
+    echo "--> Flipping Hyperdisk ML volume access mode to READ_ONLY_MANY..."
+    if ! gcloud compute disks update kimi-k3-weights-rox --access-mode=READ_ONLY_MANY --zone="${ZONE}" --project="${PROJECT_ID}" --quiet; then
       echo "ERROR: Failed to update kimi-k3-weights-rox access-mode to READ_ONLY_MANY!" >&2
       exit 1
     fi
@@ -473,6 +468,11 @@ if command -v gcloud >/dev/null 2>&1; then
   else
     echo "    [OK] Hyperdisk ML volume already operating in READ_ONLY_MANY mode."
   fi
+fi
+
+if [ "${1:-}" = "--stage-only" ]; then
+  echo "--> Stage-only mode complete (weights staged and volume flipped to READ_ONLY_MANY). Exiting."
+  exit 0
 fi
 
 # 7. Apply multi-node serving engine deployment
