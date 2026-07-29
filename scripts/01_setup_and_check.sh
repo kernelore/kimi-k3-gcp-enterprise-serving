@@ -260,6 +260,8 @@ gcloud services enable \
   bigquery.googleapis.com \
   storage.googleapis.com \
   monitoring.googleapis.com \
+  logging.googleapis.com \
+  iamcredentials.googleapis.com \
   cloudbuild.googleapis.com \
   --project="${PROJECT_ID}" --quiet
 echo "    [OK] All required GCP APIs enabled."
