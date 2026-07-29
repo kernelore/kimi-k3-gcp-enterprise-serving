@@ -20,6 +20,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 MASSIVE_PROMPTS = [
     """You are a Senior Systems Architect at Google. Analyze and explain the complete memory co-design of Kimi K3 (~2.8T parameters, 896 MoE experts) on a 2-node NVIDIA Blackwell spot pool (`2x a4-highgpu-8g` = 16x B200 HGX GPUs total = 2,880 GB HBM3e VRAM). 
@@ -254,7 +255,7 @@ def main():
   ) as executor:
     futures = []
     for i in range(args.requests):
-      prompt = MASSIVE_PROMPTS[i % len(MASSIVE_PROMPTS)]
+      prompt = f"{MASSIVE_PROMPTS[i % len(MASSIVE_PROMPTS)]} [Req={i+1} Nonce={uuid.uuid4().hex[:12]}]"
       futures.append(
           executor.submit(
               execute_stream_request,

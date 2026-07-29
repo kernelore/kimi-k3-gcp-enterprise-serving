@@ -22,6 +22,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 SOAK_PROMPTS = [
     (
@@ -290,7 +291,7 @@ def main():
     active_futures = set()
     for _ in range(args.concurrency):
       req_counter += 1
-      prompt = SOAK_PROMPTS[req_counter % len(SOAK_PROMPTS)]
+      prompt = f"{SOAK_PROMPTS[req_counter % len(SOAK_PROMPTS)]} [Req={req_counter} Nonce={uuid.uuid4().hex[:12]}]"
       active_futures.add(
           executor.submit(
               execute_stream_request,
@@ -341,7 +342,7 @@ def main():
 
         if elapsed < args.duration and consecutive_errors < 5:
           req_counter += 1
-          prompt = SOAK_PROMPTS[req_counter % len(SOAK_PROMPTS)]
+          prompt = f"{SOAK_PROMPTS[req_counter % len(SOAK_PROMPTS)]} [Req={req_counter} Nonce={uuid.uuid4().hex[:12]}]"
           active_futures.add(
               executor.submit(
                   execute_stream_request,

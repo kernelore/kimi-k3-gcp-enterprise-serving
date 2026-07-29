@@ -18,6 +18,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 ENTERPRISE_PROMPTS = [
     (
@@ -265,7 +266,7 @@ def main():
   ) as executor:
     futures = []
     for i in range(args.requests):
-      prompt = ENTERPRISE_PROMPTS[i % len(ENTERPRISE_PROMPTS)]
+      prompt = f"{ENTERPRISE_PROMPTS[i % len(ENTERPRISE_PROMPTS)]} [Req={i+1} Nonce={uuid.uuid4().hex[:12]}]"
       futures.append(
           executor.submit(
               execute_stream_request,

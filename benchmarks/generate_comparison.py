@@ -272,18 +272,21 @@ def generate_markdown(sglang: dict | None, trtllm: dict | None) -> str:
                 ("TTFT P50 (ms)", lambda d: d["metrics"]["ttft_ms"]["p50"], False, "{:.2f}"),
                 ("TPOT mean (ms)", lambda d: d["metrics"]["tpot_ms"]["mean"], False, "{:.2f}"),
                 ("Throughput (tok/s)", lambda d: d["throughput_tokens_sec"], True, "{:.2f}"),
+                ("Per-GPU Throughput (tok/s/GPU)", lambda d: d["throughput_tokens_sec"] / 16.0, True, "{:.2f}"),
                 ("Success rate", lambda d: 100.0 * d["successful_requests"] / max(1, d["total_requests"]), True, "{:.1f}%"),
             ]),
             ("Massive Stress ($c=20$, $256\\text{ tok}$)", "massive", [
                 ("TTFT P50 (ms)", lambda d: d["metrics"]["ttft_ms"]["p50"], False, "{:.2f}"),
                 ("TPOT mean (ms)", lambda d: d["metrics"]["tpot_ms"]["mean"], False, "{:.2f}"),
                 ("Throughput (tok/s)", lambda d: d["throughput_tokens_sec"], True, "{:.2f}"),
+                ("Per-GPU Throughput (tok/s/GPU)", lambda d: d["throughput_tokens_sec"] / 16.0, True, "{:.2f}"),
                 ("Success rate", lambda d: 100.0 * d["successful_requests"] / max(1, d["total_requests"]), True, "{:.1f}%"),
             ]),
             ("Endurance Soak ($c=18$, $1800\\text{s}$)", "soak", [
                 ("TTFT P50 (ms)", lambda d: d["metrics"]["ttft_ms"]["p50"], False, "{:.2f}"),
                 ("TPOT mean (ms)", lambda d: d["metrics"]["tpot_ms"]["mean"], False, "{:.2f}"),
                 ("Throughput (tok/s)", lambda d: d["throughput_tokens_sec"], True, "{:.2f}"),
+                ("Per-GPU Throughput (tok/s/GPU)", lambda d: d["throughput_tokens_sec"] / 16.0, True, "{:.2f}"),
                 ("Completed cycles", lambda d: float(d["successful_requests"]), True, "{:.0f}"),
             ]),
         ]
