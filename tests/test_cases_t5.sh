@@ -47,6 +47,11 @@ t5_adv_01() {
   local staging_pvc="${PROJECT_ROOT}/terraform/manifests/templates/02-staging-pvc.yaml.template"
   assert_match 'storage: 2000Gi' "${staging_pvc}" "Missing 2000Gi storage claim in staging PVC template"
   assert_no_match 'ENABLE_HPA' "${PROJECT_ROOT}/scripts/config.env.example" "Orphaned ENABLE_HPA still present in config.env.example"
+
+  local turndown_yaml="${PROJECT_ROOT}/terraform/manifests/generated/10-scheduled-turndown-cronjob.yaml"
+  assert_file_exists "${turndown_yaml}"
+  assert_match 'scale statefulset kimi-k3-serving --replicas=0' "${turndown_yaml}" "Scheduled turndown manifest missing --replicas=0"
+  assert_match 'scale statefulset kimi-k3-serving --replicas=2' "${turndown_yaml}" "Scheduled turnup manifest missing --replicas=2"
 }
 
 
