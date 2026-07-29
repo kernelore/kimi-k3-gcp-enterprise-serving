@@ -1,6 +1,6 @@
 # 2,000 GB Persistent Hyperdisk ML Shared Staging & Serving Volume for Kimi K3 MXFP4
 resource "google_compute_disk" "staging_disk" {
-  name                   = "${var.model_family}-weights-rox"
+  name                   = "kimi-k3-weights-rox"
   type                   = "hyperdisk-ml"
   size                   = var.hyperdisk_ml_size_gb
   provisioned_throughput = var.hyperdisk_ml_throughput_mibps
