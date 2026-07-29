@@ -28,8 +28,9 @@ master_authorized_cidrs = [
 ]
 
 # Model & Storage Configuration
-model_family         = "kimi-k3"
-hyperdisk_ml_size_gb = 2000 # 2 TB volume for Kimi K3 2.8T parameters and TRT-LLM engines
+model_family                  = "kimi-k3"
+hyperdisk_ml_size_gb          = 2000 # 2 TB volume for Kimi K3 2.8T parameters and TRT-LLM engines
+hyperdisk_ml_throughput_mibps = 24576
 
 # Mandatory Resource Compliance Labels (ensure strict adherence to prevent cleanup)
 owner_label = "your-username-kimi3" # Lowercase alphanumeric and hyphens only
@@ -37,5 +38,5 @@ ttl_label   = "7d"                  # e.g., 24h, 7d, 14d
 env_label   = "kimi-k3-prod"
 
 # Database & Gateway Security Credentials
-db_tier     = "db-custom-2-8192"
+db_tier     = "db-custom-4-16384"
 db_password = "REPLACE_WITH_SECURE_PASSWORD" # Required sensitive password for LiteLLM DB
