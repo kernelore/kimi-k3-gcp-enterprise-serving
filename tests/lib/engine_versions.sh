@@ -19,7 +19,7 @@ get_engine_version() {
     echo "ERROR: Dockerfile not found at ${dockerfile}" >&2
     return 1
   fi
-  local line image tag digest
+  local line image tag
   line=$(grep -E '^FROM[[:space:]]+' "${dockerfile}" | head -n 1)
   image=$(echo "${line}" | awk '{print $2}')
   if [ -z "${image}" ]; then
@@ -27,11 +27,9 @@ get_engine_version() {
     return 1
   fi
   if [[ "${image}" == *"@"* ]]; then
-    digest="${image#*@}"
     tag="${image%%@*}"
     tag="${tag#*:}"
   else
-    digest=""
     tag="${image#*:}"
   fi
   # Normalize: strip leading v/V, trailing -cu130, trailing -py3
