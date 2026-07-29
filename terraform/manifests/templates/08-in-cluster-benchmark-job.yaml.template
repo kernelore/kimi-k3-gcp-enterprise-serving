@@ -52,6 +52,10 @@ spec:
             --api-key="${GATEWAY_MASTER_KEY}" \
             --model="${SERVING_MODEL_NAME}" \
             --output="/tmp/results/incluster_soak_results.json"
+          echo "=== JSON_RESULT_START ==="
+          cat /tmp/results/incluster_soak_results.json || true
+          echo ""
+          echo "=== JSON_RESULT_END ==="
           echo "In-cluster benchmark execution finished successfully."
         volumeMounts:
         - name: bench-scripts

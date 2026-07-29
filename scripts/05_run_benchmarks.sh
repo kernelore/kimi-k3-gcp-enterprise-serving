@@ -292,10 +292,27 @@ if [ "${IN_CLUSTER}" = "true" ]; then
     exit 1
   fi
 
-  echo "    Streaming in-cluster benchmark logs (Job: kimi-k3-incluster-benchmark)..."
-  sleep 5
-  kubectl logs -n llm-serving -l app=kimi-k3-benchmark -f --tail=100 || true
-  echo "    [OK] In-cluster benchmark job execution finished."
+  TIMEOUT="1200s"
+  if [ "${MODE}" = "soak" ]; then
+    TIMEOUT="3600s"
+  fi
+  echo "    Waiting for in-cluster benchmark Job to complete (timeout: ${TIMEOUT})..."
+  if ! kubectl wait --for=condition=complete job/kimi-k3-incluster-benchmark -n llm-serving --timeout="${TIMEOUT}"; then
+    echo "ERROR: In-cluster benchmark Job failed or timed out!" >&2
+    kubectl logs -n llm-serving -l app=kimi-k3-benchmark --tail=50 >&2 || true
+    exit 1
+  fi
+
+  echo "    Retrieving in-cluster benchmark results..."
+  BENCH_POD=$(kubectl get pod -n llm-serving -l app=kimi-k3-benchmark -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  mkdir -p "${RESULTS_DIR}/${INFERENCE_ENGINE}"
+  if [ -n "${BENCH_POD}" ]; then
+    if ! kubectl cp -n llm-serving "${BENCH_POD}:/tmp/results/" "${RESULTS_DIR}/${INFERENCE_ENGINE}/" 2>/dev/null; then
+      echo "    [INFO] kubectl cp failed; extracting JSON result from pod logs..."
+      kubectl logs -n llm-serving "${BENCH_POD}" | awk '/=== JSON_RESULT_START ===/{flag=1; next} /=== JSON_RESULT_END ===/{flag=0} flag' > "${RESULTS_DIR}/${INFERENCE_ENGINE}/incluster_${MODE}_results.json" || true
+    fi
+  fi
+  echo "    [OK] In-cluster benchmark job execution finished and results retrieved."
   exit 0
 fi
 
