@@ -90,7 +90,7 @@ variable "db_password" {
 }
 
 variable "enable_private_endpoint" {
-  description = "Whether to enable private IP endpoint for Cloud SQL and Redis"
+  description = "Whether to enable private IP endpoint for GKE Control Plane access"
   type        = bool
   default     = false
 }

@@ -288,12 +288,12 @@ When deploying a fresh cluster or recovering from a disaster, downloading 1,453.
 
 ```bash
 # 1. Standard deploy leveraging an existing GCS weight cache bucket
-export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-kimi-k3-weights-backup/mxfp4"
+export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-kimi-k3-weights-cache/mxfp4"
 ./scripts/03_deploy_workloads.sh
 
 # 2. Automatically populate / seed the GCS cache after an initial Hugging Face download
 export POPULATE_WEIGHTS_CACHE="true"
-export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-kimi-k3-weights-backup/mxfp4"
+export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-kimi-k3-weights-cache/mxfp4"
 ./scripts/03_deploy_workloads.sh
 
 # 3. Force re-staging of model weight shards (flips volume back to ReadWrite mode temporarily)
@@ -385,7 +385,7 @@ The deployment lifecycle is structured into four systematic, verifiable engineer
 |                                 PHASE 1: Enterprise Infrastructure & Fabric Foundation                          |
 |  - Provision Private VPC, Secondary RoCEv2 Fabric Subnets (MTU 8896), Cloud NAT, and IAP SSH Firewall Rules     |
 |  - Deploy GKE Blackwell Cluster (Private Nodes, IAM-Gated Endpoint) and Workload Identity Federation (WIF)      |
-|  - Provision Cloud SQL PostgreSQL Instance (`kimi-k3-gateway-db`) & Cloud Memorystore Redis (`gateway-cache`)   |
+|  - Provision Cloud SQL PostgreSQL Instance (`kimi-k3-gateway-db`) & Cloud Memorystore Redis (`kimi-k3-gateway-cache`)   |
 +-----------------------------------------------------------------------------------------------------------------+
                                                          |
                                                          v
