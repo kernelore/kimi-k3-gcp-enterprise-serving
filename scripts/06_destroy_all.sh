@@ -44,7 +44,7 @@ fi
 echo "--> 1. Attempting clean deletion of Kubernetes workloads from GKE..."
 if kubectl get nodes >/dev/null 2>&1; then
   echo "    Deleting jobs, statefulsets, deployments, and services in namespace llm-serving..."
-  kubectl delete jobs kimi-k3-weight-staging-job preflight-nccl-roce-check kimi-k3-incluster-benchmark kimi-k3-cache-seeder -n llm-serving --ignore-not-found --timeout=60s || true
+  kubectl delete jobs kimi-k3-weight-staging-job preflight-nccl-roce-check nccl-roce-test nccl-parity-check kimi-k3-incluster-benchmark kimi-k3-cache-seeder -n llm-serving --ignore-not-found --timeout=60s || true
   kubectl delete jobs --all -n llm-serving --ignore-not-found --timeout=60s || true
   kubectl delete statefulsets kimi-k3-serving -n llm-serving --ignore-not-found --timeout=60s || true
   kubectl delete statefulsets --all -n llm-serving --ignore-not-found --timeout=60s || true
@@ -75,6 +75,17 @@ if command -v gcloud >/dev/null 2>&1; then
   gcloud sql databases delete kimi_k3_gateway --instance=kimi-k3-gateway-db --project="${PROJECT_ID}" --quiet 2>/dev/null || true
 fi
 
+if command -v gcloud >/dev/null 2>&1; then
+  if [ "${PURGE_WEIGHTS_CACHE:-false}" = "true" ] && [ -n "${GCS_WEIGHTS_BUCKET:-}" ]; then
+    if [[ "${GCS_WEIGHTS_BUCKET}" != gs://* ]]; then
+      GCS_WEIGHTS_BUCKET="gs://${GCS_WEIGHTS_BUCKET}"
+    fi
+    echo "WARNING: PURGE_WEIGHTS_CACHE=true explicitly set. Deleting weight cache bucket ${GCS_WEIGHTS_BUCKET} before destroy..."
+    echo "         Next deployment will require a full HuggingFace re-download (~15-20 min)."
+    gcloud storage rm -r "${GCS_WEIGHTS_BUCKET}" --project="${PROJECT_ID}" --quiet 2>/dev/null || true
+  fi
+fi
+
 # 3. Run Terraform destroy with automated self-healing and retry loop (Issues 6 & 7 Guards)
 echo "--> 3. Running terraform destroy in ${TF_DIR}..."
 cd "${TF_DIR}"
@@ -102,7 +113,7 @@ if ! eval "${DESTROY_CMD}"; then
 
   # Self-heal Service Networking & VPC peering connections (Issue 7 guard)
   echo "    Cleaning up VPC peerings and state connections after destroy failure..."
-  VPC_NAME=$(terraform output -raw vpc_network_name 2>/dev/null || echo "${CLUSTER_NAME}-primary")
+  VPC_NAME=$(terraform output -raw vpc_network_name 2>/dev/null || echo "kimi-k3-vpc")
   if command -v gcloud >/dev/null 2>&1 && [ -n "${VPC_NAME}" ]; then
     PEERINGS=$(gcloud compute networks peerings list --network="${VPC_NAME}" --project="${PROJECT_ID}" --format="value(peerings[].name)" 2>/dev/null | tr ';' '\n' || true)
     for p in ${PEERINGS}; do
@@ -122,11 +133,6 @@ fi
 # 4. Enumerate retained GCS buckets and handle opt-in weight cache purge
 echo "--> 4. Enumerating retained GCS buckets (*-kimi-k3-*) in project ${PROJECT_ID}..."
 if command -v gcloud >/dev/null 2>&1; then
-  if [ "${PURGE_WEIGHTS_CACHE:-false}" = "true" ] && [ -n "${GCS_WEIGHTS_BUCKET:-}" ]; then
-    echo "WARNING: PURGE_WEIGHTS_CACHE=true explicitly set. Deleting weight cache bucket ${GCS_WEIGHTS_BUCKET}..."
-    echo "         Next deployment will require a full HuggingFace re-download (~15-20 min)."
-    gcloud storage rm -r "${GCS_WEIGHTS_BUCKET}" --project="${PROJECT_ID}" --quiet 2>/dev/null || true
-  fi
 
   echo "------------------------------------------------------------------------------"
   echo "INTENTIONALLY RETAINED BUCKET INVENTORY (persistent cache / remote state — not a leak):"

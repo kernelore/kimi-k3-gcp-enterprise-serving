@@ -48,7 +48,7 @@ resource "google_storage_bucket" "weights_cache" {
   name                        = "${var.project_id}-${var.model_family}-weights-cache"
   location                    = var.region
   project                     = var.project_id
-  force_destroy               = false
+  force_destroy               = true
   uniform_bucket_level_access = true
 
   labels = {
