@@ -219,7 +219,11 @@ if command -v gcloud >/dev/null 2>&1; then
     cp -r "${PROJECT_ROOT}/docker/." "${BUILD_DIR}/"
     cp "${PROJECT_ROOT}/docker/${DOCKERFILE}" "${BUILD_DIR}/Dockerfile"
     echo "    --> Submitting build for docker/${DOCKERFILE} to Cloud Build..."
-    gcloud builds submit "${BUILD_DIR}" --tag "${SERVING_IMAGE}" --project="${PROJECT_ID}" --quiet
+    if ! gcloud builds submit "${BUILD_DIR}" --tag "${SERVING_IMAGE}" --timeout=7200s --machine-type=e2-highcpu-32 --disk-size=200 --project="${PROJECT_ID}" --quiet; then
+      echo "    [ERROR] Cloud Build failed! Inspect build logs at: https://console.cloud.google.com/cloud-build/builds?project=${PROJECT_ID}" >&2
+      rm -rf "${BUILD_DIR}"
+      exit 1
+    fi
     rm -rf "${BUILD_DIR}"
     echo "    [OK] Self-healing container build step finished."
   else
