@@ -4,18 +4,29 @@ import json
 import sys
 import os
 
-try:
-    from benchmarks.telemetry_sanitizer import sanitize_telemetry
-except ImportError:
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "benchmarks")))
-    from telemetry_sanitizer import sanitize_telemetry
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from benchmarks.telemetry_sanitizer import sanitize_telemetry
 
 # Assembled at runtime so the scan patterns never appear as literals in this file.
 FAKE_KEY   = "sk-" + "kimi-k3-" + "0123456789abcdef" * 2
+HF_TOKEN   = "hf_" + "0123456789abcdef" * 2
 USER_HOME  = "/" + "home/testuser"
 GOOG_HOME  = "/usr/local/google/" + "home/testuser"
 
 class TestTelemetrySanitizer(unittest.TestCase):
+    def test_hf_token_and_master_key_redaction(self):
+        raw_data = {
+            "master_key": FAKE_KEY,
+            "authorization": "Bearer " + FAKE_KEY,
+            "token": HF_TOKEN,
+            "hf_token": HF_TOKEN
+        }
+        sanitized = sanitize_telemetry(raw_data)
+        self.assertEqual(sanitized["master_key"], "REDACTED")
+        self.assertEqual(sanitized["authorization"], "REDACTED")
+        self.assertEqual(sanitized["token"], "REDACTED")
+        self.assertEqual(sanitized["hf_token"], "REDACTED")
+
     def test_sanitize_secrets_and_paths(self):
         raw_data = {
             "api_key": FAKE_KEY,

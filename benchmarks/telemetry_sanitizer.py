@@ -2,28 +2,30 @@
 import json
 import re
 
+SENSITIVE_KEYS = {"api_key", "raw", "master_key", "authorization", "hf_token", "token"}
+
 def _sanitize_str(val):
     if not isinstance(val, str):
         return val
-    val = re.sub(r"sk-kimi-k3-[a-fA-F0-9]{16,}", "REDACTED", val)
+    val = re.sub(r"sk-[a-zA-Z0-9_-]{12,}", "REDACTED", val)
+    val = re.sub(r"hf_[A-Za-z0-9]{32,}", "REDACTED", val)
     val = re.sub(r"docker\.pkg\.dev/[^/]+", "docker.pkg.dev/YOUR_PROJECT_ID", val)
-    val = re.sub(r"^(.*?)(/home/[^/]+/|/usr/local/google/home/[^/]+/.gemini/jetski/worktrees/[^/]+/[^/]+/)", "", val)
+    val = re.sub(r"(?:/usr/local/google/home/[^/]+/\.gemini/[^/\s]+/worktrees/[^/\s]+/[^/\s]+/|/home/[^/\s]+/|/Users/[^/\s]+/)", "", val)
     return val
 
 def sanitize_telemetry(data, out_path=None):
     if not isinstance(data, dict):
         return data
-    if "api_key" in data:
-        data["api_key"] = "REDACTED"
-    if "output" in data and isinstance(data["output"], str):
-        p = out_path.replace("\\", "/") if out_path else data["output"].replace("\\", "/")
-        if "benchmarks/results/" in p:
-            data["output"] = "benchmarks/results/" + p.split("benchmarks/results/")[-1]
-        else:
-            data["output"] = _sanitize_str(p)
-
     for k in list(data.keys()):
-        if k == "api_key" or k == "output":
+        if k in SENSITIVE_KEYS and isinstance(data[k], str):
+            data[k] = "REDACTED"
+            continue
+        if k == "output" and isinstance(data["output"], str):
+            p = out_path.replace("\\", "/") if out_path else data["output"].replace("\\", "/")
+            if "benchmarks/results/" in p:
+                data["output"] = "benchmarks/results/" + p.split("benchmarks/results/")[-1]
+            else:
+                data["output"] = _sanitize_str(p)
             continue
         val = data[k]
         if isinstance(val, dict):
