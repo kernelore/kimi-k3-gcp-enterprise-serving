@@ -312,8 +312,9 @@ spec:
         resources:
           requests:
             cpu: "32"
-            memory: "64Gi"
+            memory: "768Gi"
           limits:
+            memory: "1400Gi"
             nvidia.com/gpu: 8
       volumes:
       - name: model-rox
