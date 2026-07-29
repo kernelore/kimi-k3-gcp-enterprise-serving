@@ -57,6 +57,7 @@ data:
       use_redis_transaction_buffer: true
 
     litellm_settings:
+      preserve_thought_blocks: true
       callbacks: ["custom_callbacks.proxy_handler_instance"]
       cache: true
       cache_params:

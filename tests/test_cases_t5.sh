@@ -67,7 +67,7 @@ t5_adv_02() {
 
 # T5_ADV_03: Gateway, Observability, HPA, and MoE Compilation Specializations
 t5_adv_03() {
-  assert_no_match 'preserve_thought_blocks' "${PROJECT_ROOT}/terraform/manifests/templates/04-enterprise-gateway-config.yaml.template" "Missing LiteLLM CoT reasoning preservation config"
+  assert_match 'preserve_thought_blocks: true' "${PROJECT_ROOT}/terraform/manifests/templates/04-enterprise-gateway-config.yaml.template" "Missing LiteLLM CoT reasoning preservation config"
   assert_match 'drop_params: false' "${PROJECT_ROOT}/terraform/manifests/templates/04-enterprise-gateway-config.yaml.template" "Missing LiteLLM CoT parameter drop prevention"
   assert_match 'gke-nodepool: "np-system"' "${PROJECT_ROOT}/terraform/manifests/templates/05-enterprise-gateway-deployment.yaml.template" "Missing np-system node pool targeting in LiteLLM Gateway deployment"
   assert_no_match 'gke-spot: "true"' "${PROJECT_ROOT}/terraform/manifests/templates/05-enterprise-gateway-deployment.yaml.template" "Unexpected spot node pool targeting in LiteLLM Gateway deployment"

@@ -228,6 +228,10 @@ spec:
           NODE_RANK=${POD_INDEX:-${HOSTNAME##*-}}
           if [ "${NODE_RANK}" = "0" ]; then
             echo -e "kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local slots=8\nkimi-k3-serving-1.kimi-k3-workers-headless.llm-serving.svc.cluster.local slots=8" > /tmp/hostfile
+            echo "Waiting for worker sshd on port 2222..."
+            while ! nc -z -w 2 kimi-k3-serving-1 2222 2>/dev/null; do
+              sleep 2
+            done
             echo "Starting TRT-LLM MPI leader node rank 0. Launching mpirun across 16 GPUs..."
             NCCL_XARGS=""
             for v in $(env | grep -E '^NCCL_' | cut -d= -f1 | sort); do
@@ -238,6 +242,7 @@ spec:
               --mca plm_rsh_args "-p 2222" \
               ${NCCL_XARGS} -x LD_LIBRARY_PATH -x PATH \
               trtllm-llmapi-launch trtllm-serve /mnt/rox/Kimi-K3 \
+                --served_model_name "${SERVING_MODEL_NAME}" \
                 --backend pytorch --host 0.0.0.0 --port 8000 \
                 --tp_size "${TRTLLM_TP_SIZE}" --pp_size "${TRTLLM_PP_SIZE}" --ep_size "${TRTLLM_EP_SIZE}" \
                 --max_seq_len "${TRTLLM_MAX_SEQ_LEN}" \
