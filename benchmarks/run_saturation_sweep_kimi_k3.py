@@ -43,6 +43,17 @@ import time
 import urllib.error
 import urllib.request
 
+
+def extract_chunk_text(chunk: dict) -> str | None:
+  if "choices" in chunk and chunk["choices"]:
+    choice = chunk["choices"][0]
+    txt = choice.get("text")
+    if txt is None and isinstance(choice.get("delta"), dict):
+      txt = choice["delta"].get("content")
+    return txt
+  return None
+
+
 # Approximate token count of SYNTHETIC_BASE_1K (authoritative count is reported by engine in usage block).
 BASE_TOKENS_APPROX = 1024
 
@@ -132,18 +143,13 @@ def execute_single_request(
           break
         try:
           chunk = json.loads(data_str)
-          if (
-              "choices" in chunk
-              and chunk["choices"]
-              and "text" in chunk["choices"][0]
-          ):
-            txt = chunk["choices"][0].get("text")
-            if txt is not None and len(txt) > 0:
-              now = time.time()
-              if t_first_token is None:
-                t_first_token = now
-              token_timestamps.append(now)
-              generated_tokens += 1
+          txt = extract_chunk_text(chunk)
+          if txt is not None and len(txt) > 0:
+            now = time.time()
+            if t_first_token is None:
+              t_first_token = now
+            token_timestamps.append(now)
+            generated_tokens += 1
           elif "usage" in chunk and chunk["usage"]:
             usage = chunk["usage"]
             if usage.get("completion_tokens"):

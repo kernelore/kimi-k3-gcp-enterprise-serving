@@ -30,6 +30,16 @@ SYNTHETIC_8K = (
 ) * 40  # ~8192 tokens (~20,800 chars)
 
 
+def extract_chunk_text(chunk: dict) -> str | None:
+  if "choices" in chunk and chunk["choices"]:
+    choice = chunk["choices"][0]
+    txt = choice.get("text")
+    if txt is None and isinstance(choice.get("delta"), dict):
+      txt = choice["delta"].get("content")
+    return txt
+  return None
+
+
 def parse_args():
   parser = argparse.ArgumentParser(
       description="Kimi K3 Prefill / Prompt-Ingestion Benchmark"
@@ -98,7 +108,7 @@ def measure_prefill(
   start_dt = datetime.now(timezone.utc)
   suite_start_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
   t_first = None
-  prompt_tokens = 8192
+  prompt_tokens = 0
   has_exact_usage = False
 
   try:
@@ -112,11 +122,7 @@ def measure_prefill(
           break
         try:
           chunk = json.loads(data_str)
-          if (
-              "choices" in chunk
-              and chunk["choices"]
-              and chunk["choices"][0].get("text")
-          ):
+          if extract_chunk_text(chunk):
             if t_first is None:
               t_first = time.time()
           usage = chunk.get("usage")
@@ -139,8 +145,10 @@ def measure_prefill(
   t_end = time.time()
   end_dt = datetime.now(timezone.utc)
   suite_end_ts = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+  if prompt_tokens == 0:
+    print("Warning: Failed to obtain exact prompt_tokens from usage")
   ttft = (t_first - t_start) if t_first else (t_end - t_start)
-  prefill_tok_s = prompt_tokens / ttft if ttft > 0 else 0.0
+  prefill_tok_s = prompt_tokens / ttft if (ttft > 0 and prompt_tokens > 0) else 0.0
 
   try:
     meta_dict = json.loads(metadata) if metadata else {}
@@ -148,7 +156,10 @@ def measure_prefill(
     meta_dict = {"raw": metadata}
 
   try:
+    if prompt_tokens == 0:
+      raise ValueError("Missing prompt_tokens")
     result = {
+        "success": True,
         "engine": engine,
         "metadata": meta_dict,
         "prompt_tokens": prompt_tokens,
@@ -165,6 +176,7 @@ def measure_prefill(
     }
   except (ZeroDivisionError, KeyError, TypeError, ValueError, Exception):
     result = {
+        "success": False,
         "engine": engine,
         "metadata": meta_dict,
         "prompt_tokens": 0,
