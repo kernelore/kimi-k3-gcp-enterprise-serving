@@ -118,6 +118,36 @@ resource "google_service_account_iam_member" "workload_identity_user" {
   member             = "serviceAccount:${var.project_id}.svc.id.goog[llm-serving/kimi-k3-serving-sa]"
 }
 
+resource "google_service_account" "node_sa" {
+  account_id   = "kimi-k3-node-sa"
+  display_name = "Kimi K3 GKE Node Service Account"
+  project      = var.project_id
+}
+
+resource "google_project_iam_member" "node_artifact_reader" {
+  project = var.project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.node_sa.email}"
+}
+
+resource "google_project_iam_member" "node_log_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.node_sa.email}"
+}
+
+resource "google_project_iam_member" "node_metric_writer" {
+  project = var.project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.node_sa.email}"
+}
+
+resource "google_project_iam_member" "node_monitoring_viewer" {
+  project = var.project_id
+  role    = "roles/monitoring.viewer"
+  member  = "serviceAccount:${google_service_account.node_sa.email}"
+}
+
 resource "google_container_node_pool" "system_pool" {
   name       = "np-system"
   location   = var.zone
@@ -130,8 +160,9 @@ resource "google_container_node_pool" "system_pool" {
   }
 
   node_config {
-    machine_type = "e2-standard-8"
-    disk_size_gb = 100
+    machine_type    = "e2-standard-8"
+    service_account = google_service_account.node_sa.email
+    disk_size_gb    = 100
 
     labels = {
       env   = var.env_label

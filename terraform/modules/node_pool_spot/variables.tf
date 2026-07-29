@@ -71,3 +71,8 @@ variable "secondary_gvnic_subnetwork_name" {
   default     = "gvnic-sub"
 }
 
+variable "node_service_account_email" {
+  description = "Service account email for GPU spot node pool"
+  type        = string
+}
+

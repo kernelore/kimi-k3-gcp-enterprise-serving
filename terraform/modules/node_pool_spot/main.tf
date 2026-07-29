@@ -24,9 +24,10 @@ resource "google_container_node_pool" "gpu_pool_spot" {
   }
 
   node_config {
-    machine_type = var.gpu_machine_type
-    spot         = true
-    disk_size_gb = 200
+    machine_type    = var.gpu_machine_type
+    service_account = var.node_service_account_email
+    spot            = true
+    disk_size_gb    = 200
 
     # gVNIC is default/mandatory on A4 primary NIC; setting it explicitly forces GVNIC onto RDMA NICs and is rejected by the RoCE network profile (allowed: MRDMA).
 
