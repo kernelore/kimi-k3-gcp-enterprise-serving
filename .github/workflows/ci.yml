@@ -126,3 +126,25 @@ jobs:
             fi
             echo "    [OK] Placeholder table confirmed."
           fi
+
+  e2e-coverage-suite:
+    name: E2E Conformance & White-Box Coverage Hardening Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.5.0"
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck curl gettext-base
+          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+      - name: Run Master E2E & Coverage Gaps Suites
+        run: |
+          for t in tests/test_cases_t{1..5}.sh tests/adv_test_coverage_gaps.sh tests/test_e2e_kimi_k3.sh; do bash "$t" || exit 1; done
+          git status --porcelain
