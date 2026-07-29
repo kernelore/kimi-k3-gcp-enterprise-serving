@@ -48,6 +48,7 @@ metadata:
     owner: ${OWNER_LABEL}
 spec:
   schedule: "0 19 * * 1-5"
+  timeZone: "Europe/Helsinki"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -62,11 +63,11 @@ spec:
           restartPolicy: OnFailure
           containers:
           - name: kubectl-turndown
-            image: bitnami/kubectl:1.31.0
+            image: google/cloud-sdk:500.0.0-slim
             command:
             - "/bin/sh"
             - "-c"
-            - "kubectl scale statefulset kimi-k3-serving --replicas=0 -n llm-serving || true"
+            - "kubectl scale statefulset kimi-k3-serving --replicas=0 -n llm-serving"
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -79,6 +80,7 @@ metadata:
     owner: ${OWNER_LABEL}
 spec:
   schedule: "0 9 * * 1-5"
+  timeZone: "Europe/Helsinki"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -93,8 +95,8 @@ spec:
           restartPolicy: OnFailure
           containers:
           - name: kubectl-turnup
-            image: bitnami/kubectl:1.31.0
+            image: google/cloud-sdk:500.0.0-slim
             command:
             - "/bin/sh"
             - "-c"
-            - "kubectl scale statefulset kimi-k3-serving --replicas=${NODES_PER_REPLICA} -n llm-serving || true"
+            - "kubectl scale statefulset kimi-k3-serving --replicas=${SERVING_REPLICAS} -n llm-serving"
