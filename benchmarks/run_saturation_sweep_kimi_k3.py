@@ -82,7 +82,7 @@ SYNTHETIC_BASE_1K = (
     " latency. Furthermore, the 2 TB ReadOnlyMany Hyperdisk ML storage"
     " architecture enables horizontal pod scaling without redundant checkpoint"
     " downloads. "
-) * 6  # ~1024 tokens (~6400 chars)
+) * 6  # ~1024 tokens (~4300 chars)
 
 
 def generate_unique_prompt(idx, c, isl_target):

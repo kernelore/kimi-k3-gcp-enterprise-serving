@@ -153,6 +153,9 @@ def main():
             elif tok_src == "chunk_count_fallback":
                 warnings.append(f"[{eng}/{s}] Used fallback chunk counting instead of exact OpenAI usage tokens.")
 
+            if data.get("success") is False:
+                errors.append(f"[{eng}/{s}] Failure-tainted benchmark result: success=False")
+
             # Validate metrics and ensure zero fabricated/unmeasured/null data
             if s in ["standard", "massive", "soak"]:
                 succ = data.get("successful_requests")
@@ -206,8 +209,9 @@ def main():
                 p_tok = data.get("prompt_tokens", 0)
                 ttft_ms = data.get("ttft_ms", 0)
                 sys_rate = data.get("prefill_tok_s_system", 0)
-                if p_tok <= 0 or ttft_ms <= 0 or sys_rate <= 0:
-                    errors.append(f"[{eng}/{s}] Unmeasured or zero prefill metrics (prompt_tok={p_tok}, ttft={ttft_ms}ms, sys_rate={sys_rate})")
+                success_flag = data.get("success", True)
+                if p_tok <= 0 or ttft_ms <= 0 or sys_rate <= 0 or not success_flag:
+                    errors.append(f"[{eng}/{s}] Unmeasured or zero prefill metrics, or failed run (prompt_tok={p_tok}, ttft={ttft_ms}ms, sys_rate={sys_rate}, success={success_flag})")
                 print(f"    [OK] {s:<10} | ver={ver:<14} | ts={ts_str:<22} | prompt_tok={p_tok} | ttft={ttft_ms:6.2f}ms | sys_rate={sys_rate:8.2f} tok/s")
 
             passed_files += 1
