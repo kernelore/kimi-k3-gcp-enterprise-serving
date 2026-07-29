@@ -177,7 +177,7 @@ except Exception as e:
         kubectl exec -n llm-serving "${GATEWAY_POD}" -c litellm -- python3 -c "${py_script}" "$@" 2>/dev/null || true
         for arg in "$@"; do
           if [ "${prev_arg:-}" = "-D" ] && [ -n "${arg}" ]; then
-            kubectl exec -n llm-serving "${GATEWAY_POD}" -c litellm -- cat "${arg}" > "${arg}" 2>/dev/null || true
+            kubectl exec -n llm-serving "${GATEWAY_POD}" -c litellm -- cat "${arg}" > "${arg}.tmp" 2>/dev/null && mv -f "${arg}.tmp" "${arg}" || true
             kubectl exec -n llm-serving "${GATEWAY_POD}" -c litellm -- rm -f "${arg}" 2>/dev/null || true
           fi
           prev_arg="${arg}"

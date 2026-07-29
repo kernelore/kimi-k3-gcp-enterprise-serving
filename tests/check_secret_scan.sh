@@ -42,12 +42,12 @@ elif git rev-parse --verify HEAD~5 >/dev/null 2>&1; then
 elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
   RANGE="HEAD^..HEAD"
 elif git rev-parse --verify HEAD >/dev/null 2>&1; then
-  RANGE="HEAD -1"
+  RANGE="HEAD"
 else
   RANGE=""
 fi
 
-if [ -n "${RANGE}" ] && git log -1 ${RANGE} >/dev/null 2>&1; then
+if [ -n "${RANGE}" ] && git log -1 "${RANGE}" >/dev/null 2>&1; then
   echo "Scanning commit range ${RANGE} for leaked credentials and references..."
   if git log "${RANGE}" -p -- "${EXCLUDE[@]}" | grep -E 'sk-[a-zA-Z0-9-]{16,}' \
      | grep -vE 'sk-kimi-k3-master-secret-key-change-me|sk-kimi-k3-master-change-me|sk-kimi-k3-test-dev-|sk-kimi-k3-quota-test-|sk-kimi-k3-m5-check1'; then
