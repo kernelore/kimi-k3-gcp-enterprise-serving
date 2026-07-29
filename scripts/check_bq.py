@@ -85,14 +85,15 @@ if not success:
             token = json.loads(token_resp.read().decode())["access_token"]
             
         api_url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/queries"
-        req_body = json.dumps({"query": f"SELECT count(*) as total_trajectories FROM `{table_ref}`", "useLegacySql": False}).encode("utf-8")
+        req_body = json.dumps({"query": f"SELECT count(*) as total_trajectories FROM `{table_ref}`", "useLegacySql": False, "location": "europe-north1"}).encode("utf-8")
         api_req = urllib.request.Request(api_url, data=req_body, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
         with urllib.request.urlopen(api_req, timeout=10) as resp:
             api_data = json.loads(resp.read().decode())
-            rows = api_data.get("rows", [])
-            if rows:
-                total_rows = int(rows[0]["f"][0]["v"])
-            success = True
+            if api_data.get("jobComplete", False):
+                rows = api_data.get("rows", [])
+                if rows:
+                    total_rows = int(rows[0]["f"][0]["v"])
+                success = True
     except Exception as rest_err:
         print(f"    [NOTE] REST API fallback failed: {rest_err}")
 
@@ -103,14 +104,14 @@ if not success:
         from google.api_core.client_options import ClientOptions
 
         client_options = ClientOptions()
-        client = bigquery.Client(project=project_id, client_options=client_options)
-        
+        client = bigquery.Client(project=project_id, location="europe-north1", client_options=client_options)
+
         query = f"SELECT count(*) as total_trajectories FROM `{table_ref}`"
         query_job = client.query(query)
         results = list(query_job.result())
         if results:
             total_rows = results[0].total_trajectories
-        
+
         if total_rows > 0:
             try:
                 query_sample = f"SELECT request_id, request_timestamp, model, prompt_tokens, completion_tokens, ttft_ms, tpot_ms FROM `{table_ref}` ORDER BY request_timestamp DESC LIMIT 1"
@@ -126,11 +127,14 @@ if not success:
     except Exception as py_err:
         print(f"    [NOTE] Python BigQuery client raised exception ({py_err}).")
 
-if success:
+if success and total_rows > 0:
     print(f"    [PASS] BigQuery audit verification succeeded! Total recorded trajectories: {total_rows}")
     if sample_row:
         print(f"    Sample Row Telemetry (Kimi K3 Schema): {sample_row}")
     sys.exit(0)
+elif success and total_rows == 0:
+    print(f"    [FAIL] BigQuery audit table exists but contains zero rows (total_rows=0).")
+    sys.exit(1)
 else:
     print(f"    [FAIL] BigQuery audit verification failed across all client, CLI, and REST transports.")
     sys.exit(1)
