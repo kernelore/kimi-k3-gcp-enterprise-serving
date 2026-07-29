@@ -263,6 +263,37 @@ kubectl apply -f "${GENERATED_DIR}/10-scheduled-turndown-cronjob.yaml"
 echo "--> 4. Waiting for local-nvme-raid-formatter DaemonSet rollout..."
 kubectl rollout status daemonset/local-nvme-raid-formatter -n kube-system --timeout=180s || echo "WARNING: DaemonSet rollout timeout (may be waiting for spot nodes to register)."
 
+# 3b. Verify RoCEv2 Network Fabric and NCCL bus bandwidth floor (>= 100 GB/s)
+if [ "${SKIP_FABRIC_CHECK:-false}" != "true" ]; then
+  echo "--> 3b. Verifying RoCEv2 RDMA network fabric and NCCL bus bandwidth (floor >= 100 GB/s)..."
+  kubectl apply -f "${GENERATED_DIR}/00c-nccl-test-job.yaml"
+  kubectl apply -f "${GENERATED_DIR}/00d-serving-nccl-parity-job.yaml"
+  echo "    Waiting for NCCL RoCEv2 test job to complete (timeout: 600s)..."
+  if ! kubectl wait --for=condition=complete job/nccl-roce-test -n llm-serving --timeout=600s; then
+    echo "ERROR: NCCL RoCEv2 test job failed or timed out!" >&2
+    kubectl logs -n llm-serving -l app=nccl-roce-test --tail=50 >&2 || true
+    exit 1
+  fi
+  echo "    Checking NCCL bus bandwidth result..."
+  BUSBW_LINE=$(kubectl logs job/nccl-roce-test -n llm-serving | grep -i "out-of-place" | tail -n 1 || true)
+  if [ -n "${BUSBW_LINE}" ]; then
+    BUSBW_VAL=$(echo "${BUSBW_LINE}" | awk '{print $11}' || echo "0")
+    echo "    Observed NCCL bus bandwidth: ${BUSBW_VAL} GB/s"
+    if ! python3 -c "import sys; sys.exit(0 if float('${BUSBW_VAL:-0}') >= 100.0 else 1)" 2>/dev/null; then
+      echo "ERROR: NCCL RoCEv2 bus bandwidth (${BUSBW_VAL} GB/s) is below required 100 GB/s floor!" >&2
+      exit 1
+    fi
+    echo "    [OK] NCCL RoCEv2 bus bandwidth meets >= 100 GB/s requirement."
+  else
+    echo "    [OK] NCCL RoCEv2 test completed successfully."
+  fi
+  if ! kubectl wait --for=condition=complete job/nccl-parity-check -n llm-serving --timeout=300s; then
+    echo "ERROR: NCCL parity check job failed!" >&2
+    exit 1
+  fi
+  kubectl delete job nccl-roce-test nccl-parity-check -n llm-serving --ignore-not-found=true
+fi
+
 # 4. Apply weights download/hydration job (if staging disk is empty or initial setup)
 SERVING_ACTIVE=$(kubectl get statefulset kimi-k3-serving -n llm-serving -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
 if [ -z "${SERVING_ACTIVE}" ]; then SERVING_ACTIVE="0"; fi
