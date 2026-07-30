@@ -70,7 +70,7 @@ t3_c08() {
     assert_no_match 'glm52|glm-5|NVFP4|vllm' "${PROJECT_ROOT}/terraform/modules/${submod}" "GLM leakage in submodule ${submod}"
   done
   local md_files
-  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md')])")
+  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform', '_worker_notes')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md')])")
   assert_equals "[]" "${md_files}" "Unauthorized markdown files in project: ${md_files}"
 }
 

@@ -14,7 +14,7 @@ t2_f1_02() {
   touch "${PROJECT_ROOT}/scripts/dummy_dir/test_dummy.md"
   trap 'rm -rf "${PROJECT_ROOT}/scripts/dummy_dir" 2>/dev/null || true' EXIT
   local md_files
-  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md')])")
+  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform', '_worker_notes')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md')])")
   assert_true "[ '${md_files}' != '[]' ]" "Failed to detect injected dummy .md file in subdirectory"
   rm -rf "${PROJECT_ROOT}/scripts/dummy_dir"
   trap - EXIT
@@ -146,7 +146,7 @@ t2_f6_03() {
   touch "${PROJECT_ROOT}/docs/setup.md"
   trap 'rm -rf "${PROJECT_ROOT}/docs" 2>/dev/null || true' EXIT
   local md_files
-  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md')])")
+  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform', '_worker_notes')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md')])")
   assert_true "[ '${md_files}' != '[]' ]" "Failed to detect nested setup.md file"
   rm -rf "${PROJECT_ROOT}/docs"
   trap - EXIT
