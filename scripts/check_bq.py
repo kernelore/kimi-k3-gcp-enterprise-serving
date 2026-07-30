@@ -104,24 +104,22 @@ if not success:
 
         client_options = ClientOptions()
         client = bigquery.Client(project=project_id, client_options=client_options)
-        
+
         query = f"SELECT count(*) as total_trajectories FROM `{table_ref}`"
         query_job = client.query(query)
         results = list(query_job.result())
         if results:
             total_rows = results[0].total_trajectories
-        
+
         if total_rows > 0:
             try:
                 query_sample = f"SELECT request_id, request_timestamp, model, prompt_tokens, completion_tokens, ttft_ms, tpot_ms FROM `{table_ref}` ORDER BY request_timestamp DESC LIMIT 1"
-                sample_res = list(client.query(query_sample).result())
-                if sample_res:
-                    sample_row = dict(sample_res[0].items())
-            except Exception:
-                query_fb = f"SELECT * FROM `{table_ref}` LIMIT 1"
-                fb_res = list(client.query(query_fb).result())
-                if fb_res:
-                    sample_row = dict(fb_res[0].items())
+                sample_job = client.query(query_sample)
+                sample_results = list(sample_job.result())
+                if sample_results:
+                    sample_row = dict(sample_results[0])
+            except Exception as sample_err:
+                print(f"    [NOTE] Could not sample row ({sample_err}).")
         success = True
     except Exception as py_err:
         print(f"    [NOTE] Python BigQuery client raised exception ({py_err}).")

@@ -6,7 +6,7 @@ set -euo pipefail
 
 # F1: Sovereign Architectural Audit & Parity
 t2_f1_01() {
-  : # Purged internal build target assertions for open-source compliance
+  return 77 # Purged internal build target assertions for open-source compliance
 }
 
 t2_f1_02() {
@@ -21,7 +21,7 @@ t2_f1_02() {
 }
 
 t2_f1_03() {
-  : # Purged internal Internal assertions for open-source compliance
+  return 77 # Purged internal Internal assertions for open-source compliance
 }
 
 t2_f1_04() {
@@ -33,7 +33,7 @@ t2_f1_04() {
 }
 
 t2_f1_05() {
-  : # Purged internal build visibility assertions for open-source compliance
+  return 77 # Purged internal build visibility assertions for open-source compliance
 }
 
 # F2: Docker Container Runtimes & Python Benchmark Harnesses
@@ -42,33 +42,32 @@ t2_f2_01() {
 }
 
 t2_f2_02() {
-  assert_cmd_fails "echo 'total_throughput / 8.0' | grep -E -q '/ 16\.0|/ 16\b'" "Failed to flag non-16 GPU divisor mismatch"
+  return 77 # Skipped tautological grep test
 }
 
 t2_f2_03() {
-  assert_cmd_fails "echo 'region = \"us-central1\"' | grep -E -q 'europe-north1'" "Failed to reject non-europe-north1 region"
+  return 77 # Skipped tautological grep test
 }
 
 t2_f2_04() {
   assert_no_match 'pip install ray|import ray' "${PROJECT_ROOT}/docker/Dockerfile.sglang" "Ray leakage in Dockerfile.sglang"
-  assert_cmd_success "echo 'RUN pip install ray' | grep -iE -q 'pip install ray|import ray'" "Failed to catch simulated Ray injection"
 }
 
 t2_f2_05() {
-  : # Purged internal pytype assertions for open-source compliance
+  return 77 # Purged internal pytype assertions for open-source compliance
 }
 
 # F3: Automation Scripts & Root Terraform Configuration / Submodules
 t2_f3_01() {
-  assert_cmd_fails "echo 'machine_type = \"n2-standard-8\"' | grep -E -q 'a4-highgpu-8g'" "Failed to trap invalid machine type n2-standard-8"
+  return 77 # Skipped tautological grep test
 }
 
 t2_f3_02() {
-  assert_cmd_fails "echo 'access_mode = \"ReadWriteOnce\"' | grep -E -q 'ReadOnlyMany|READ_ONLY_MANY|ROX'" "Failed to reject non-ROX access mode"
+  return 77 # Skipped tautological grep test
 }
 
 t2_f3_03() {
-  assert_cmd_fails "echo 'placement_policy { type = \"COMPACT\" }' | grep -E -q 'COLLOCATED'" "Failed to trap missing COLLOCATED policy"
+  return 77 # Skipped tautological grep test
 }
 
 t2_f3_04() {
@@ -101,7 +100,7 @@ t2_f4_03() {
 }
 
 t2_f4_04() {
-  assert_cmd_fails "echo 'mpirun -n 8' | grep -E -q 'mpirun -n 16'" "Failed to detect MPI rank mismatch"
+  return 77 # Skipped tautological grep test
 }
 
 t2_f4_05() {
@@ -114,32 +113,32 @@ t2_f4_05() {
 
 # F5: Mandatory High-Performance Networking & Shared Memory
 t2_f5_01() {
-  assert_cmd_fails "echo 'mtu = 1500' | grep -E -q 'mtu.*8896'" "Failed to reject standard MTU 1500"
+  return 77 # Skipped tautological grep test
 }
 
 t2_f5_02() {
-  assert_cmd_fails "echo 'range(4)' | grep -E -q 'range\(8\)|count.*8'" "Failed to trap less than 8 VPC interfaces"
+  return 77 # Skipped tautological grep test
 }
 
 t2_f5_03() {
-  assert_cmd_fails "echo 'capabilities: []' | grep -E -q 'IPC_LOCK'" "Failed to trap missing IPC_LOCK"
+  return 77 # Skipped tautological grep test
 }
 
 t2_f5_04() {
-  assert_cmd_fails "echo 'volumeMounts: []' | grep -E -q '/dev/shm'" "Failed to trap missing /dev/shm mount"
+  return 77 # Skipped tautological grep test
 }
 
 t2_f5_05() {
-  :
+  return 77
 }
 
 # F6: Ironclad Sovereign Governance & VCS Discipline
 t2_f6_01() {
-  : # Purged GLM reference repository isolation assertions for open-source compliance
+  return 77 # Purged GLM reference repository isolation assertions for open-source compliance
 }
 
 t2_f6_02() {
-  : # Purged internal vcs status assertions for open-source compliance
+  return 77 # Purged internal vcs status assertions for open-source compliance
 }
 
 t2_f6_03() {
@@ -160,7 +159,7 @@ t2_f6_04() {
 }
 
 t2_f6_05() {
-  : # Purged internal GLM reference repository symlink assertions for open-source compliance
+  return 77 # Purged internal GLM reference repository symlink assertions for open-source compliance
 }
 
 run_tier_2_tests() {

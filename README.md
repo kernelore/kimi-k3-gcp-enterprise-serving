@@ -1,43 +1,35 @@
-# Kimi K3 (2.8T) MXFP4 Enterprise Architecture
+# Kimi K3 Enterprise Serving Architecture
 
 [![Google Cloud](https://img.shields.io/badge/Google_Cloud-Blackwell_B200-4285F4?style=flat-square&logo=googlecloud&logoColor=white)](https://cloud.google.com/compute/docs/gpus)
 [![NVIDIA](https://img.shields.io/badge/NVIDIA-MXFP4_MoE-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/)
-[![TensorRT-LLM](https://img.shields.io/badge/Inference-TensorRT__LLM__MPI-8A2BE2?style=flat-square)](https://github.com/NVIDIA/TensorRT-LLM)
-[![SGLang](https://img.shields.io/badge/Inference-SGLang_v0.5.16-8A2BE2?style=flat-square)](https://github.com/sgl-project/sglang)
+[![TensorRT-LLM](https://img.shields.io/badge/Inference-TensorRT__LLM_Experimental-8A2BE2?style=flat-square)](https://github.com/NVIDIA/TensorRT-LLM)
+[![SGLang](https://img.shields.io/badge/Inference-SGLang_Kimi__K3-8A2BE2?style=flat-square)](https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE)
 
 > [!NOTE]
-> **Disclaimer:** This repository is a **personal
-> engineering project and reference architecture** for deploying Moonshot AI's
-> **Kimi K3 (`2.8T` total parameters, `896` MoE experts, `16` active per
-> token)** in a secure, private Google Cloud environment. It is **not** an
-> official Google product, is **not** covered by any Google Cloud Service Level
-> Agreements (SLAs), and is **not** subject to official Google support channels.
-> All code, scripts, and architectural models are provided *"as-is"* without
-> warranty for educational, experimental, capacity planning, and benchmarking
-> purposes.
+> **Disclaimer:** This repository is a personal engineering project and reference architecture. It is not an official Google product, is not covered by any Google Cloud Service Level Agreements (SLAs), and is not subject to official Google support channels. All code, scripts, and architectural models are provided "as-is" without warranty for educational, experimental, and benchmarking purposes.
 
 **Target Hardware:** Google Kubernetes Engine (GKE) Blackwell (`2x
 a4-highgpu-8g` nodes — 16x NVIDIA B200 HGX total per serving pod replica over
 RoCEv2 fabric) \
-**Target Workload:** High-Throughput Enterprise AI Engineering & Autonomous
-Agentic Workflows (`32k` to `128k` active context window out of `1M` maximum
-capacity)
+**Target Workload:** High-Throughput Enterprise AI Engineering & Autonomous Agentic Workflows (`32k` to `128k` active context window out of `1,048,576` maximum
+capacity) \
+**Deployment Scope (Zonal Baseline → Regional HA Ready):** By default, the entire stack is provisioned with Zonal scope (`europe-north1-b` for the GKE cluster, Cloud SQL instance, Memorystore Redis cache, and Hyperdisk ML volume) to eliminate cross-zone network egress charges and accelerate deployment. The deployment can be easily extended to a Regional HA architecture by configuring `location = var.region` on the GKE cluster, setting `availability_type = "REGIONAL"` on Cloud SQL, upgrading Memorystore Redis to `tier = "STANDARD_HA"`, and distributing GPU worker replicas (`DP=N`) across multiple availability zones behind the internal load balancer.
 
 ---
 
 ## ⚡ Executive Summary & Full Tier 0-1-2 Architecture Overview
 
-Deploying **Kimi K3** at production scale represents a frontier engineering challenge. Featuring **2.8 Trillion total parameters**, **Stable LatentMoE** (`896` total experts, `16` active experts per token), **Kimi Delta Attention (`KDA`)**, and **Attention Residuals (`AttnRes`)**, the model is trained end-to-end with **Quantization-Aware Training (QAT)** utilizing **`MXFP4` (Microscaling 4-bit weights)** and **`MXFP8` activations**.
+Deploying **Kimi K3** (`moonshotai/Kimi-K3`) at production scale represents a frontier engineering challenge. Featuring **2.8 Trillion total parameters** (**104 Billion activated per token**), **Stable LatentMoE** (`896` total routed experts, `16` active + `2` shared experts per token, 93 total layers: 69 KDA + 24 Gated MLA attention + 1 dense MLP layer), **Kimi Delta Attention (`KDA`)**, and **Attention Residuals (`AttnRes`)**, the model is trained end-to-end with **Quantization-Aware Training (QAT)** utilizing **`MXFP4` (Microscaling 4-bit weights)** and **`MXFP8` activations** via `compressed-tensors` (group size 32; attention, shared experts, dense MLP, lm_head, and vision encoder kept in bf16). Under `KimiK3ForConditionalGeneration`, the architecture is multimodal (KimiLinear text backbone + MoonViT-V2 401M vision encoder); this serving stack natively validates text serving.
 
-Because the full model weight footprint in `MXFP4` occupies **`~1.4 TB` on
-disk** and requires **`~2.8 TB` aggregate serving VRAM** (V<sub>weights</sub> +
+Because the full model weight footprint in `MXFP4` occupies **1,453.7 GiB (96 safetensors shards)** on
+disk and requires **`~2.8 TB` aggregate serving VRAM** (V<sub>weights</sub> +
 V<sub>activations</sub> + V<sub>KV</sub> + V<sub>runtime</sub>), a single 8-GPU
 node cannot serve Kimi K3. This architecture implements a **Multi-Node
 Distributed Serving Replica (`2x a4-highgpu-8g` Blackwell nodes = `16x B200 HGX
 GPUs` = `2,880 GB HBM3e` — 180 GB/GPU, 1,440 GB/node)** connected via Google Cloud GPUDirect RDMA over
 RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
-**SGLang multi-node RoCEv2 serving (Primary Default) or NVIDIA TensorRT-LLM MPI distributed inference (Experimental Option)**.
+**SGLang multi-node RoCEv2 serving (Primary Default)** per the official [SGLang Kimi-K3 Cookbook](https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3) with `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3`. An experimental **NVIDIA TensorRT-LLM MPI** configuration is maintained in the codebase, though no published TensorRT-LLM K3 support exists as of launch.
 
 ```
 +-----------------------------------------------------------------------------------------------------------------+
@@ -90,7 +82,7 @@ RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 | **Cloud SQL for PostgreSQL** | `module.database` | Private database accessed via Cloud SQL Auth Proxy storing virtual API keys, user budgets, and gateway routing configurations. |
 | **BigQuery** | `module.audit` | Serverless audit dataset (`kimi_k3_enterprise_audit`) for asynchronous logging of conversation trajectories and token telemetry. |
 | **Cloud Storage (GCS)** | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Remote Terraform state versioning and high-speed weight hydration backup bucket (hydration duration and throughput: *TBD — to be measured at first deployment*). |
-| **Artifact Registry** | `module.storage` | Secure private container registry hosting pinned custom SGLang / TensorRT-LLM Blackwell serving images (`sglang:v0.5.16-cu130` / `tensorrt-llm/release:1.2.1`). |
+| **Artifact Registry** | `module.storage` | Secure private container registry hosting pinned custom SGLang (`lmsysorg/sglang:kimi-k3@sha256:81a9c00654b3e4c7c681a4728a64fcb4853aa698dc9fea1959bbf4eb26bfb2e5`) / experimental TensorRT-LLM Blackwell serving images. |
 | **Cloud Build** | `scripts/03_deploy_workloads.sh` | Serverless build pipeline for automated, self-healing image compilation from `docker/Dockerfile`. |
 | **Virtual Private Cloud (VPC)** | `module.network` | Private network topology with Private Services Access (PSA), IAP SSH restrictions, and secondary RoCEv2 fabric (MTU 8896). |
 | **Managed Service for Prometheus (GMP)** | `module.observability` | Native metrics pipeline capturing NVIDIA DCGM GPU metrics and serving request telemetry. |
@@ -103,9 +95,9 @@ Designing for Kimi K3 requires rigorous memory and disk capacity engineering to 
 
 ### 1. Static Disk Capacity (C<sub>disk</sub>)
 
-The static weight footprint for 2.8 Trillion parameters quantized to `MXFP4` with scaling factors is derived as:
+The static weight footprint for 2.8 Trillion parameters quantized to `MXFP4` with scaling factors is measured as:
 
-$$C_{\text{weights+scales}} \approx 2.8 \times 10^{12}\,\text{params} \times 0.5\,\frac{\text{bytes}}{\text{param}} + C_{\text{scales}} \approx 1,400\,\text{GB } (1.4\,\text{TB})$$
+$$C_{\text{weights+scales}} = 1,453.7\,\text{GiB } (96\,\text{safetensors shards})$$
 
 For both SGLang (TP=16, PP=1, EP=16) and TensorRT-LLM (TP=8, PP=2, EP=8), the volume holds weights only; TRT-LLM PyTorch backend loads checkpoints directly. To accommodate the static MXFP4 safetensors shards, the persistent Hyperdisk ML claim is explicitly sized at **`2,000 GB` (`2 TB`)**.
 
@@ -146,8 +138,10 @@ While **1x 2-Node Replica (DP=1, 16x B200 GPUs) serves as the turnkey MVP baseli
 | **4x Replicas (DP=4)** | 8 Nodes | 64 | 11,520 GB | 4,520 GB | ~168 sessions | 4.0x (4 R<sub>base</sub>) |
 | **Nx Replicas (DP=N)** | 2N Nodes | 16N | N x 2,880 GB | N x 1,130 GB | N x 42 sessions | Nx (N R<sub>base</sub>) |
 
-> [!CAUTION]
 > **Per-GPU Normalization Rule:** In all benchmark normalization calculations and performance reporting, aggregate cluster throughput must be divided by **`16.0`** (for a 1-replica 2-node pool) rather than 8.0, reflecting the 16x B200 GPUs required to host Kimi K3's 2.8T parameter footprint.
+
+> [!NOTE]
+> **Horizontal Autoscaling Absence:** Unlike reference stacks such as GLM, Kimi K3 serves as a single 2-node MPI replica across 16 B200s (`SERVING_REPLICAS=1`, `NODES_PER_REPLICA=2`, and `GPU_MAX_NODES=2`), leaving no spare GPU capacity in the cluster to scale into. Furthermore, dynamic pod scale-out events would require re-hydrating 1,453.7 GiB of model weights from GCS or local disk. Horizontal Pod Autoscaling (HPA) is therefore intentionally not implemented in this repository.
 
 ---
 
@@ -187,7 +181,7 @@ export INFERENCE_ENGINE="sglang"
 
 #### Dual-Engine Architecture & Multi-Node Distributed Execution
 
-Because Kimi K3's 2.8 Trillion total parameter footprint (`~1.4 TB` MXFP4
+Because Kimi K3's 2.8 Trillion total parameter footprint (1,453.7 GiB MXFP4
 weights) exceeds single-node HBM3e capacity, both engines operate in a **2-Node
 Distributed Replica (`16x NVIDIA B200 HGX GPUs`)** over Google Cloud's RoCEv2
 RDMA fabric. However, their distributed coordination mechanisms differ
@@ -199,29 +193,22 @@ significantly:
         distributed execution **WITHOUT INSTALLING OR RUNNING RAY**. It
         leverages native PyTorch distributed / SGLang native `--dist-init-addr
         <leader_ip>:port` with `--nnodes 2 --node-rank <rank> --tp 16 --pp 1 --ep
-        16`. Eliminating Ray removes massive dependency bloat, reduces container
-        image size, and prevents cluster management overhead.
-    -   **Inter-Node Interconnect**: Like TensorRT-LLM, SGLang relies on NCCL
+        16`. Pinned to `lmsysorg/sglang:kimi-k3` per the official [SGLang Kimi-K3 Cookbook](https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3).
+    -   **Native Parsers**: Configured with `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3` as prescribed in the SGLang cookbook.
+    -   **Inter-Node Interconnect**: SGLang relies on NCCL
         GPUDirect RDMA over RoCEv2 (tuned via GKE gIB `set_nccl_env.sh`) for high-speed inter-host tensor passing
         across the 16x B200 GPUs.
-    -   **Performance Optimizations**: Utilizes `--attention-backend flashinfer`
-        and `--enable-torch-compile` with RadixAttention prefix caching, making
-        it highly advantageous for multi-turn conversational agents, structured
-        JSON generation, and complex interactive workflows.
+    -   **Performance Optimizations**: Utilizes `--moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3` with RadixAttention prefix caching.
 
 2.  **NVIDIA TensorRT-LLM (Experimental Option | `INFERENCE_ENGINE="trtllm"`)**:
 
+    -   **Status**: Maintained as an experimental secondary engine option in this repository. **No published TensorRT-LLM K3 support exists as of launch**.
     -   **Distributed Orchestration**: OpenMPI manages rank assignment across
         the 2+ nodes via headless DNS discovery (`mpirun -n 16
-        --allow-run-as-root --hostfile /tmp/hostfile trtllm-llmapi-launch trtllm-serve /mnt/rox/Kimi-K3-2.8T-MXFP4 --backend pytorch`).
+        --allow-run-as-root --hostfile /tmp/hostfile trtllm-llmapi-launch trtllm-serve /mnt/rox/Kimi-K3 --backend pytorch`).
     -   **Inter-Node Interconnect**: NCCL handles all inter-node B200 tensor and
         pipeline synchronization directly via GPUDirect RDMA over RoCEv2
         (tuned via GKE gIB `set_nccl_env.sh`).
-    -   **Performance Optimizations**: Features specialized CUDA kernels for
-        Kimi Delta Attention (`KDA`) and Attention Residuals (`AttnRes`),
-        loading MXFP4 checkpoints directly via the PyTorch backend without
-        pre-compiled engine files (`--backend pytorch --kv_cache_free_gpu_memory_fraction 0.90 --trust_remote_code
-        --use_paged_context_fmha enable`).
 
 #### Mandatory RoCEv2 GPUDirect RDMA & Blackwell Hardware Specifications
 
@@ -244,14 +231,15 @@ networking configurations:
 
 Feature / Metric              | SGLang (`sglang`)                                      | NVIDIA TensorRT-LLM (`trtllm`)
 :---------------------------- | :----------------------------------------------------- | :----------------
-**Status in Repository**      | **Primary Default** (`INFERENCE_ENGINE="sglang"`)      | **Experimental** (`INFERENCE_ENGINE="trtllm"`)
+**Status in Repository**      | **Primary Default** (`INFERENCE_ENGINE="sglang"`)      | **Experimental** (No published TRT-LLM K3 support as of launch)
+**Container Image**           | `lmsysorg/sglang:kimi-k3`                              | Custom TRT-LLM builder
 **Distributed Orchestration** | Native PyTorch Distributed (`--dist-init-addr`, **No Ray**) | OpenMPI (`mpirun -n 16 --hostfile /tmp/hostfile`)
 **Inter-Node Networking**     | RoCEv2 GPUDirect RDMA (tuned via GKE gIB `set_nccl_env.sh`) | RoCEv2 GPUDirect RDMA (tuned via GKE gIB `set_nccl_env.sh`)
-**Weight & Kernel Format**    | On-the-fly dequantization / Torch-compiled MXFP4       | Direct PyTorch checkpoint loading (MXFP4 weights / MXFP8 act)
-**Attention Backend**         | FlashInfer / auto attention backend                    | Paged-FMHA / KDA kernels (when NVIDIA lands K3)
+**Weight & Kernel Format**    | Native `KimiK3ForConditionalGeneration` / FlashInfer / FlashMLA | Direct PyTorch checkpoint loading (Experimental)
+**Parsers**                   | `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3` | Custom regex parser
 **Prefix Caching**            | RadixAttention (Optimal for multi-turn & tree search)  | Standard KV Cache block reuse
 **Memory Management**         | `--mem-fraction-static 0.90`                           | `--kv_cache_free_gpu_memory_fraction 0.90`
-**Ideal Workload Profile**    | Dynamic interactive sessions, structured JSON, prefix-heavy prompts | Maximum raw throughput, high-concurrency batch serving
+**Ideal Workload Profile**    | Dynamic interactive sessions, structured JSON, reasoning prompts | Maximum raw throughput batch serving (experimental)
 
 #### Live Benchmark Performance Comparison
 
@@ -287,14 +275,14 @@ To eliminate multi-hour weight downloads when scaling compute pods (the volume h
                                                   | (High-Speed Backup Hydration @ *TBD — to be measured at first deployment*)
 +---------------------------------------------------------------------------------------------------+
 |                   Tier 3: Cloud Storage (GCS) Backup Cache Bucket                                 |
-|  - URI: `gs://<project>-kimi-k3-weights-cache/mxfp4` | Cost: ~$40/month (outside TF state)       |
+|  - URI: `gs://<project>-kimi-k3-weights-backup/mxfp4` | Cost: ~$40/month (outside TF state)       |
 |  - Content: Persistent backup of verified weight shards for rapid disaster recovery hydration (*TBD — to be measured at first deployment*) |
 +---------------------------------------------------------------------------------------------------+
 ```
 
 ### Weight Cache Hydration Lifecycle
 
-When deploying a fresh cluster or recovering from a disaster, downloading 1.4 TB of weights from external model hubs can take hours. Using a pre-populated GCS weight cache bucket (`Tier 3`), the automated hydration job (`02-hydrate-weights-gcs.yaml.template`) transfers the entire 1.4 TB weight footprint into the 2,000 GB Hyperdisk ML volume in ***TBD — to be measured at first deployment*** (hydration throughput scales with hyperdisk_ml_throughput_mibps (default 24,576 MiB/s; 6,144 MiB/s is a known-good fallback if regional quota is unavailable)).
+When deploying a fresh cluster or recovering from a disaster, downloading 1,453.7 GiB of weights from external model hubs can take hours. Using a pre-populated GCS weight cache bucket (`Tier 3`), the automated hydration job (`02-hydrate-weights-gcs.yaml.template`) transfers the entire 1,453.7 GiB weight footprint into the 2,000 GB Hyperdisk ML volume in ***TBD — to be measured at first deployment*** (hydration throughput scales with hyperdisk_ml_throughput_mibps (default 24,576 MiB/s; 6,144 MiB/s is a known-good fallback if regional quota is unavailable)).
 
 #### Operational Seeding & Hydration Commands
 
@@ -313,13 +301,15 @@ export FORCE_WEIGHT_JOB="true"
 ./scripts/03_deploy_workloads.sh
 ```
 
-#### Protection & Purge Opt-In
+#### Complete Teardown & State Bucket Retention
 
-By default, `./scripts/06_destroy_all.sh` protects and retains the GCS weight cache bucket, listing it in an **INTENTIONALLY RETAINED BUCKET INVENTORY** report with exact byte size and monthly storage cost estimations ($0.02/GiB/month). To explicitly purge the weight cache during teardown:
+By default, `./scripts/06_destroy_all.sh` and `terraform destroy` remove all Terraform-managed resources—including the GKE cluster, RoCEv2 network, Cloud SQL instance, Hyperdisk ML ReadOnlyMany (`ROX`) volume, and GCS weight cache bucket—to ensure zero ongoing cloud spend. For temporary overnight pauses that retain weights and disks, use the scheduled evening turndown CronJob or scale the serving StatefulSet to 0.
+
+The only GCS bucket retained after `./scripts/06_destroy_all.sh` is the out-of-band Terraform remote state bucket (`gs://${PROJECT_ID}-kimi-k3-tfstate`), listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To explicitly delete the state bucket when no longer needed:
 
 ```bash
-# Force complete teardown including the persistent GCS weight cache bucket
-PURGE_WEIGHTS_CACHE=true ./scripts/06_destroy_all.sh
+# Delete the out-of-band Terraform remote state bucket
+gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-tfstate"
 ```
 
 --------------------------------------------------------------------------------
@@ -337,8 +327,8 @@ kimi-k3-gcp-enterprise-serving/
 │   ├── run_saturation_sweep_kimi_k3.py # Direct engine saturation sweep across concurrency levels c=1..64
 │   └── soak_benchmark_kimi_k3.py  # 30-minute continuous stability endurance test (1,800 seconds)
 ├── docker/                        # Container definitions for custom serving runtimes
-│   ├── Dockerfile                 # Pinned TensorRT-LLM Blackwell serving container image (tensorrt-llm/release:1.2.1)
-│   └── Dockerfile.sglang          # Primary default SGLang serving container image (sglang:v0.5.16-cu130)
+│   ├── Dockerfile                 # Experimental TensorRT-LLM serving container image definition
+│   └── Dockerfile.sglang          # Primary default SGLang serving container image (lmsysorg/sglang:kimi-k3@sha256:81a9c006...)
 ├── scripts/                       # Automated lifecycle Bash & Python scripts
 │   ├── 01_setup_and_check.sh      # Preflight CLI checks, password generation, API enablement, tfvars sync
 │   ├── 02_deploy_infra.sh         # Terraform infrastructure provisioning (VPC, GKE, Spot VMs, Cloud SQL, Redis)
@@ -529,14 +519,14 @@ For immediate smoke testing from your local terminal via automated port-forwardi
 #### 📊 Direct Engine Saturation Sweep & Prefill Ingestion Benchmarking
 
 To run cache-bypassed direct GPU generation saturation sweeps across concurrency
-levels ($c \in \{1, 8, 32, 128\}$) or evaluate prompt prefill ingestion rates
+levels ($c \in \{1, 8, 16, 32, 64\}$) or evaluate prompt prefill ingestion rates
 directly on the 16x B200 HGX pool:
 
 ```bash
 # 1. Run prompt prefill / ingestion benchmark (8,192 input tokens -> 16 output tokens)
 python3 benchmarks/run_prefill_benchmark_kimi_k3.py
 
-# 2. Run direct engine saturation sweep (max_tokens=1024|2048, ignore_eos=True, 0% cache hits)
+# 2. Run direct engine saturation sweep (max_tokens=256, ignore_eos=True, 0% cache hits)
 python3 benchmarks/run_saturation_sweep_kimi_k3.py
 ```
 
@@ -566,11 +556,7 @@ workloads, release Persistent Volumes, and run `terraform destroy`:
 
 ### Retained Storage & Bucket Purge Guide
 
-To prevent accidental data loss and avoid multi-hour re-downloads of Kimi K3's
-1.4 TB weight footprint, `./scripts/06_destroy_all.sh` retains the GCS weight
-cache bucket by default, listing it in an **INTENTIONALLY RETAINED BUCKET
-INVENTORY** report. To completely purge retained buckets and ensure zero ongoing
-cloud spend:
+`./scripts/06_destroy_all.sh` executes `terraform destroy`, which deletes all Terraform-managed resources including the GCS weight cache bucket and Hyperdisk ML volume. The only bucket remaining is the out-of-band Terraform remote state bucket, which is listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To completely remove the state bucket:
 
 ```bash
 # 1. Purge and delete the Terraform remote state bucket
@@ -580,8 +566,5 @@ gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-tfstate"
 gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-trajectories"
 
 # 3. (Optional) Delete custom GCS weight cache bucket if created
-gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-weights-cache"
+gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-weights-backup"
 ```
-
----
-Published Documentation: https://minitel.corp.google.com/kimi3-gcpa4-serving-architecture

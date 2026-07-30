@@ -12,6 +12,7 @@ Saturation, and Sustained Cluster & Per-GPU Throughput.
 
 import argparse
 import concurrent.futures
+from datetime import datetime, timezone
 import json
 import os
 import statistics
@@ -19,6 +20,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 MASSIVE_PROMPTS = [
     """You are a Senior Systems Architect at Google. Analyze and explain the complete memory co-design of Kimi K3 (~2.8T parameters, 896 MoE experts) on a 2-node NVIDIA Blackwell spot pool (`2x a4-highgpu-8g` = 16x B200 HGX GPUs total = 2,880 GB HBM3e VRAM). 
@@ -106,9 +108,6 @@ def parse_args():
 def execute_stream_request(
     req_id, endpoint, model, prompt, max_tokens, temperature, api_key=""
 ):
-  if "[Nonce=" not in prompt:
-    import uuid
-    prompt = f"[Req={req_id} Nonce={uuid.uuid4().hex[:12]}] {prompt}"
   payload = {
       "model": model,
       "max_tokens": max_tokens,
@@ -216,6 +215,7 @@ def execute_stream_request(
       "success": success,
       "error": error_msg,
       "tokens": tokens_received,
+      "token_count_source": "openai_usage" if has_exact_usage else "chunk_count_fallback",
       "prompt_tokens": prompt_tokens,
       "ttft_ms": ttft * 1000,
       "tpot_ms": tpot * 1000,
@@ -245,6 +245,8 @@ def main():
   print("-" * 70)
 
   start_bench_time = time.perf_counter()
+  start_dt = datetime.now(timezone.utc)
+  suite_start_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
   results = []
   completed_count = 0
 
@@ -253,7 +255,7 @@ def main():
   ) as executor:
     futures = []
     for i in range(args.requests):
-      prompt = MASSIVE_PROMPTS[i % len(MASSIVE_PROMPTS)]
+      prompt = f"{MASSIVE_PROMPTS[i % len(MASSIVE_PROMPTS)]} [Req={i+1} Nonce={uuid.uuid4().hex[:12]}]"
       futures.append(
           executor.submit(
               execute_stream_request,
@@ -326,6 +328,18 @@ def main():
   tpot_mean = round(statistics.mean(tpot_vals), 2) if tpot_vals else 0.0
   throughput_tps = round(cluster_throughput, 2)
 
+  end_dt = datetime.now(timezone.utc)
+  suite_end_ts = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+  suite_duration_s = round((end_dt - start_dt).total_seconds(), 4)
+
+  sources_used = sorted(list(set(r.get("token_count_source", "unknown") for r in successful_results)))
+  if len(sources_used) == 1:
+    agg_source = sources_used[0]
+  elif len(sources_used) > 1:
+    agg_source = "mixed: " + ", ".join(sources_used)
+  else:
+    agg_source = "none"
+
   try:
     meta_dict = json.loads(args.metadata) if args.metadata else {}
   except Exception:
@@ -337,15 +351,22 @@ def main():
       "successful_requests": len(successful_results),
       "total_requests": args.requests,
       "total_completed": len(successful_results),
+      "token_count_source": agg_source,
       "ttft_mean_ms": ttft_mean,
       "tpot_mean_ms": tpot_mean,
       "throughput_tokens_sec": throughput_tps,
-      "benchmark_config": vars(args),
+      "benchmark_config": {
+          **vars(args),
+          "suite_start_ts": suite_start_ts,
+          "suite_end_ts": suite_end_ts,
+          "suite_duration_s": suite_duration_s,
+      },
       "execution_summary": {
           "total_requests": args.requests,
           "successful_requests": len(successful_results),
           "failed_requests": len(failed_results),
           "total_benchmark_time_seconds": round(total_bench_time, 3),
+          "token_count_source": agg_source,
       },
       "metrics": {},
   }
@@ -452,6 +473,12 @@ def main():
         f" {summary['metrics']['tpot_ms']['p99']:6.2f} ms"
     )
     print("=" * 70)
+
+  try:
+    from telemetry_sanitizer import sanitize_telemetry
+  except ImportError:
+    from benchmarks.telemetry_sanitizer import sanitize_telemetry
+  summary = sanitize_telemetry(summary, args.output)
 
   output_dir = os.path.dirname(args.output)
   if output_dir:

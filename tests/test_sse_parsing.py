@@ -1,53 +1,31 @@
-#!/usr/bin/env python3
-"""Unit tests for SSE stream parsing logic across benchmark harnesses."""
-
-import json
 import unittest
+import sys
+import os
 
-def parse_sse_chunk(line_bytes: bytes) -> str:
-    """Utility function replicating dual-path SSE chunk parsing."""
-    line = line_bytes.decode('utf-8').strip()
-    if not line.startswith('data: ') or line == 'data: [DONE]':
-        return ""
-    try:
-        data = json.loads(line[6:])
-        choices = data.get('choices', [])
-        if not choices:
-            return ""
-        choice = choices[0]
-        # Dual-path extraction: handle completions ('text') and chat completions ('delta.content')
-        if 'text' in choice and choice['text'] is not None:
-            return choice['text']
-        delta = choice.get('delta', {})
-        if 'content' in delta and delta['content'] is not None:
-            return delta['content']
-    except Exception:
-        pass
-    return ""
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from benchmarks.run_prefill_benchmark_kimi_k3 import extract_chunk_text as prefill_extract
+from benchmarks.run_saturation_sweep_kimi_k3 import extract_chunk_text as sweep_extract
 
 
-class TestSSEParsing(unittest.TestCase):
+class TestSseParsing(unittest.TestCase):
 
-    def test_legacy_completions_stream(self):
-        line = b'data: {"choices": [{"text": "Hello world"}]}'
-        self.assertEqual(parse_sse_chunk(line), "Hello world")
+  def test_completions_text_chunk(self):
+    chunk = {"choices": [{"text": "hello"}]}
+    self.assertEqual(prefill_extract(chunk), "hello")
+    self.assertEqual(sweep_extract(chunk), "hello")
 
-    def test_chat_completions_stream(self):
-        line = b'data: {"choices": [{"delta": {"content": "Hello chat"}}]}'
-        self.assertEqual(parse_sse_chunk(line), "Hello chat")
+  def test_chat_completions_delta_chunk(self):
+    chunk = {"choices": [{"delta": {"content": "world"}}]}
+    self.assertEqual(prefill_extract(chunk), "world")
+    self.assertEqual(sweep_extract(chunk), "world")
 
-    def test_role_only_delta(self):
-        line = b'data: {"choices": [{"delta": {"role": "assistant"}}]}'
-        self.assertEqual(parse_sse_chunk(line), "")
-
-    def test_empty_choices(self):
-        line = b'data: {"choices": []}'
-        self.assertEqual(parse_sse_chunk(line), "")
-
-    def test_done_marker(self):
-        line = b'data: [DONE]'
-        self.assertEqual(parse_sse_chunk(line), "")
+  def test_empty_or_invalid_chunk(self):
+    self.assertIsNone(prefill_extract({}))
+    self.assertIsNone(prefill_extract({"choices": []}))
+    self.assertIsNone(prefill_extract({"choices": [{"delta": {}}]}))
+    self.assertIsNone(sweep_extract({}))
 
 
-if __name__ == '__main__':
-    unittest.main()
+if __name__ == "__main__":
+  unittest.main()

@@ -68,8 +68,6 @@ spec:
           value: "INIT,NET,GRAPH"
         - name: NCCL_SOCKET_IFNAME
           value: "eth0"
-        - name: NCCL_NET_GDR_LEVEL
-          value: "5"
         securityContext:
           capabilities:
             add:
@@ -84,7 +82,6 @@ spec:
           echo 'NCCL_DEBUG="INFO"' >> /etc/environment
           echo 'NCCL_DEBUG_SUBSYS="INIT,NET,GRAPH"' >> /etc/environment
           echo 'NCCL_SOCKET_IFNAME="eth0"' >> /etc/environment
-          echo 'NCCL_NET_GDR_LEVEL="5"' >> /etc/environment
           echo 'source /usr/local/gib/scripts/set_nccl_env.sh 2>/dev/null || true' >> /etc/profile
           echo 'source /usr/local/gib/scripts/set_nccl_env.sh 2>/dev/null || true' >> /root/.bashrc
           export LD_LIBRARY_PATH="/third_party/nccl/build/lib:/nccl-plugin-gib/build:/nccl-tuner/build:/nccl-shim/build:/usr/local/nvidia/lib64:/usr/local/gib/lib64:/usr/local/nvidia/lib:/usr/local/gib/lib"
@@ -93,7 +90,6 @@ spec:
           export NCCL_DEBUG="INFO"
           export NCCL_DEBUG_SUBSYS="INIT,NET,GRAPH"
           export NCCL_SOCKET_IFNAME="eth0"
-          export NCCL_NET_GDR_LEVEL="5"
           NODE_RANK=${HOSTNAME##*-}
           echo "Resolving pod IPs for /etc/hosts..."
           while ! getent hosts nccl-roce-test-0.nccl-test-headless.llm-serving.svc.cluster.local >/dev/null || ! getent hosts nccl-roce-test-1.nccl-test-headless.llm-serving.svc.cluster.local >/dev/null; do

@@ -31,7 +31,7 @@ fi
 
 PF_PIDS=()
 cleanup_port_forwards() {
-  for pid in "${PF_PIDS[@]+"${PF_PIDS[@]}"}"; do
+  for pid in ${PF_PIDS[@]+"${PF_PIDS[@]}"}; do
     if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
       kill "${pid}" 2>/dev/null || true
     fi
@@ -57,13 +57,16 @@ kubectl get pods,svc,statefulsets,deployments,jobs,pvc -n llm-serving
 echo "--> 3. Checking local-nvme-raid-formatter DaemonSet across nodes..."
 kubectl get ds local-nvme-raid-formatter -n kube-system
 
-# 4. Check NCCL RoCEv2 preflight check job status
-echo "--> 4. Checking NCCL RoCEv2 preflight check job status..."
-if kubectl get job preflight-nccl-roce-check -n llm-serving >/dev/null 2>&1; then
-  kubectl describe job preflight-nccl-roce-check -n llm-serving | grep -E "Pods Statuses|Conditions" || true
-else
-  echo "    [NOTE] Preflight NCCL job 'preflight-nccl-roce-check' not found."
-fi
+# 4. Check NCCL RoCEv2 preflight check statefulset status
+echo "--> 4. Checking NCCL RoCEv2 preflight check status..."
+for sts_name in nccl-roce-test nccl-parity-check preflight-nccl-roce-check; do
+  if kubectl get statefulset "${sts_name}" -n llm-serving >/dev/null 2>&1; then
+    echo "    [OK] Checking statefulset '${sts_name}'..."
+    kubectl describe statefulset "${sts_name}" -n llm-serving | grep -E "Replicas|Conditions" || true
+  else
+    echo "    [NOTE] Preflight NCCL statefulset '${sts_name}' not found."
+  fi
+done
 
 
 # 6. Check serving engine health (if pod is running)
@@ -124,9 +127,9 @@ if [ -n "${GATEWAY_POD}" ]; then
         for arg in "${args[@]}"; do
           new_args+=("${arg//http:\/\/${GATEWAY_VIP}:4000/http:\/\/localhost:4000}")
         done
-        curl "${new_args[@]}"
+        curl --max-time 30 "${new_args[@]}"
       elif [ -n "${GATEWAY_VIP}" ] && curl -s --connect-timeout 2 "http://${GATEWAY_VIP}:4000/health/liveliness" >/dev/null 2>&1; then
-        curl "${args[@]}"
+        curl --max-time 30 "${args[@]}"
       else
         local py_script="import urllib.request, sys, json
 args = sys.argv[1:]
@@ -154,7 +157,7 @@ if not url: sys.exit(0)
 req_method = method if method != 'GET' else ('POST' if data else 'GET')
 req = urllib.request.Request(url, data=data, headers=headers, method=req_method)
 try:
-    with urllib.request.urlopen(req, timeout=10) as res:
+    with urllib.request.urlopen(req, timeout=30) as res:
         if header_file:
             with open(header_file, 'w') as hf:
                 for k, v in res.headers.items():
@@ -172,6 +175,15 @@ except Exception as e:
     if show_code: sys.stdout.write('000')
 "
         kubectl exec -n llm-serving "${GATEWAY_POD}" -c litellm -- python3 -c "${py_script}" "$@" 2>/dev/null || true
+        for arg in "$@"; do
+          if [ "${prev_arg:-}" = "-D" ] && [ -n "${arg}" ]; then
+            if kubectl exec -n llm-serving "${GATEWAY_POD}" -c litellm -- cat "${arg}" > "${arg}.tmp" 2>/dev/null; then
+              mv -f "${arg}.tmp" "${arg}" || true
+            fi
+            kubectl exec -n llm-serving "${GATEWAY_POD}" -c litellm -- rm -f "${arg}" 2>/dev/null || true
+          fi
+          prev_arg="${arg}"
+        done
       fi
     }
 
@@ -257,12 +269,11 @@ except Exception as e:
       END_TIME=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || date +%s)
       ELAPSED_MS=$((END_TIME - START_TIME))
       CACHE_STATUS=$(grep -i -E "x-litellm-cache|x-litellm-response-duration-ms" "${CACHE_HEADER_FILE}" | tr -d '\r\n' | paste -sd " | " - || true)
-      HAS_CACHE_KEY=$(grep -qi "^x-litellm-cache-key:" "${CACHE_HEADER_FILE}" && echo "true" || echo "false")
       SERVER_DURATION_MS=$(grep -i "^x-litellm-response-duration-ms:" "${CACHE_HEADER_FILE}" | awk -F: '{print $2}' | tr -d ' \r\n' || echo "9999")
       rm -f "${CACHE_HEADER_FILE}"
 
-      if [ "${HAS_CACHE_KEY}" = "true" ] || echo "${CACHE_STATUS}" | grep -i -E "HIT|True" >/dev/null; then
-        echo "      Response Cache Header: ${CACHE_STATUS:-x-litellm-cache-key present}"
+      if echo "${CACHE_STATUS}" | grep -i -E "HIT|True" >/dev/null; then
+        echo "      Response Cache Header: ${CACHE_STATUS}"
         echo "      Elapsed Time (Wall):   ${ELAPSED_MS} ms | Server Duration: ${SERVER_DURATION_MS} ms"
         echo "      [PASS] Redis exact match cache hit verified via primary LiteLLM cache header on attempt ${attempt}."
         CACHE_PASSED="true"
@@ -281,13 +292,23 @@ except Exception as e:
       echo "      Response Cache Header: ${CACHE_STATUS:-None}"
       echo "      Elapsed Time (TTFT):   ${ELAPSED_MS} ms"
       echo "      [FAIL] Redis cache hit test did not observe cache hit within latency/header threshold."
+      exit 1
     fi
 
     # Test 5: BigQuery Audit Sink & Live Trajectory Verification
     echo "    [Test 5/5] Running BigQuery Audit Sink & Trajectory Verification..."
-    if [ -f "${SCRIPT_DIR}/check_bq.py" ]; then
+    BQ_SCRIPT="${SCRIPT_DIR}/check_bq.py"
+    if [ ! -f "${BQ_SCRIPT}" ] && [ -f "${PROJECT_ROOT}/check_bq.py" ]; then
+      BQ_SCRIPT="${PROJECT_ROOT}/check_bq.py"
+    fi
+    if [ -f "${BQ_SCRIPT}" ]; then
       export PROJECT_ID
-      GOOGLE_API_USE_CLIENT_CERTIFICATE=false python3 "${SCRIPT_DIR}/check_bq.py" || true
+      if [ -d "${PROJECT_ROOT}/.venv" ] && [ -f "${PROJECT_ROOT}/.venv/bin/python3" ]; then
+        PY_CMD="${PROJECT_ROOT}/.venv/bin/python3"
+      else
+        PY_CMD="python3"
+      fi
+      GOOGLE_API_USE_CLIENT_CERTIFICATE=false "${PY_CMD}" "${BQ_SCRIPT}"
     fi
   else
     echo "    NOTE: Gateway pod is not yet in Running state (${GATEWAY_STATUS}). Check logs with:"

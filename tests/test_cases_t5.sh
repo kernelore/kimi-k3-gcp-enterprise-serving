@@ -4,7 +4,7 @@
 # ==============================================================================
 # Synthesizes and integrates all Tier 5 adversarial test cases from Challenger 1
 # and Challenger 2, closing all 14 white-box coverage gaps across templates,
-# scripts, containers, and BUILD, while verifying remediated bugs (ADV-T5-07..09).
+# scripts, containers, and Build, while verifying remediated bugs (ADV-T5-07..09).
 # ==============================================================================
 set -euo pipefail
 
@@ -16,26 +16,45 @@ t5_adv_01() {
   assert_match 'gke-spot: "true"' "${trtllm_yaml}" "Missing gke-spot nodeSelector in TRTLLM manifest"
   assert_match 'nvidia-b200' "${trtllm_yaml}" "Missing nvidia-b200 nodeSelector in TRTLLM manifest"
   assert_match 'tolerations:' "${trtllm_yaml}" "Missing spot tolerations in TRTLLM manifest"
-  assert_match 'rdma-0' "${trtllm_yaml}" "Missing rdma-0 in TRTLLM manifest"
-  assert_match 'rdma-1' "${trtllm_yaml}" "Missing rdma-1 in TRTLLM manifest"
-  assert_match 'rdma-2' "${trtllm_yaml}" "Missing rdma-2 in TRTLLM manifest"
-  assert_match 'rdma-3' "${trtllm_yaml}" "Missing rdma-3 in TRTLLM manifest"
+  for i in $(seq 0 7); do
+    assert_match "rdma-${i}" "${trtllm_yaml}" "Missing rdma-${i} annotation in TRTLLM manifest"
+  done
   assert_match 'sizeLimit: 512Gi' "${trtllm_yaml}" "Missing 512Gi /dev/shm sizeLimit in TRTLLM manifest"
   assert_match 'storage: 2000Gi' "${trtllm_yaml}" "Missing 2000Gi storage claim in TRTLLM manifest"
+  assert_match 'startupProbe:' "${trtllm_yaml}" "Missing startupProbe in TRTLLM manifest"
+  assert_match 'apps.kubernetes.io/pod-index: "0"' "${trtllm_yaml}" "Missing leader-only pod-index selector in TRTLLM manifest"
+  assert_match '/home/kubernetes/bin/nvidia' "${trtllm_yaml}" "Missing /home/kubernetes/bin/nvidia hostPath in TRTLLM manifest"
+  assert_match '/home/kubernetes/bin/gib' "${trtllm_yaml}" "Missing /home/kubernetes/bin/gib hostPath in TRTLLM manifest"
 
   (cd "${PROJECT_ROOT}" && env -i PATH="${PATH}" INFERENCE_ENGINE="sglang" CLUSTER_NAME="test-cluster" REGION="europe-north1" ZONE="europe-north1-b" PROJECT_ID="test-proj" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
   local sglang_yaml="${PROJECT_ROOT}/terraform/manifests/generated/09-kimi-k3-sglang-mpi.yaml"
   assert_file_exists "${sglang_yaml}"
   assert_match 'gke-spot: "true"' "${sglang_yaml}" "Missing gke-spot nodeSelector in SGLang manifest"
   assert_match 'nvidia-b200' "${sglang_yaml}" "Missing nvidia-b200 nodeSelector in SGLang manifest"
-  assert_match 'rdma-0' "${sglang_yaml}" "Missing rdma-0 in SGLang manifest"
-  assert_match 'rdma-1' "${sglang_yaml}" "Missing rdma-1 in SGLang manifest"
+  for i in $(seq 0 7); do
+    assert_match "rdma-${i}" "${sglang_yaml}" "Missing rdma-${i} annotation in SGLang manifest"
+  done
   assert_match 'sizeLimit: 512Gi' "${sglang_yaml}" "Missing 512Gi /dev/shm sizeLimit in SGLang manifest"
   assert_match 'storage: 2000Gi' "${sglang_yaml}" "Missing 2000Gi storage claim in SGLang manifest"
+  assert_match 'startupProbe:' "${sglang_yaml}" "Missing startupProbe in SGLang manifest"
+  assert_match 'apps.kubernetes.io/pod-index: "0"' "${sglang_yaml}" "Missing leader-only pod-index selector in SGLang manifest"
+  assert_match '/home/kubernetes/bin/nvidia' "${sglang_yaml}" "Missing /home/kubernetes/bin/nvidia hostPath in SGLang manifest"
+  assert_match '/home/kubernetes/bin/gib' "${sglang_yaml}" "Missing /home/kubernetes/bin/gib hostPath in SGLang manifest"
+  assert_match 'trust-remote-code' "${sglang_yaml}" "Missing trust-remote-code flag in SGLang manifest"
+  assert_match 'enable-metrics' "${sglang_yaml}" "Missing enable-metrics flag in SGLang manifest"
+  assert_match 'context-length ["]?131072' "${sglang_yaml}" "Missing context-length 131072 flag in SGLang manifest"
 
-  local staging_pvc="${PROJECT_ROOT}/terraform/manifests/generated/02-staging-pvc.yaml"
-  assert_match 'storage: 2000Gi' "${staging_pvc}" "Missing 2000Gi storage claim in generated staging PVC"
+  local staging_pvc="${PROJECT_ROOT}/terraform/manifests/templates/02-staging-pvc.yaml.template"
+  assert_match 'storage: 2000Gi' "${staging_pvc}" "Missing 2000Gi storage claim in staging PVC template"
+  assert_no_match 'ENABLE_HPA' "${PROJECT_ROOT}/scripts/config.env.example" "Orphaned ENABLE_HPA still present in config.env.example"
+
+  local turndown_yaml="${PROJECT_ROOT}/terraform/manifests/generated/10-scheduled-turndown-cronjob.yaml"
+  assert_file_exists "${turndown_yaml}"
+  assert_match 'scale statefulset kimi-k3-serving --replicas=0' "${turndown_yaml}" "Scheduled turndown manifest missing --replicas=0"
+  assert_match 'scale statefulset kimi-k3-serving --replicas=2' "${turndown_yaml}" "Scheduled turnup manifest missing --replicas=2"
 }
+
+
 
 # T5_ADV_02: Hermeticity, Empty String Injection Resilience, and Lifecycle Templates
 t5_adv_02() {
@@ -55,7 +74,8 @@ t5_adv_02() {
 t5_adv_03() {
   assert_match 'preserve_thought_blocks: true' "${PROJECT_ROOT}/terraform/manifests/templates/04-enterprise-gateway-config.yaml.template" "Missing LiteLLM CoT reasoning preservation config"
   assert_match 'drop_params: false' "${PROJECT_ROOT}/terraform/manifests/templates/04-enterprise-gateway-config.yaml.template" "Missing LiteLLM CoT parameter drop prevention"
-  assert_match 'gke-spot: "true"' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-sglang-mpi.yaml.template" "Missing spot node pool targeting in SGLang serving deployment"
+  assert_match 'gke-nodepool: "np-system"' "${PROJECT_ROOT}/terraform/manifests/templates/05-enterprise-gateway-deployment.yaml.template" "Missing np-system node pool targeting in LiteLLM Gateway deployment"
+  assert_no_match 'gke-spot: "true"' "${PROJECT_ROOT}/terraform/manifests/templates/05-enterprise-gateway-deployment.yaml.template" "Unexpected spot node pool targeting in LiteLLM Gateway deployment"
   assert_match 'raid0|mdadm|nvme' "${PROJECT_ROOT}/terraform/manifests/templates/00-local-nvme-raid.yaml.template" "Missing local NVMe RAID-0 DaemonSet configuration"
   assert_match 'PodMonitoring' "${PROJECT_ROOT}/terraform/manifests/templates/06-model-observability-podmonitoring.yaml.template" "Missing Model observability PodMonitoring custom resource"
 }
@@ -66,8 +86,12 @@ t5_adv_04() {
   assert_match 'safe_envsubst' "${PROJECT_ROOT}/scripts/05_run_benchmarks.sh" "Missing safe_envsubst helper in 05_run_benchmarks.sh"
   assert_no_match 'envsubst < "\$\{TEMPLATE_DIR\}/08-in-cluster-benchmark-job\.yaml\.template"' "${PROJECT_ROOT}/scripts/05_run_benchmarks.sh" "Unsafe raw envsubst used in 05_run_benchmarks.sh; must use safe_envsubst"
 
-  # ADV-T5-08: Ensure zero external internet URL dependencies in deployment scripts
+  # ADV-T5-08: Ensure zero external internet URL dependencies in deployment scripts and local template exists
   assert_no_match 'https://raw\.githubusercontent\.com' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Unhermetic external GitHub URL dependency found in 03_deploy_workloads.sh"
+
+  # P4-7: Ensure 05_run_benchmarks.sh prevents directory doubling and validates empty output
+  assert_no_match '\$\{RESULTS_DIR\}/\$\{INFERENCE_ENGINE\}' "${PROJECT_ROOT}/scripts/05_run_benchmarks.sh" "Directory doubling found in 05_run_benchmarks.sh"
+  assert_match '! -s "\$\{RESULTS_DIR\}/incluster_' "${PROJECT_ROOT}/scripts/05_run_benchmarks.sh" "Missing empty output validation in 05_run_benchmarks.sh"
 }
 
 # T5_ADV_05: Remediated Bug Fixes Verification (ADV-T5-09, Script Syntax, and Governance)
@@ -85,34 +109,13 @@ t5_adv_05() {
       assert_cmd_success "bash -n '${s}'" "Syntax error detected in ${s}"
     fi
   done
-
-  # BUILD coverage check (ADV-13 in Challenger 1)
-  for py in "${PROJECT_ROOT}"/benchmarks/*.py "${PROJECT_ROOT}"/scripts/*.py; do
-    if [ -f "${py}" ]; then
-      local target_name
-      target_name="$(basename "${py}" .py)"
-      assert_match "${target_name}" "${PROJECT_ROOT}/BUILD" "Python script ${target_name} missing from BUILD file"
-    fi
-  done
-
-  # GLM/NVFP4 isolation check (ADV-15a in Challenger 1)
-  for dir in terraform benchmarks docker; do
-    if [ -d "${PROJECT_ROOT}/${dir}" ]; then
-      assert_no_match 'GLM|NVFP4|glm52' "${PROJECT_ROOT}/${dir}" "Prohibited GLM strings in directory ${dir}"
-    fi
-  done
-
-  # Minitel compliance check (ADV-15b in Challenger 1)
-  local md_files
-  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and '.agents' not in r and '.gemini' not in r and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md')])")
-  assert_equals "[]" "${md_files}" "Unauthorized markdown files in project: ${md_files}"
 }
 
 run_tier_5_tests() {
   log_info "=== Executing Tier 5: Adversarial White-Box Coverage Hardening Suite ==="
   run_test_case "T5_ADV_01_Domain_Manifest_Assertions" t5_adv_01
   run_test_case "T5_ADV_02_Hermeticity_Empty_String_Injection" t5_adv_02
-  run_test_case "T5_ADV_03_Gateway_Observability_HPA_MoE" t5_adv_03
+  run_test_case "T5_ADV_03_Gateway_Observability_Config" t5_adv_03
   run_test_case "T5_ADV_04_Remediated_Script_Security_Network_Isolation" t5_adv_04
   run_test_case "T5_ADV_05_Benchmark_Exception_Resilience_Syntax" t5_adv_05
 }

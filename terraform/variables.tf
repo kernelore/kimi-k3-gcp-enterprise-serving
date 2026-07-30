@@ -76,7 +76,7 @@ variable "env_label" {
 variable "db_tier" {
   description = "Cloud SQL machine tier for the gateway PostgreSQL instance"
   type        = string
-  default     = "db-custom-2-8192"
+  default     = "db-custom-4-16384"
 }
 
 variable "db_password" {
@@ -90,7 +90,7 @@ variable "db_password" {
 }
 
 variable "enable_private_endpoint" {
-  description = "Whether to enable private control plane endpoint for GKE cluster access"
+  description = "Whether to enable private IP endpoint for GKE Control Plane access"
   type        = bool
   default     = false
 }

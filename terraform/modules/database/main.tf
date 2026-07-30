@@ -47,9 +47,10 @@ resource "google_sql_database" "default" {
 }
 
 resource "google_sql_user" "gateway_user" {
-  name       = "gateway_admin"
-  instance   = google_sql_database_instance.gateway_db.name
-  project    = var.project_id
-  password   = var.db_password
-  depends_on = [google_sql_database.default]
+  name            = "gateway_admin"
+  instance        = google_sql_database_instance.gateway_db.name
+  project         = var.project_id
+  password        = var.db_password
+  deletion_policy = "ABANDON"
+  depends_on      = [google_sql_database.default]
 }

@@ -30,7 +30,22 @@ fi
 # shellcheck source=/dev/null
 source "${CONFIG_FILE}"
 
-export MODEL_REPO_ID="${MODEL_REPO_ID:-moonshotai/Kimi-K3-2.8T-MXFP4}"
+validate_hf_token() {
+  local token="${HF_TOKEN:-}"
+  if [[ -z "${token}" ]] || \
+     [[ "${token}" != hf_* ]] || \
+     [[ "${token}" =~ [Pp][Ll][Aa][Cc][Ee][Hh][Oo][Ll][Dd][Ee][Rr] ]] || \
+     [[ "${token}" =~ [Yy][Oo][Uu][Rr]_ ]] || \
+     [[ "${token}" =~ [Xx][Xx][Xx] ]] || \
+     [[ "${token}" =~ [Tt][Oo][Dd][Oo] ]] || \
+     [[ "${token}" == *"<"* ]] || \
+     [[ "${token}" == *">"* ]]; then
+    echo "ERROR: Invalid or placeholder HF_TOKEN detected in scripts/config.env. Please configure a valid Hugging Face access token (starting with 'hf_') with gated-repo licence access." >&2
+    exit 1
+  fi
+}
+
+export MODEL_REPO_ID="${MODEL_REPO_ID:-moonshotai/Kimi-K3}"
 export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-kimi-k3-2.8t-mxfp4}"
 export TRTLLM_TP_SIZE="${TRTLLM_TP_SIZE:-8}"
 export TRTLLM_PP_SIZE="${TRTLLM_PP_SIZE:-2}"
@@ -43,22 +58,6 @@ export NODES_PER_REPLICA="${NODES_PER_REPLICA:-2}"
 
 if [ -n "${GCS_WEIGHTS_BUCKET:-}" ] && [[ "${GCS_WEIGHTS_BUCKET}" != gs://* ]]; then
   export GCS_WEIGHTS_BUCKET="gs://${GCS_WEIGHTS_BUCKET}"
-fi
-
-# Generate dynamic SSH keypair for TRT-LLM MPI inter-node communication
-if [ ! -f "/tmp/kimi_k3_id_rsa" ]; then
-  ssh-keygen -q -t rsa -N '' -f /tmp/kimi_k3_id_rsa
-fi
-SSH_PRIVATE_KEY_BASE64=$(base64 -w 0 /tmp/kimi_k3_id_rsa 2>/dev/null || base64 /tmp/kimi_k3_id_rsa)
-SSH_PUBLIC_KEY_BASE64=$(base64 -w 0 /tmp/kimi_k3_id_rsa.pub 2>/dev/null || base64 /tmp/kimi_k3_id_rsa.pub)
-export SSH_PRIVATE_KEY_BASE64 SSH_PUBLIC_KEY_BASE64
-
-if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" != "1" ] && [ -z "${GCS_WEIGHTS_BUCKET:-}" ]; then
-  if [ -z "${HF_TOKEN:-}" ] || [ "${HF_TOKEN}" = "your_huggingface_access_token_here" ]; then
-    echo "WARNING: HF_TOKEN is unset or default, but Hugging Face weight staging is active."
-  fi
-else
-  echo "--> Hugging Face weight staging is disabled or using GCS cache (${GCS_WEIGHTS_BUCKET:-GCS cache}). Skipping HF token validation."
 fi
 
 # shellcheck disable=SC2016
@@ -118,29 +117,34 @@ get_gcloud_val() {
   fi
 }
 
-REDIS_PASSWORD=$(get_tf_output redis_auth_string)
-if [ -z "${REDIS_PASSWORD}" ]; then
-  REDIS_PASSWORD=$(get_gcloud_val redis instances get-auth-string kimi-k3-gateway-cache --region="${REGION}" --format="value(authString)" --quiet)
-fi
-REDIS_PASSWORD="${REDIS_PASSWORD:-redis-secret-password-change-me}"
-export REDIS_PASSWORD
+if [ "${1:-}" = "--render-only" ] || [ "${1:-}" = "--stage-only" ]; then
+  REDIS_PASSWORD="redis-secret-password-change-me"
+  REDIS_HOST="redis-cache.local"
+  DB_CONNECTION_NAME="${PROJECT_ID}:${REGION}:kimi-k3-gateway-db"
+else
+  REDIS_PASSWORD=$(get_tf_output redis_auth_string)
+  if [ -z "${REDIS_PASSWORD}" ]; then
+    REDIS_PASSWORD=$(get_gcloud_val redis instances get-auth-string kimi-k3-gateway-cache --region="${REGION}" --format="value(authString)" --quiet)
+  fi
+  REDIS_PASSWORD="${REDIS_PASSWORD:-redis-secret-password-change-me}"
 
+  # Extract Redis and Cloud SQL details from Terraform (or gcloud fallback)
+  REDIS_HOST=$(get_tf_output redis_host)
+  if [ -z "${REDIS_HOST}" ]; then
+    REDIS_HOST=$(get_gcloud_val redis instances describe kimi-k3-gateway-cache --region="${REGION}" --format="value(host)" --quiet)
+  fi
+  REDIS_HOST="${REDIS_HOST:-redis-cache.local}"
+
+  DB_CONNECTION_NAME=$(get_tf_output db_instance_connection_name)
+  if [ -z "${DB_CONNECTION_NAME}" ]; then
+    DB_CONNECTION_NAME=$(get_gcloud_val sql instances describe kimi-k3-gateway-db --format="value(connectionName)" --quiet)
+  fi
+  DB_CONNECTION_NAME="${DB_CONNECTION_NAME:-${PROJECT_ID}:${REGION}:kimi-k3-gateway-db}"
+fi
+export REDIS_PASSWORD
 REDIS_PASSWORD_ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote_plus(sys.argv[1]))" "${REDIS_PASSWORD}")
 export REDIS_PASSWORD_ENCODED
-
-# Extract Redis and Cloud SQL details from Terraform (or gcloud fallback)
-REDIS_HOST=$(get_tf_output redis_host)
-if [ -z "${REDIS_HOST}" ]; then
-  REDIS_HOST=$(get_gcloud_val redis instances describe kimi-k3-gateway-cache --region="${REGION}" --format="value(host)" --quiet)
-fi
-REDIS_HOST="${REDIS_HOST:-redis-cache.local}"
 export REDIS_HOST
-
-DB_CONNECTION_NAME=$(get_tf_output db_instance_connection_name)
-if [ -z "${DB_CONNECTION_NAME}" ]; then
-  DB_CONNECTION_NAME=$(get_gcloud_val sql instances describe kimi-k3-gateway-db --format="value(connectionName)" --quiet)
-fi
-DB_CONNECTION_NAME="${DB_CONNECTION_NAME:-${PROJECT_ID}:${REGION}:kimi-k3-gateway-db}"
 export DB_CONNECTION_NAME
 
 export TRTLLM_VIP="kimi-k3-serving-svc.llm-serving.svc.cluster.local"
@@ -151,10 +155,13 @@ export SGLANG_EP_SIZE="${SGLANG_EP_SIZE:-16}"
 export SGLANG_PORT="${SGLANG_PORT:-8000}"
 export SGLANG_MEM_FRACTION_STATIC="${SGLANG_MEM_FRACTION_STATIC:-0.90}"
 export SGLANG_SCHEDULE_POLICY="${SGLANG_SCHEDULE_POLICY:-lpm}"
-export SGLANG_QUANTIZATION="${SGLANG_QUANTIZATION:-fp8}"
-export SGLANG_ENABLE_TORCH_COMPILE="${SGLANG_ENABLE_TORCH_COMPILE:-true}"
-export SGLANG_ATTENTION_BACKEND="${SGLANG_ATTENTION_BACKEND:-flashinfer}"
+export SGLANG_QUANTIZATION="${SGLANG_QUANTIZATION:-}"
+export SGLANG_ENABLE_TORCH_COMPILE="${SGLANG_ENABLE_TORCH_COMPILE:-false}"
+export SGLANG_ATTENTION_BACKEND="${SGLANG_ATTENTION_BACKEND:-triton}"
 export SGLANG_CONTEXT_LENGTH="${SGLANG_CONTEXT_LENGTH:-131072}"
+export SGLANG_REASONING_PARSER="${SGLANG_REASONING_PARSER:-}"
+export SGLANG_TOOL_CALL_PARSER="${SGLANG_TOOL_CALL_PARSER:-}"
+export SGLANG_EXTRA_ARGS="${SGLANG_EXTRA_ARGS:---moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3}"
 export EXPECTED_MODEL_ARCHITECTURE="${EXPECTED_MODEL_ARCHITECTURE:-}"
 export MIN_WEIGHTS_GIB="${MIN_WEIGHTS_GIB:-1000}"
 export LEADER_ADDR="${LEADER_ADDR:-kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local}"
@@ -178,26 +185,23 @@ fi
 export SERVING_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/kimi-prod/${IMAGE_NAME}:${IMAGE_TAG}"
 export INFERENCE_ENGINE INFERENCE_SERVER_LABEL SERVING_IMAGE
 
-# 1. Render manifest templates (excluding HF_TOKEN and GATEWAY_MASTER_KEY from general substitution)
+# 1. Render manifest templates (excluding HF_TOKEN from substitution to prevent plaintext baking)
 echo "--> 1. Rendering manifest templates from ${TEMPLATE_DIR} to ${GENERATED_DIR}..."
 # shellcheck disable=SC2016
-BASE_ALLOWED_VARS='${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${SERVING_MODEL_NAME} ${TRTLLM_TP_SIZE} ${TRTLLM_PP_SIZE} ${TRTLLM_EP_SIZE} ${TRTLLM_MAX_SEQ_LEN} ${SGLANG_TP_SIZE} ${SGLANG_PP_SIZE} ${SGLANG_PP_LAYER_PARTITION} ${SGLANG_EP_SIZE} ${SGLANG_PORT} ${SGLANG_MEM_FRACTION_STATIC} ${SGLANG_SCHEDULE_POLICY} ${SGLANG_QUANTIZATION} ${SGLANG_ENABLE_TORCH_COMPILE} ${SGLANG_ATTENTION_BACKEND} ${SGLANG_CONTEXT_LENGTH} ${EXPECTED_MODEL_ARCHITECTURE} ${MIN_WEIGHTS_GIB} ${LEADER_ADDR} ${HYPERDISK_ML_SIZE_GB} ${GCS_WEIGHTS_BUCKET} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${TRTLLM_VIP} ${GPU_MAX_NODES} ${SERVING_REPLICAS} ${NODES_PER_REPLICA} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${SERVING_IMAGE} ${SSH_PRIVATE_KEY_BASE64} ${SSH_PUBLIC_KEY_BASE64}'
-
+BASE_ALLOWED_VARS='${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${SERVING_MODEL_NAME} ${TRTLLM_TP_SIZE} ${TRTLLM_PP_SIZE} ${TRTLLM_EP_SIZE} ${TRTLLM_MAX_SEQ_LEN} ${SGLANG_TP_SIZE} ${SGLANG_PP_SIZE} ${SGLANG_PP_LAYER_PARTITION} ${SGLANG_EP_SIZE} ${SGLANG_PORT} ${SGLANG_MEM_FRACTION_STATIC} ${SGLANG_SCHEDULE_POLICY} ${SGLANG_QUANTIZATION} ${SGLANG_ENABLE_TORCH_COMPILE} ${SGLANG_ATTENTION_BACKEND} ${SGLANG_CONTEXT_LENGTH} ${SGLANG_REASONING_PARSER} ${SGLANG_TOOL_CALL_PARSER} ${SGLANG_EXTRA_ARGS} ${EXPECTED_MODEL_ARCHITECTURE} ${MIN_WEIGHTS_GIB} ${LEADER_ADDR} ${HYPERDISK_ML_SIZE_GB} ${GCS_WEIGHTS_BUCKET} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${TRTLLM_VIP} ${GPU_MAX_NODES} ${SERVING_REPLICAS} ${NODES_PER_REPLICA} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${SERVING_IMAGE}'
 for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
   if [ -f "${template_file}" ]; then
     basename=$(basename "${template_file}" .template)
     target_file="${GENERATED_DIR}/${basename}"
     echo "    Rendering ${basename}..."
     allowed_vars="${BASE_ALLOWED_VARS}"
-    if [ "${basename}" = "04-enterprise-gateway-config.yaml" ] || [ "${basename}" = "08-in-cluster-benchmark-job.yaml" ]; then
-      # shellcheck disable=SC2016
-      allowed_vars="${BASE_ALLOWED_VARS} "'${GATEWAY_MASTER_KEY}'
+    if [ "${basename}" = "04-enterprise-gateway-config.yaml" ] || [ "${basename}" = "05-enterprise-gateway-deployment.yaml" ]; then
+      allowed_vars="${BASE_ALLOWED_VARS} \${GATEWAY_MASTER_KEY}"
     fi
     # shellcheck disable=SC2016
     safe_envsubst "${allowed_vars}" < "${template_file}" > "${target_file}"
   fi
 done
-
 echo "    [OK] All manifest templates rendered cleanly."
 
 if [ "${1:-}" = "--render-only" ] || [ "${1:-}" = "--stage-only" ]; then
@@ -217,7 +221,12 @@ if command -v gcloud >/dev/null 2>&1; then
     BUILD_DIR=$(mktemp -d)
     cp -r "${PROJECT_ROOT}/docker/." "${BUILD_DIR}/"
     cp "${PROJECT_ROOT}/docker/${DOCKERFILE}" "${BUILD_DIR}/Dockerfile"
-    gcloud builds submit "${BUILD_DIR}" --tag "${SERVING_IMAGE}" --project="${PROJECT_ID}" --quiet || true
+    echo "    --> Submitting build for docker/${DOCKERFILE} to Cloud Build..."
+    if ! gcloud builds submit "${BUILD_DIR}" --tag "${SERVING_IMAGE}" --timeout=7200s --machine-type=e2-highcpu-32 --disk-size=200 --project="${PROJECT_ID}" --quiet; then
+      echo "    [ERROR] Cloud Build failed! Inspect build logs at: https://console.cloud.google.com/cloud-build/builds?project=${PROJECT_ID}" >&2
+      rm -rf "${BUILD_DIR}"
+      exit 1
+    fi
     rm -rf "${BUILD_DIR}"
     echo "    [OK] Self-healing container build step finished."
   else
@@ -235,6 +244,51 @@ kubectl apply -f "${GENERATED_DIR}/10-scheduled-turndown-cronjob.yaml"
 
 echo "--> 4. Waiting for local-nvme-raid-formatter DaemonSet rollout..."
 kubectl rollout status daemonset/local-nvme-raid-formatter -n kube-system --timeout=180s || echo "WARNING: DaemonSet rollout timeout (may be waiting for spot nodes to register)."
+
+# 3b. Verify RoCEv2 Network Fabric and NCCL bus bandwidth floor (>= 100 GB/s)
+if [ "${SKIP_FABRIC_CHECK:-false}" != "true" ]; then
+  echo "--> 3b. Verifying RoCEv2 RDMA network fabric and NCCL bus bandwidth (floor >= 100 GB/s)..."
+  kubectl apply -f "${GENERATED_DIR}/00c-nccl-test-job.yaml"
+  kubectl apply -f "${GENERATED_DIR}/00d-serving-nccl-parity-job.yaml"
+  echo "    Waiting for NCCL RoCEv2 StatefulSet rollout (timeout: 600s)..."
+  if ! kubectl rollout status statefulset/nccl-roce-test -n llm-serving --timeout=600s; then
+    echo "ERROR: NCCL RoCEv2 test StatefulSet rollout failed or timed out!" >&2
+    kubectl logs -n llm-serving -l app=nccl-roce-test --tail=50 >&2 || true
+    exit 1
+  fi
+  echo "    Checking NCCL bus bandwidth result..."
+  BUSBW_VAL=""
+  MAX_ATTEMPTS=30
+  ATTEMPT=0
+  while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+    LOG_OUTPUT=$(kubectl logs statefulset/nccl-roce-test -n llm-serving -c nccl-test 2>/dev/null || kubectl logs nccl-roce-test-0 -n llm-serving 2>/dev/null || true)
+    BUSBW_LINE=$(echo "${LOG_OUTPUT}" | grep -i "# Avg bus bandwidth" | tail -n 1 || true)
+    if [ -n "${BUSBW_LINE}" ]; then
+      BUSBW_VAL=$(echo "${BUSBW_LINE}" | awk -F':' '{print $2}' | xargs || true)
+      break
+    fi
+    ATTEMPT=$((ATTEMPT + 1))
+    sleep 5
+  done
+
+  if [ -n "${BUSBW_VAL}" ]; then
+    echo "    Observed NCCL bus bandwidth: ${BUSBW_VAL} GB/s"
+    if ! awk "BEGIN {exit !(${BUSBW_VAL:-0} >= 100.0)}" 2>/dev/null; then
+      echo "ERROR: NCCL RoCEv2 bus bandwidth (${BUSBW_VAL} GB/s) is below required 100 GB/s floor!" >&2
+      exit 1
+    fi
+    echo "    [OK] NCCL RoCEv2 bus bandwidth meets >= 100 GB/s requirement."
+  else
+    echo "    WARNING: Could not parse NCCL bus bandwidth from logs." >&2
+  fi
+
+  echo "    Waiting for NCCL parity check StatefulSet rollout (timeout: 300s)..."
+  if ! kubectl rollout status statefulset/nccl-parity-check -n llm-serving --timeout=300s; then
+    echo "ERROR: NCCL parity check StatefulSet failed!" >&2
+    exit 1
+  fi
+  kubectl delete statefulset nccl-roce-test nccl-parity-check -n llm-serving --ignore-not-found=true
+fi
 
 # 4. Apply weights download/hydration job (if staging disk is empty or initial setup)
 SERVING_ACTIVE=$(kubectl get statefulset kimi-k3-serving -n llm-serving -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
@@ -288,6 +342,9 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
       kubectl apply -f "${GENERATED_DIR}/02-hydrate-weights-gcs.yaml"
       echo "    You can check job logs using: kubectl logs -n llm-serving -l app=kimi-k3-weight-staging -f"
     else
+      if [ "${1:-}" != "--render-only" ]; then
+        validate_hf_token
+      fi
       echo "--> 5b. Applying Kimi K3 weight staging job from Hugging Face (${GENERATED_DIR}/02-download-weights.yaml)..."
       kubectl apply -f "${GENERATED_DIR}/02-download-weights.yaml"
       echo "    NOTE: Hugging Face download takes ~15-20 min for 2.8T checkpoints."
@@ -307,10 +364,48 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
           echo "--> POPULATE_WEIGHTS_CACHE=true: Seeding persistent GCS cache bucket (${GCS_WEIGHTS_BUCKET})..."
           BUCKET_ROOT="$(printf '%s' "${GCS_WEIGHTS_BUCKET}" | sed -E 's#(gs://[^/]+).*#\1#')"
           gcloud storage buckets create "${BUCKET_ROOT}" --project="${PROJECT_ID}" --location="${REGION}" --quiet 2>/dev/null || true
-          kubectl run kimi-k3-cache-seeder --namespace=llm-serving --restart=Never --image=google/cloud-sdk:slim --overrides='{"spec":{"serviceAccountName":"kimi-k3-serving-sa","containers":[{"name":"seeder","image":"google/cloud-sdk:slim","command":["gcloud","storage","rsync","-r","/weights","'"${GCS_WEIGHTS_BUCKET}"'"],"volumeMounts":[{"name":"w","mountPath":"/weights"}]}],"volumes":[{"name":"w","persistentVolumeClaim":{"claimName":"pvc-kimi-k3-weights-staging"}}]}}' || true
-          kubectl wait --for=condition=Ready pod/kimi-k3-cache-seeder -n llm-serving --timeout=300s || true
-          kubectl logs pod/kimi-k3-cache-seeder -n llm-serving -f || true
-          kubectl delete pod kimi-k3-cache-seeder -n llm-serving --ignore-not-found=true
+          cat <<EOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kimi-k3-cache-seeder
+  namespace: llm-serving
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: kimi-k3-cache-seeder
+    spec:
+      serviceAccountName: kimi-k3-serving-sa
+      restartPolicy: Never
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-b200
+        cloud.google.com/gke-spot: "true"
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: seeder
+        image: google/cloud-sdk:500.0.0-slim
+        command: ["gcloud", "storage", "rsync", "-r", "/weights", "${GCS_WEIGHTS_BUCKET}"]
+        volumeMounts:
+        - name: w
+          mountPath: /weights
+          readOnly: true
+      volumes:
+      - name: w
+        persistentVolumeClaim:
+          claimName: pvc-kimi-k3-weights-staging
+EOF
+          echo "    Waiting for cache seeder job to complete..."
+          kubectl wait --for=condition=complete job/kimi-k3-cache-seeder -n llm-serving --timeout=3600s
+          kubectl logs job/kimi-k3-cache-seeder -n llm-serving --tail=-1
+          kubectl delete job kimi-k3-cache-seeder -n llm-serving --ignore-not-found=true
         fi
         break
       elif [ "${FAILED}" = "True" ]; then
@@ -338,25 +433,45 @@ if [ "${SKIP_STAGING_EXEC:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" 
   kubectl delete pv pv-kimi-k3-weights-staging --ignore-not-found=true --timeout=60s || true
 fi
 
-if [ "${1:-}" = "--stage-only" ]; then
-  echo "--> Stage-only mode complete. Exiting."
-  exit 0
-fi
-
 # 6. Multi-Node ReadOnlyMany Volume Mode Flipping
 if command -v gcloud >/dev/null 2>&1; then
   CURRENT_ACCESS_MODE=$(gcloud compute disks describe kimi-k3-weights-rox --zone="${ZONE}" --project="${PROJECT_ID}" --format='value(accessMode)' --quiet 2>/dev/null | head -n 1 || true)
   if [ "${CURRENT_ACCESS_MODE}" != "READ_ONLY_MANY" ]; then
-    echo "--> Setting Hyperdisk ML volume access mode to READ_ONLY_MANY for multi-node MPI attach..."
-    gcloud compute disks update kimi-k3-weights-rox \
-      --access-mode=READ_ONLY_MANY --zone="${ZONE}" --project="${PROJECT_ID}" --quiet || true
+    echo "--> Waiting for staging volume to fully detach from GKE nodes before flipping access mode..."
+    DETACH_START=$(date +%s)
+    DETACH_TIMEOUT=300
+    while true; do
+      USERS=$(gcloud compute disks describe kimi-k3-weights-rox --zone="${ZONE}" --project="${PROJECT_ID}" --format='value(users)' --quiet 2>/dev/null || true)
+      if [ -z "${USERS}" ]; then
+        echo "    [OK] Volume kimi-k3-weights-rox detached cleanly."
+        break
+      fi
+      NOW=$(date +%s)
+      ELAPSED=$((NOW - DETACH_START))
+      if [ "${ELAPSED}" -gt "${DETACH_TIMEOUT}" ]; then
+        echo "ERROR: Timed out waiting for volume kimi-k3-weights-rox to detach after ${DETACH_TIMEOUT}s." >&2
+        exit 1
+      fi
+      sleep 5
+    done
+    echo "--> Flipping Hyperdisk ML volume access mode to READ_ONLY_MANY..."
+    if ! gcloud compute disks update kimi-k3-weights-rox --access-mode=READ_ONLY_MANY --zone="${ZONE}" --project="${PROJECT_ID}" --quiet; then
+      echo "ERROR: Failed to update kimi-k3-weights-rox access-mode to READ_ONLY_MANY!" >&2
+      exit 1
+    fi
     CURRENT_ACCESS_MODE=$(gcloud compute disks describe kimi-k3-weights-rox --zone="${ZONE}" --project="${PROJECT_ID}" --format='value(accessMode)' --quiet 2>/dev/null | head -n 1 || true)
     if [ "${CURRENT_ACCESS_MODE}" != "READ_ONLY_MANY" ]; then
-      echo "WARNING: Hyperdisk ML kimi-k3-weights-rox access mode is '${CURRENT_ACCESS_MODE}', not READ_ONLY_MANY. Multi-node attach will fail until flipped manually via gcloud."
+      echo "ERROR: Hyperdisk ML kimi-k3-weights-rox access mode is '${CURRENT_ACCESS_MODE}', not READ_ONLY_MANY." >&2
+      exit 1
     fi
   else
     echo "    [OK] Hyperdisk ML volume already operating in READ_ONLY_MANY mode."
   fi
+fi
+
+if [ "${1:-}" = "--stage-only" ]; then
+  echo "--> Stage-only mode complete (weights staged and volume flipped to READ_ONLY_MANY). Exiting."
+  exit 0
 fi
 
 # 7. Apply multi-node serving engine deployment

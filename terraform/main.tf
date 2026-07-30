@@ -134,6 +134,7 @@ module "node_pool_spot" {
   secondary_gvnic_subnetwork_name = module.network.gvnic_subnetwork_name
   roce_network_name               = module.network.roce_network_name
   roce_subnetwork_names           = module.network.roce_subnetwork_names
+  node_service_account_email      = module.cluster.node_service_account_email
   owner_label                     = var.owner_label
   ttl_label                       = var.ttl_label
   env_label                       = var.env_label

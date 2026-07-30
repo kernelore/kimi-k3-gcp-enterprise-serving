@@ -17,6 +17,6 @@ spec:
       app: kimi-k3-serving
       apps.kubernetes.io/pod-index: "0"
   endpoints:
-  - port: ${SGLANG_PORT}
+  - port: 8000
     path: /metrics
     interval: 15s

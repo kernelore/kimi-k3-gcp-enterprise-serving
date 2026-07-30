@@ -44,9 +44,9 @@ fi
 echo "--> 1. Attempting clean deletion of Kubernetes workloads from GKE..."
 if kubectl get nodes >/dev/null 2>&1; then
   echo "    Deleting jobs, statefulsets, deployments, and services in namespace llm-serving..."
-  kubectl delete jobs kimi-k3-weight-staging-job preflight-nccl-roce-check kimi-k3-incluster-benchmark kimi-k3-cache-seeder -n llm-serving --ignore-not-found --timeout=60s || true
+  kubectl delete jobs kimi-k3-weight-staging-job kimi-k3-incluster-benchmark kimi-k3-cache-seeder -n llm-serving --ignore-not-found --timeout=60s || true
   kubectl delete jobs --all -n llm-serving --ignore-not-found --timeout=60s || true
-  kubectl delete statefulsets kimi-k3-serving -n llm-serving --ignore-not-found --timeout=60s || true
+  kubectl delete statefulsets kimi-k3-serving nccl-roce-test nccl-parity-check preflight-nccl-roce-check -n llm-serving --ignore-not-found --timeout=60s || true
   kubectl delete statefulsets --all -n llm-serving --ignore-not-found --timeout=60s || true
   kubectl delete deployments kimi-k3-gateway -n llm-serving --ignore-not-found --timeout=60s || true
   kubectl delete deployments --all -n llm-serving --ignore-not-found --timeout=60s || true
@@ -73,6 +73,17 @@ echo "--> 2. Checking and executing proactive Cloud SQL object & database cleanu
 if command -v gcloud >/dev/null 2>&1; then
   echo "    Dropping LiteLLM database to release owned role dependencies before destroy..."
   gcloud sql databases delete kimi_k3_gateway --instance=kimi-k3-gateway-db --project="${PROJECT_ID}" --quiet 2>/dev/null || true
+fi
+
+if command -v gcloud >/dev/null 2>&1; then
+  if [ "${PURGE_WEIGHTS_CACHE:-false}" = "true" ] && [ -n "${GCS_WEIGHTS_BUCKET:-}" ]; then
+    if [[ "${GCS_WEIGHTS_BUCKET}" != gs://* ]]; then
+      GCS_WEIGHTS_BUCKET="gs://${GCS_WEIGHTS_BUCKET}"
+    fi
+    echo "WARNING: PURGE_WEIGHTS_CACHE=true explicitly set. Deleting weight cache bucket ${GCS_WEIGHTS_BUCKET} before destroy..."
+    echo "         Next deployment will require a full HuggingFace re-download (~15-20 min)."
+    gcloud storage rm -r "${GCS_WEIGHTS_BUCKET}" --project="${PROJECT_ID}" --quiet 2>/dev/null || true
+  fi
 fi
 
 # 3. Run Terraform destroy with automated self-healing and retry loop (Issues 6 & 7 Guards)
@@ -102,7 +113,7 @@ if ! eval "${DESTROY_CMD}"; then
 
   # Self-heal Service Networking & VPC peering connections (Issue 7 guard)
   echo "    Cleaning up VPC peerings and state connections after destroy failure..."
-  VPC_NAME=$(terraform output -raw vpc_network_name 2>/dev/null || echo "${CLUSTER_NAME}-primary")
+  VPC_NAME=$(terraform output -raw vpc_network_name 2>/dev/null || echo "kimi-k3-vpc")
   if command -v gcloud >/dev/null 2>&1 && [ -n "${VPC_NAME}" ]; then
     PEERINGS=$(gcloud compute networks peerings list --network="${VPC_NAME}" --project="${PROJECT_ID}" --format="value(peerings[].name)" 2>/dev/null | tr ';' '\n' || true)
     for p in ${PEERINGS}; do
@@ -119,23 +130,18 @@ if ! eval "${DESTROY_CMD}"; then
   eval "${DESTROY_CMD}"
 fi
 
-# 4. Enumerate retained GCS buckets and handle opt-in weight cache purge
-echo "--> 4. Enumerating retained GCS buckets (*-kimi-k3-*) in project ${PROJECT_ID}..."
+# 4. Enumerate out-of-band retained GCS buckets (e.g. Terraform remote state backend)
+echo "--> 4. Enumerating out-of-band retained GCS buckets (*-kimi-k3-*) in project ${PROJECT_ID}..."
 if command -v gcloud >/dev/null 2>&1; then
-  if [ "${PURGE_WEIGHTS_CACHE:-false}" = "true" ] && [ -n "${GCS_WEIGHTS_BUCKET:-}" ]; then
-    echo "WARNING: PURGE_WEIGHTS_CACHE=true explicitly set. Deleting weight cache bucket ${GCS_WEIGHTS_BUCKET}..."
-    echo "         Next deployment will require a full HuggingFace re-download (~15-20 min)."
-    gcloud storage rm -r "${GCS_WEIGHTS_BUCKET}" --project="${PROJECT_ID}" --quiet 2>/dev/null || true
-  fi
 
   echo "------------------------------------------------------------------------------"
-  echo "INTENTIONALLY RETAINED BUCKET INVENTORY (persistent cache / remote state — not a leak):"
+  echo "OUT-OF-BAND RETAINED BUCKET INVENTORY (Terraform remote state backend — not a leak):"
   BUCKETS=$(gcloud storage ls --project="${PROJECT_ID}" 2>/dev/null | grep -E "kimi-k3|kimi3|kimi-prod" || true)
   for b in ${BUCKETS}; do
     SIZE_BYTES=$(gcloud storage du -s "${b}" 2>/dev/null | awk '{print $1}' || echo "0")
     SIZE_GIB=$(awk "BEGIN {printf \"%.2f\", ${SIZE_BYTES:-0}/1073741824}")
     COST_EST=$(awk "BEGIN {printf \"$%.2f\", (${SIZE_BYTES:-0}/1073741824)*0.02}")
-    echo "  * ${b} (~${SIZE_GIB} GiB | est. ${COST_EST}/mo) [INTENTIONALLY RETAINED]"
+    echo "  * ${b} (~${SIZE_GIB} GiB | est. ${COST_EST}/mo) [OUT-OF-BAND RETAINED]"
   done
   echo "------------------------------------------------------------------------------"
 fi

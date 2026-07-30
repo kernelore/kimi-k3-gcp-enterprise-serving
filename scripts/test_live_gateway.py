@@ -29,10 +29,8 @@ def send_chat_completion():
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             data = json.loads(resp.read().decode())
-            message = data["choices"][0]["message"]
-            content = message.get("content") or message.get("reasoning_content") or ""
-            if not isinstance(content, str):
-                content = str(content or "")
+            msg = data["choices"][0]["message"]
+            content = msg.get("content") or msg.get("reasoning_content") or ""
             print(f"[OK] Live Chat completion output (Kimi K3 MXFP4):\n{content.strip()}")
             return 0
     except Exception as e:

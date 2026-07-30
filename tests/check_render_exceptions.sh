@@ -1,46 +1,33 @@
 #!/usr/bin/env bash
-# Verification check for unrendered template variables and SGLang performance flags.
-
+# Verifies that unrendered ${...} variables in generated manifests match exactly
+# the allow-list in terraform/manifests/.render-exceptions.
+# Shared implementation called by both CI (.github/workflows/ci.yml) and the local
+# remediation suite (tests/adv_test_serving_remediation.sh Check 12).
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-GENERATED_DIR="${PROJECT_ROOT}/terraform/manifests/generated"
+cd "$(dirname "$0")/.." || exit 1
 
-if [ ! -d "${GENERATED_DIR}" ]; then
-  echo "ERROR: Generated manifests directory ${GENERATED_DIR} does not exist." >&2
+if [ ! -d "terraform/manifests/generated" ] || [ -z "$(ls -A terraform/manifests/generated/*.yaml 2>/dev/null)" ]; then
+  echo "ERROR: No generated manifests found in terraform/manifests/generated/. Must run ./scripts/03_deploy_workloads.sh --render-only first." >&2
   exit 1
 fi
 
-echo "Checking for unrendered variables in ${GENERATED_DIR}..."
+grep -rhoE '\$\{[A-Za-z_][A-Za-z0-9_-]*(:-[^}]*)?\}' terraform/manifests/generated/ \
+  | sed 's/^\${//;s/:-.*//;s/}$//' | sort -u > /tmp/survivors.txt
 
-# Check for surviving unrendered template variables, excluding known container runtime bash variables
-# Allowed runtime bash vars: IP0, IP1, NODE_RANK, LEADER_HOST, LEADER_ADDR, LOG_FILE, BUSBW, POD_INDEX, HOSTNAME, EXTRA_ARGS, bw, count, sum, v, NCCL_XARGS
-SURVIVING_VARS=$(grep -rn -E '\$\{([A-Za-z0-9_]+)(:-[^}]*)?\}' "${GENERATED_DIR}"/*.yaml | \
-  grep -v -E '\$\{(IP[01]|NODE_RANK|LEADER_HOST|LEADER_ADDR|LOG_FILE|BUSBW|POD_INDEX|HOSTNAME|EXTRA_ARGS|bw|count|sum|v|NCCL_XARGS)(:-[^}]*)?\}' || true)
-
-if [ -n "${SURVIVING_VARS}" ]; then
-  echo "ERROR: Found surviving unrendered template variables in generated manifests:" >&2
-  echo "${SURVIVING_VARS}" >&2
+if ! diff -u terraform/manifests/.render-exceptions /tmp/survivors.txt; then
+  echo "ERROR: Unrendered variables in generated manifests do not match .render-exceptions allow-list!" >&2
+  rm -f /tmp/survivors.txt
   exit 1
 fi
 
-echo "Checking SGLang performance flags in 09-kimi-k3-sglang-mpi.yaml..."
-SGLANG_MANIFEST="${GENERATED_DIR}/09-kimi-k3-sglang-mpi.yaml"
+rm -f /tmp/survivors.txt
 
-if [ -f "${SGLANG_MANIFEST}" ]; then
-  if ! grep -q -- "--moe-runner-backend" "${SGLANG_MANIFEST}"; then
-    echo "ERROR: --moe-runner-backend missing from executable sglang server invocation in ${SGLANG_MANIFEST}" >&2
-    exit 1
-  fi
-  if ! grep -q -- "--decode-attention-backend" "${SGLANG_MANIFEST}"; then
-    echo "ERROR: --decode-attention-backend missing from executable sglang server invocation in ${SGLANG_MANIFEST}" >&2
-    exit 1
-  fi
-  if ! grep -q -- "--kv-cache-dtype" "${SGLANG_MANIFEST}"; then
-    echo "ERROR: --kv-cache-dtype missing from executable sglang server invocation in ${SGLANG_MANIFEST}" >&2
+if [ -f "terraform/manifests/generated/09-kimi-k3-sglang-mpi.yaml" ]; then
+  if ! grep -q -- "--moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3" terraform/manifests/generated/09-kimi-k3-sglang-mpi.yaml; then
+    echo "ERROR: SGLang performance flags not found on reachable runtime path in generated manifest!" >&2
     exit 1
   fi
 fi
 
-echo "[OK] Render exception check passed cleanly."
+echo "Rendered manifest variable allow-list check passed cleanly."
