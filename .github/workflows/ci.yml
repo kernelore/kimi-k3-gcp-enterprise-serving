@@ -19,7 +19,7 @@ jobs:
       matrix:
         engine: [sglang, trtllm]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Install Kubeconform & gettext
         run: |
           sudo apt-get update && sudo apt-get install -y gettext-base curl
@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Run Secret Scan
         env:
           FORBIDDEN_PROJECT_ID: ${{ vars.FORBIDDEN_PROJECT_ID }}
@@ -54,11 +54,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.5.0"
       - name: Check Dependency Floors
@@ -74,8 +74,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Compile Python Scripts
@@ -88,7 +88,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Install Dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck curl gettext-base
@@ -104,8 +104,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Run Benchmark Integrity Audit
@@ -132,11 +132,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.5.0"
       - name: Install Dependencies
@@ -146,6 +146,8 @@ jobs:
           sudo mv kubeconform /usr/local/bin/
       - name: Run Master E2E & Coverage Gaps Suites
         run: |
+          cp scripts/config.env.example scripts/config.env
+          sed -i 's|export PROJECT_ID="YOUR_PROJECT_ID"|export PROJECT_ID="ci-test"|' scripts/config.env
           bash tests/test_e2e_kimi_k3.sh
           bash tests/adv_test_coverage_gaps.sh
           git status --porcelain
