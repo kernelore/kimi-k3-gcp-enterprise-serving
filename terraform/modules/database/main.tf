@@ -1,8 +1,13 @@
 resource "google_compute_global_address" "private_ip_alloc" {
+  # Pin PSA range explicitly. Without this attribute Service Networking
+  # auto-selects it and can collide with the auto-allocated GKE pod/service
+  # ranges in modules/cluster (the two allocators do not coordinate;
+  # the collision is an ordering race on fresh deploys).
   name          = "kimi-k3-gateway-psa-range"
   project       = var.project_id
   purpose       = "VPC_PEERING"
   address_type  = "INTERNAL"
+  address       = "10.200.0.0"
   prefix_length = 16
   network       = var.network_id
 }

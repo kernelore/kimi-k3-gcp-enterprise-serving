@@ -33,6 +33,15 @@ resource "google_container_cluster" "primary" {
     master_ipv4_cidr_block  = "172.16.0.0/28"
   }
 
+  # Pin VPC-native pod/service ranges explicitly. Without this block GKE
+  # auto-selects them and can collide with the auto-allocated Service
+  # Networking PSA range in modules/database (the two allocators do not
+  # coordinate; the collision is an ordering race on fresh deploys).
+  ip_allocation_policy {
+    cluster_ipv4_cidr_block  = "10.64.0.0/14"
+    services_ipv4_cidr_block = "10.80.0.0/20"
+  }
+
   dynamic "master_authorized_networks_config" {
     for_each = length(var.master_authorized_cidrs) > 0 ? [1] : []
     content {
