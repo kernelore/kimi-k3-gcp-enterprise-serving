@@ -88,6 +88,10 @@ t5_adv_04() {
 
   # ADV-T5-08: Ensure zero external internet URL dependencies in deployment scripts and local template exists
   assert_no_match 'https://raw\.githubusercontent\.com' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Unhermetic external GitHub URL dependency found in 03_deploy_workloads.sh"
+
+  # P4-7: Ensure 05_run_benchmarks.sh prevents directory doubling and validates empty output
+  assert_no_match '\$\{RESULTS_DIR\}/\$\{INFERENCE_ENGINE\}' "${PROJECT_ROOT}/scripts/05_run_benchmarks.sh" "Directory doubling found in 05_run_benchmarks.sh"
+  assert_match '! -s "\$\{RESULTS_DIR\}/incluster_' "${PROJECT_ROOT}/scripts/05_run_benchmarks.sh" "Missing empty output validation in 05_run_benchmarks.sh"
 }
 
 # T5_ADV_05: Remediated Bug Fixes Verification (ADV-T5-09, Script Syntax, and Governance)
