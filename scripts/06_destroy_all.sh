@@ -130,18 +130,18 @@ if ! eval "${DESTROY_CMD}"; then
   eval "${DESTROY_CMD}"
 fi
 
-# 4. Enumerate retained GCS buckets and handle opt-in weight cache purge
-echo "--> 4. Enumerating retained GCS buckets (*-kimi-k3-*) in project ${PROJECT_ID}..."
+# 4. Enumerate out-of-band retained GCS buckets (e.g. Terraform remote state backend)
+echo "--> 4. Enumerating out-of-band retained GCS buckets (*-kimi-k3-*) in project ${PROJECT_ID}..."
 if command -v gcloud >/dev/null 2>&1; then
 
   echo "------------------------------------------------------------------------------"
-  echo "INTENTIONALLY RETAINED BUCKET INVENTORY (persistent cache / remote state — not a leak):"
+  echo "OUT-OF-BAND RETAINED BUCKET INVENTORY (Terraform remote state backend — not a leak):"
   BUCKETS=$(gcloud storage ls --project="${PROJECT_ID}" 2>/dev/null | grep -E "kimi-k3|kimi3|kimi-prod" || true)
   for b in ${BUCKETS}; do
     SIZE_BYTES=$(gcloud storage du -s "${b}" 2>/dev/null | awk '{print $1}' || echo "0")
     SIZE_GIB=$(awk "BEGIN {printf \"%.2f\", ${SIZE_BYTES:-0}/1073741824}")
     COST_EST=$(awk "BEGIN {printf \"$%.2f\", (${SIZE_BYTES:-0}/1073741824)*0.02}")
-    echo "  * ${b} (~${SIZE_GIB} GiB | est. ${COST_EST}/mo) [INTENTIONALLY RETAINED]"
+    echo "  * ${b} (~${SIZE_GIB} GiB | est. ${COST_EST}/mo) [OUT-OF-BAND RETAINED]"
   done
   echo "------------------------------------------------------------------------------"
 fi

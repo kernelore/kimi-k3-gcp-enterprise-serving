@@ -301,13 +301,15 @@ export FORCE_WEIGHT_JOB="true"
 ./scripts/03_deploy_workloads.sh
 ```
 
-#### Protection & Purge Opt-In
+#### Complete Teardown & State Bucket Retention
 
-By default, `./scripts/06_destroy_all.sh` protects and retains the GCS weight cache bucket, listing it in an **INTENTIONALLY RETAINED BUCKET INVENTORY** report with exact byte size and monthly storage cost estimations ($0.02/GiB/month). To explicitly purge the weight cache during teardown:
+By default, `./scripts/06_destroy_all.sh` and `terraform destroy` remove all Terraform-managed resources—including the GKE cluster, RoCEv2 network, Cloud SQL instance, Hyperdisk ML ReadOnlyMany (`ROX`) volume, and GCS weight cache bucket—to ensure zero ongoing cloud spend. For temporary overnight pauses that retain weights and disks, use the scheduled evening turndown CronJob or scale the serving StatefulSet to 0.
+
+The only GCS bucket retained after `./scripts/06_destroy_all.sh` is the out-of-band Terraform remote state bucket (`gs://${PROJECT_ID}-kimi-k3-tfstate`), listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To explicitly delete the state bucket when no longer needed:
 
 ```bash
-# Force complete teardown including the persistent GCS weight cache bucket
-PURGE_WEIGHTS_CACHE=true ./scripts/06_destroy_all.sh
+# Delete the out-of-band Terraform remote state bucket
+gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-tfstate"
 ```
 
 --------------------------------------------------------------------------------
@@ -554,11 +556,7 @@ workloads, release Persistent Volumes, and run `terraform destroy`:
 
 ### Retained Storage & Bucket Purge Guide
 
-To prevent accidental data loss and avoid multi-hour re-downloads of Kimi K3's
-1,453.7 GiB weight footprint, `./scripts/06_destroy_all.sh` retains the GCS weight
-cache bucket by default, listing it in an **INTENTIONALLY RETAINED BUCKET
-INVENTORY** report. To completely purge retained buckets and ensure zero ongoing
-cloud spend:
+`./scripts/06_destroy_all.sh` executes `terraform destroy`, which deletes all Terraform-managed resources including the GCS weight cache bucket and Hyperdisk ML volume. The only bucket remaining is the out-of-band Terraform remote state bucket, which is listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To completely remove the state bucket:
 
 ```bash
 # 1. Purge and delete the Terraform remote state bucket

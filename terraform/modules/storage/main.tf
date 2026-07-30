@@ -43,7 +43,7 @@ resource "google_storage_bucket" "trajectory_bucket" {
   }
 }
 
-# Persistent Weights Cache Bucket (Optional/Retained for Fast Model Hydration)
+# Persistent Weights Cache Bucket (force_destroy=true ensures complete teardown on terraform destroy)
 resource "google_storage_bucket" "weights_cache" {
   name                        = "${var.project_id}-${var.model_family}-weights-cache"
   location                    = var.region
