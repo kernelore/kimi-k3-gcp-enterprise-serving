@@ -297,14 +297,18 @@ except Exception as e:
 
     # Test 5: BigQuery Audit Sink & Live Trajectory Verification
     echo "    [Test 5/5] Running BigQuery Audit Sink & Trajectory Verification..."
-    if [ -f "${SCRIPT_DIR}/check_bq.py" ]; then
+    BQ_SCRIPT="${SCRIPT_DIR}/check_bq.py"
+    if [ ! -f "${BQ_SCRIPT}" ] && [ -f "${PROJECT_ROOT}/check_bq.py" ]; then
+      BQ_SCRIPT="${PROJECT_ROOT}/check_bq.py"
+    fi
+    if [ -f "${BQ_SCRIPT}" ]; then
       export PROJECT_ID
       if [ -d "${PROJECT_ROOT}/.venv" ] && [ -f "${PROJECT_ROOT}/.venv/bin/python3" ]; then
         PY_CMD="${PROJECT_ROOT}/.venv/bin/python3"
       else
         PY_CMD="python3"
       fi
-      GOOGLE_API_USE_CLIENT_CERTIFICATE=false "${PY_CMD}" "${SCRIPT_DIR}/check_bq.py"
+      GOOGLE_API_USE_CLIENT_CERTIFICATE=false "${PY_CMD}" "${BQ_SCRIPT}"
     fi
   else
     echo "    NOTE: Gateway pod is not yet in Running state (${GATEWAY_STATUS}). Check logs with:"

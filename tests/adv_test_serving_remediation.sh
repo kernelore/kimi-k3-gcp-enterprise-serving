@@ -95,7 +95,7 @@ else
 fi
 for eng in sglang trtllm; do
   INFERENCE_ENGINE=$eng ./scripts/03_deploy_workloads.sh --render-only >/dev/null
-  kubeconform -summary -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' -skip GKENetworkParamSet,Network terraform/manifests/generated/*.yaml >/dev/null
+  kubeconform -strict -summary -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' -skip GKENetworkParamSet,Network terraform/manifests/generated/*.yaml >/dev/null
 done
 if [ "${CLEANUP_CONFIG_ENV}" = "true" ]; then
   rm -f scripts/config.env

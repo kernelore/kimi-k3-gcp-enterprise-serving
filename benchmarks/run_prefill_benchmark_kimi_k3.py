@@ -27,7 +27,7 @@ SYNTHETIC_8K = (
     " occur seamlessly across both nodes. Furthermore, the 2 TB ReadOnlyMany"
     " Hyperdisk ML storage architecture enables instant volume hydration and"
     " engine cache loading without network egress storms. "
-) * 40  # ~8192 tokens (~20,800 chars)
+) * 40  # ~8192 tokens (~4,320 chars)
 
 
 def extract_chunk_text(chunk: dict) -> str | None:
