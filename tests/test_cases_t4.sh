@@ -16,6 +16,10 @@ t4_s01() {
   assert_match 'IPC_LOCK' "${yaml_file}" "Missing IPC_LOCK"
   assert_match '/dev/shm' "${yaml_file}" "Missing /dev/shm"
   assert_match 'ReadOnlyMany|ROX|rox' "${yaml_file}" "Missing ReadOnlyMany"
+  local gw_secret="${PROJECT_ROOT}/terraform/manifests/generated/04-enterprise-gateway-config.yaml"
+  assert_file_exists "${gw_secret}"
+  assert_match 'sk-kimi-k3-master-secret-key-change-me' "${gw_secret}" "Missing GATEWAY_MASTER_KEY placeholder in gateway secret"
+  assert_match 'kimi-k3-gateway-admin-secret' "${gw_secret}" "Missing DB_PASSWORD placeholder in gateway secret"
 }
 
 t4_s02() {
