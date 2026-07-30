@@ -17,6 +17,18 @@ else
   GREEN="" RED="" YELLOW="" BLUE="" CYAN="" RESET=""
 fi
 
+# Define project root if not already defined
+if [ -z "${PROJECT_ROOT:-}" ]; then
+  PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  export PROJECT_ROOT
+fi
+
+# Auto-bootstrap config.env from config.env.example if missing
+if [ ! -f "${PROJECT_ROOT}/scripts/config.env" ] && [ -f "${PROJECT_ROOT}/scripts/config.env.example" ]; then
+  cp "${PROJECT_ROOT}/scripts/config.env.example" "${PROJECT_ROOT}/scripts/config.env"
+  sed -i 's|export PROJECT_ID="YOUR_PROJECT_ID"|export PROJECT_ID="ci-test"|' "${PROJECT_ROOT}/scripts/config.env"
+fi
+
 # Counters
 TESTS_RUN=0
 TESTS_PASSED=0
