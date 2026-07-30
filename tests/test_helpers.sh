@@ -178,7 +178,10 @@ run_test_case() {
   local ec=$?
   set -e
   
-  if [ ${ec} -eq 0 ]; then
+  if [ ${ec} -eq 77 ]; then
+    log_skip "${test_id}"
+    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
+  elif [ ${ec} -eq 0 ]; then
     log_pass "${test_id}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
   else

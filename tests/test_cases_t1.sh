@@ -6,15 +6,15 @@ set -euo pipefail
 
 # F1: Sovereign Architectural Audit & Parity
 t1_f1_01() {
-  : # Purged internal build target assertions for open-source compliance
+  return 77 # Purged internal build target assertions for open-source compliance
 }
 
 t1_f1_02() {
-  : # Purged internal tool assertions for open-source compliance
+  return 77 # Purged internal tool assertions for open-source compliance
 }
 
 t1_f1_03() {
-  : # Purged internal Internal link assertions for open-source compliance
+  return 77 # Purged internal Internal link assertions for open-source compliance
 }
 
 t1_f1_04() {
@@ -166,7 +166,7 @@ t1_f5_05() {
 
 # F6: Ironclad Sovereign Governance & VCS Discipline
 t1_f6_01() {
-  : # Purged GLM reference repository isolation assertions for open-source compliance
+  return 77 # Purged GLM reference repository isolation assertions for open-source compliance
 }
 
 t1_f6_02() {
@@ -182,7 +182,7 @@ t1_f6_03() {
 }
 
 t1_f6_04() {
-  : # Purged internal VCS clean status check for open-source compliance
+  return 77 # Purged internal VCS clean status check for open-source compliance
 }
 
 t1_f6_05() {

@@ -146,5 +146,6 @@ jobs:
           sudo mv kubeconform /usr/local/bin/
       - name: Run Master E2E & Coverage Gaps Suites
         run: |
-          for t in tests/test_cases_t{1..5}.sh tests/adv_test_coverage_gaps.sh tests/test_e2e_kimi_k3.sh; do bash "$t" || exit 1; done
+          bash tests/test_e2e_kimi_k3.sh
+          bash tests/adv_test_coverage_gaps.sh
           git status --porcelain

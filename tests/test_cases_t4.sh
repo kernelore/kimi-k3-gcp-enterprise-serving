@@ -55,6 +55,8 @@ t4_s05() {
   assert_match '/ 16\.0|/ 16\b' "${PROJECT_ROOT}/benchmarks/benchmark_kimi_k3.py" "Missing divisor in benchmark"
   assert_match 'europe-north1' "${PROJECT_ROOT}/benchmarks/massive_benchmark_kimi_k3.py" "Missing europe-north1 in massive benchmark"
   rm -rf "${PROJECT_ROOT}/terraform/manifests/generated"/*.yaml 2>/dev/null || true
+  (cd "${PROJECT_ROOT}" && env -i PATH="${PATH}" INFERENCE_ENGINE="trtllm" CLUSTER_NAME="kimi3-cluster" REGION="europe-north1" PROJECT_ID="test-proj" ZONE="europe-north1-b" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
+  (cd "${PROJECT_ROOT}" && env -i PATH="${PATH}" INFERENCE_ENGINE="sglang" CLUSTER_NAME="kimi3-cluster" REGION="europe-north1" PROJECT_ID="test-proj" ZONE="europe-north1-b" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
 }
 
 run_tier_4_tests() {
