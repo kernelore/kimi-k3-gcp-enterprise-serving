@@ -117,29 +117,34 @@ get_gcloud_val() {
   fi
 }
 
-REDIS_PASSWORD=$(get_tf_output redis_auth_string)
-if [ -z "${REDIS_PASSWORD}" ]; then
-  REDIS_PASSWORD=$(get_gcloud_val redis instances get-auth-string kimi-k3-gateway-cache --region="${REGION}" --format="value(authString)" --quiet)
-fi
-REDIS_PASSWORD="${REDIS_PASSWORD:-redis-secret-password-change-me}"
-export REDIS_PASSWORD
+if [ "${1:-}" = "--render-only" ] || [ "${1:-}" = "--stage-only" ]; then
+  REDIS_PASSWORD="redis-secret-password-change-me"
+  REDIS_HOST="redis-cache.local"
+  DB_CONNECTION_NAME="${PROJECT_ID}:${REGION}:kimi-k3-gateway-db"
+else
+  REDIS_PASSWORD=$(get_tf_output redis_auth_string)
+  if [ -z "${REDIS_PASSWORD}" ]; then
+    REDIS_PASSWORD=$(get_gcloud_val redis instances get-auth-string kimi-k3-gateway-cache --region="${REGION}" --format="value(authString)" --quiet)
+  fi
+  REDIS_PASSWORD="${REDIS_PASSWORD:-redis-secret-password-change-me}"
 
+  # Extract Redis and Cloud SQL details from Terraform (or gcloud fallback)
+  REDIS_HOST=$(get_tf_output redis_host)
+  if [ -z "${REDIS_HOST}" ]; then
+    REDIS_HOST=$(get_gcloud_val redis instances describe kimi-k3-gateway-cache --region="${REGION}" --format="value(host)" --quiet)
+  fi
+  REDIS_HOST="${REDIS_HOST:-redis-cache.local}"
+
+  DB_CONNECTION_NAME=$(get_tf_output db_instance_connection_name)
+  if [ -z "${DB_CONNECTION_NAME}" ]; then
+    DB_CONNECTION_NAME=$(get_gcloud_val sql instances describe kimi-k3-gateway-db --format="value(connectionName)" --quiet)
+  fi
+  DB_CONNECTION_NAME="${DB_CONNECTION_NAME:-${PROJECT_ID}:${REGION}:kimi-k3-gateway-db}"
+fi
+export REDIS_PASSWORD
 REDIS_PASSWORD_ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote_plus(sys.argv[1]))" "${REDIS_PASSWORD}")
 export REDIS_PASSWORD_ENCODED
-
-# Extract Redis and Cloud SQL details from Terraform (or gcloud fallback)
-REDIS_HOST=$(get_tf_output redis_host)
-if [ -z "${REDIS_HOST}" ]; then
-  REDIS_HOST=$(get_gcloud_val redis instances describe kimi-k3-gateway-cache --region="${REGION}" --format="value(host)" --quiet)
-fi
-REDIS_HOST="${REDIS_HOST:-redis-cache.local}"
 export REDIS_HOST
-
-DB_CONNECTION_NAME=$(get_tf_output db_instance_connection_name)
-if [ -z "${DB_CONNECTION_NAME}" ]; then
-  DB_CONNECTION_NAME=$(get_gcloud_val sql instances describe kimi-k3-gateway-db --format="value(connectionName)" --quiet)
-fi
-DB_CONNECTION_NAME="${DB_CONNECTION_NAME:-${PROJECT_ID}:${REGION}:kimi-k3-gateway-db}"
 export DB_CONNECTION_NAME
 
 export TRTLLM_VIP="kimi-k3-serving-svc.llm-serving.svc.cluster.local"

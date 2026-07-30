@@ -305,11 +305,15 @@ if [ "${IN_CLUSTER}" = "true" ]; then
 
   echo "    Retrieving in-cluster benchmark results..."
   BENCH_POD=$(kubectl get pod -n llm-serving -l app=kimi-k3-benchmark -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-  mkdir -p "${RESULTS_DIR}/${INFERENCE_ENGINE}"
+  mkdir -p "${RESULTS_DIR}"
   if [ -n "${BENCH_POD}" ]; then
-    if ! kubectl cp -n llm-serving "${BENCH_POD}:/tmp/results/" "${RESULTS_DIR}/${INFERENCE_ENGINE}/" 2>/dev/null; then
+    if ! kubectl cp -n llm-serving "${BENCH_POD}:/tmp/results/" "${RESULTS_DIR}/" 2>/dev/null; then
       echo "    [INFO] kubectl cp failed; extracting JSON result from pod logs..."
-      kubectl logs -n llm-serving "${BENCH_POD}" | awk '/=== JSON_RESULT_START ===/{flag=1; next} /=== JSON_RESULT_END ===/{flag=0} flag' > "${RESULTS_DIR}/${INFERENCE_ENGINE}/incluster_${MODE}_results.json" || true
+      kubectl logs -n llm-serving "${BENCH_POD}" | awk '/=== JSON_RESULT_START ===/{flag=1; next} /=== JSON_RESULT_END ===/{flag=0} flag' > "${RESULTS_DIR}/incluster_${MODE}_results.json" || true
+      if [ ! -s "${RESULTS_DIR}/incluster_${MODE}_results.json" ]; then
+        echo "WARNING: Extracted benchmark JSON from pod logs is empty." >&2
+        rm -f "${RESULTS_DIR}/incluster_${MODE}_results.json"
+      fi
     fi
   fi
   echo "    [OK] In-cluster benchmark job execution finished and results retrieved."
@@ -443,7 +447,7 @@ echo ""
 echo "=============================================================================="
 echo "Benchmark Execution Summary (Engine: ${ENGINE} ${ENGINE_VERSION} on 16x B200 HGX Pool)"
 echo "=============================================================================="
-if [ -f "${RESULTS_DIR}/standard_results.json" ]; then
+if [ -s "${RESULTS_DIR}/standard_results.json" ]; then
   echo "Standard Suite Results (${RESULTS_DIR}/standard_results.json):"
   python3 -c "
 import json
@@ -463,7 +467,7 @@ print(f'  - Per-GPU Throughput:  {per_gpu:.2f} tokens/sec/GPU (Normalized across
 " 2>/dev/null || true
 fi
 
-if [ -f "${RESULTS_DIR}/massive_results.json" ]; then
+if [ -s "${RESULTS_DIR}/massive_results.json" ]; then
   echo "Massive Suite Results (${RESULTS_DIR}/massive_results.json):"
   python3 -c "
 import json
@@ -483,7 +487,7 @@ print(f'  - Per-GPU Throughput:  {per_gpu:.2f} tokens/sec/GPU (Normalized across
 " 2>/dev/null || true
 fi
 
-if [ -f "${RESULTS_DIR}/soak_results.json" ]; then
+if [ -s "${RESULTS_DIR}/soak_results.json" ]; then
   echo "Soak Suite Results (${RESULTS_DIR}/soak_results.json):"
   python3 -c "
 import json
@@ -502,7 +506,7 @@ print(f'  - Per-GPU Throughput:     {per_gpu:.2f} tokens/sec/GPU (Normalized acr
 " 2>/dev/null || true
 fi
 
-if [ -f "${RESULTS_DIR}/prefill_results.json" ]; then
+if [ -s "${RESULTS_DIR}/prefill_results.json" ]; then
   echo "Prefill Suite Results (${RESULTS_DIR}/prefill_results.json):"
   python3 -c "
 import json
@@ -517,7 +521,7 @@ print(f'  - Per-GPU Prefill Rate:   {per_gpu:.2f} prompt tokens/sec/GPU (Normali
 " 2>/dev/null || true
 fi
 
-if [ -f "${RESULTS_DIR}/saturation_results.json" ]; then
+if [ -s "${RESULTS_DIR}/saturation_results.json" ]; then
   echo "Saturation Sweep Results (${RESULTS_DIR}/saturation_results.json):"
   python3 -c "
 import json
