@@ -23,7 +23,7 @@ jobs:
       - name: Install Kubeconform & gettext
         run: |
           sudo apt-get update && sudo apt-get install -y gettext-base curl
-          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          curl -sSL --fail --retry 3 https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
           sudo mv kubeconform /usr/local/bin/
       - name: Render Workload Manifests
         env:
@@ -44,6 +44,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Run Secret Scan
         env:
           FORBIDDEN_PROJECT_ID: ${{ vars.FORBIDDEN_PROJECT_ID }}
@@ -92,12 +94,15 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck curl gettext-base
-          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          curl -sSL --fail --retry 3 https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
           sudo mv kubeconform /usr/local/bin/
       - name: Run ShellCheck
         run: shellcheck scripts/*.sh tests/*.sh tests/lib/*.sh
       - name: Run Serving Remediation Test Suite
-        run: bash tests/adv_test_serving_remediation.sh
+        run: |
+          cp scripts/config.env.example scripts/config.env
+          sed -i 's|export PROJECT_ID="YOUR_PROJECT_ID"|export PROJECT_ID="ci-test"|' scripts/config.env
+          bash tests/adv_test_serving_remediation.sh
 
   reproducibility:
     name: Benchmark Reproducibility & Integrity Audit
@@ -142,7 +147,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck curl gettext-base
-          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          curl -sSL --fail --retry 3 https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
           sudo mv kubeconform /usr/local/bin/
       - name: Run Master E2E & Coverage Gaps Suites
         run: |
