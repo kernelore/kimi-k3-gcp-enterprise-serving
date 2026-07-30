@@ -89,6 +89,7 @@ PASSED=$((PASSED + 1))
 echo "--> Check 4: Verifying rendered YAML manifests with kubeconform..."
 if [ ! -f "scripts/config.env" ] && [ -f "scripts/config.env.example" ]; then
   cp scripts/config.env.example scripts/config.env
+  sed -i 's|export PROJECT_ID="YOUR_PROJECT_ID"|export PROJECT_ID="ci-test"|' scripts/config.env
   CLEANUP_CONFIG_ENV=true
 else
   CLEANUP_CONFIG_ENV=false
