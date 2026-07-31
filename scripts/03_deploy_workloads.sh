@@ -444,7 +444,9 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
 
     if [ -n "${GCS_WEIGHTS_BUCKET:-}" ] && [ "${GCS_WEIGHTS_BUCKET}" != "" ] && [ "${POPULATE_WEIGHTS_CACHE:-false}" != "true" ] && [ -f "${GENERATED_DIR}/02-hydrate-weights-gcs.yaml" ]; then
       echo "--> 5b. Hydrating Kimi K3 weights directly from GCS (${GCS_WEIGHTS_BUCKET})..."
-      echo "    NOTE: High-throughput transfer from GCS runs at multi-GiB/s (~2 minutes total)."
+      # Arithmetic basis: 1,560,998,983,786 bytes = 1,453.7 GiB checkpoint across 96 shards.
+      # At 1.0-2.5 GiB/s sustained parallel GCS read: 1453.7 / 2.5 = 581s (~10 min), 1453.7 / 1.0 = 1454s (~24 min).
+      echo "    NOTE: High-throughput transfer from GCS runs at 1.0-2.5 GiB/s (~10-25 minutes total for 1,453.7 GiB)."
       kubectl apply -f "${GENERATED_DIR}/02-hydrate-weights-gcs.yaml"
       echo "    You can check job logs using: kubectl logs -n llm-serving -l app=kimi-k3-weight-staging -f"
     else
@@ -453,7 +455,9 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
       fi
       echo "--> 5b. Applying Kimi K3 weight staging job from Hugging Face (${GENERATED_DIR}/02-download-weights.yaml)..."
       kubectl apply -f "${GENERATED_DIR}/02-download-weights.yaml"
-      echo "    NOTE: Hugging Face download takes ~15-20 min for 2.8T checkpoints."
+      # Arithmetic basis: 1,560,998,983,786 bytes = 1,453.7 GiB checkpoint across 96 shards.
+      # Over public internet HF CDN at 100-300 MiB/s (~0.1-0.3 GiB/s): 1453.7 / 0.3 = 1.4h (~1.5h), 1453.7 / 0.1 = 4.1h (~4h).
+      echo "    NOTE: Hugging Face download takes ~1.5-4 hours for 1,453.7 GiB checkpoint over public internet (at 100-300 MiB/s)."
       echo "    You can check job logs using: kubectl logs -n llm-serving -l app=kimi-k3-weight-staging -f"
     fi
     echo "--> Waiting for weight staging job to complete (timeout: 7200s)..."
