@@ -1,6 +1,9 @@
 #!/bin/bash
 # ==============================================================================
-# test_cases_t2.sh - Tier 2: Boundary & Corner Cases (Negative / Error Handling)
+# test_cases_t2.sh - Tier 2: Configuration Variants (Combinatorial Matrices)
+# Note: This file defines test-case functions only. Running it directly is a
+# no-op that exits 0. The test suite executes via tests/test_e2e_kimi_k3.sh,
+# which sources this file and calls run_tier_2_tests.
 # ==============================================================================
 set -euo pipefail
 

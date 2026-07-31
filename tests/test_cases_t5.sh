@@ -1,6 +1,9 @@
 #!/bin/bash
 # ==============================================================================
 # test_cases_t5.sh - Tier 5: Adversarial White-Box Coverage Hardening Suite
+# Note: This file defines test-case functions only. Running it directly is a
+# no-op that exits 0. The test suite executes via tests/test_e2e_kimi_k3.sh,
+# which sources this file and calls run_tier_5_tests.
 # ==============================================================================
 # Synthesizes and integrates all Tier 5 adversarial test cases from Challenger 1
 # and Challenger 2, closing all 14 white-box coverage gaps across templates,
@@ -145,10 +148,30 @@ t5_adv_07() {
   local sglang_yaml="${PROJECT_ROOT}/terraform/manifests/generated/09-kimi-k3-sglang-mpi.yaml"
   (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" SGLANG_PARALLEL_PROFILE="tp16" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
   assert_match '--tp-size "16"' "${sglang_yaml}" "Default SGLang render missing --tp-size 16"
+  assert_match '--ep-size "16"' "${sglang_yaml}" "Default SGLang render missing --ep-size 16"
   assert_no_match '--pp-size "2"' "${sglang_yaml}" "Default SGLang render unexpectedly contains --pp-size 2"
   (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" SGLANG_PARALLEL_PROFILE="tp8pp2" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
   assert_match '--tp-size "8"' "${sglang_yaml}" "tp8pp2 SGLang render missing --tp-size 8"
   assert_match '--pp-size "2"' "${sglang_yaml}" "tp8pp2 SGLang render missing --pp-size 2"
+  assert_match '--ep-size "8"' "${sglang_yaml}" "tp8pp2 SGLang render missing --ep-size 8"
+
+  local tmp_dir
+  tmp_dir=$(mktemp -d)
+  local tmp_cfg_ep="${tmp_dir}/config_ep.env"
+  local tmp_cfg_geom="${tmp_dir}/config_geom.env"
+
+  cp "${PROJECT_ROOT}/scripts/config.env.example" "${tmp_cfg_ep}"
+  sed -i 's/export SGLANG_EP_SIZE="[0-9]*"/export SGLANG_EP_SIZE="4"/' "${tmp_cfg_ep}"
+  assert_cmd_fails "(cd '${PROJECT_ROOT}' && CONFIG_FILE='${tmp_cfg_ep}' INFERENCE_ENGINE=sglang scripts/03_deploy_workloads.sh --render-only)" "EP guard failed to reject invalid SGLANG_EP_SIZE=4 for SGLANG_TP_SIZE=16"
+
+  cp "${PROJECT_ROOT}/scripts/config.env.example" "${tmp_cfg_geom}"
+  sed -i 's/export SGLANG_TP_SIZE="[0-9]*"/export SGLANG_TP_SIZE="4"/' "${tmp_cfg_geom}"
+  sed -i 's/export SGLANG_EP_SIZE="[0-9]*"/export SGLANG_EP_SIZE="4"/' "${tmp_cfg_geom}"
+  sed -i 's/export SGLANG_PP_SIZE="[0-9]*"/export SGLANG_PP_SIZE="1"/' "${tmp_cfg_geom}"
+  assert_cmd_fails "(cd '${PROJECT_ROOT}' && CONFIG_FILE='${tmp_cfg_geom}' INFERENCE_ENGINE=sglang scripts/03_deploy_workloads.sh --render-only)" "Geometry guard failed to reject invalid parallel geometry (SGLANG_TP_SIZE=4 * SGLANG_PP_SIZE=1)"
+
+  rm -rf "${tmp_dir}"
+
   (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
 }
 

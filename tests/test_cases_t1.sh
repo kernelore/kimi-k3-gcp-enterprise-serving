@@ -1,6 +1,9 @@
 #!/bin/bash
 # ==============================================================================
 # test_cases_t1.sh - Tier 1: Feature Coverage (Happy Path / Conformance)
+# Note: This file defines test-case functions only. Running it directly is a
+# no-op that exits 0. The test suite executes via tests/test_e2e_kimi_k3.sh,
+# which sources this file and calls run_tier_1_tests.
 # ==============================================================================
 set -euo pipefail
 

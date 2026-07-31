@@ -15,8 +15,9 @@ CANNED_NCCL_OUTPUT = """
 def eval_nccl_gate(log_text):
     cmd = """
     MARKER_LINE=$(echo "$LOG_INPUT" | grep -E "^NCCL_GATE_RESULT " | tail -n 1 || true)
+    FAIL_SEEN=$(echo "$LOG_INPUT" | grep -E "^NCCL_GATE_RESULT fail" | head -n 1 || true)
     if [ -z "$MARKER_LINE" ]; then exit 1; fi
-    if echo "$MARKER_LINE" | grep -E -q "^NCCL_GATE_RESULT fail"; then exit 1; fi
+    if [ -n "$FAIL_SEEN" ]; then exit 1; fi
     BUSBW_VAL=$(echo "$MARKER_LINE" | awk -F'busbw_gbps=' '{print $2}' | awk '{print $1}' | xargs || true)
     if [ -z "$BUSBW_VAL" ]; then exit 1; fi
     if ! echo "$BUSBW_VAL" | grep -E -q '^[0-9]+(\\.[0-9]+)?$'; then exit 1; fi
@@ -34,7 +35,9 @@ def eval_nccl_gate(log_text):
 def eval_parity_gate(log_text):
     cmd = """
     PARITY_MARKER=$(echo "$LOG_INPUT" | grep -E "^NCCL_PARITY_RESULT " | tail -n 1 || true)
+    FAIL_SEEN=$(echo "$LOG_INPUT" | grep -E "^NCCL_PARITY_RESULT fail" | head -n 1 || true)
     if [ -z "$PARITY_MARKER" ]; then exit 1; fi
+    if [ -n "$FAIL_SEEN" ]; then exit 1; fi
     if ! echo "$PARITY_MARKER" | grep -E -q "^NCCL_PARITY_RESULT pass$"; then exit 1; fi
     """
     proc = subprocess.run(
@@ -97,16 +100,27 @@ class TestNcclBandwidthParse(unittest.TestCase):
         self.assertFalse(eval_parity_gate("NCCL_PARITY_RESULT unknown\n"))
 
     def test_fail_then_pass_marker(self):
-        self.assertTrue(eval_nccl_gate("NCCL_GATE_RESULT fail\nNCCL_GATE_RESULT busbw_gbps=120.0\n"))
-        self.assertTrue(eval_parity_gate("NCCL_PARITY_RESULT fail\nNCCL_PARITY_RESULT pass\n"))
+        """Assert both gates fail if a fail marker occurs anywhere in log output, even if followed by a pass marker.
+
+        A fabric that reported failure once is not a fabric worth loading 1.5 TB of weights onto.
+        """
+        self.assertFalse(eval_nccl_gate("NCCL_GATE_RESULT fail\nNCCL_GATE_RESULT busbw_gbps=120.0\n"))
+        self.assertFalse(eval_parity_gate("NCCL_PARITY_RESULT fail\nNCCL_PARITY_RESULT pass\n"))
+
+    def test_midlog_fail_then_valid_busbw_fabric_gate_fails(self):
+        self.assertFalse(eval_nccl_gate("NCCL_GATE_RESULT fail\nsome noise\nNCCL_GATE_RESULT busbw_gbps=124.5\n"))
+
+    def test_midlog_fail_then_pass_parity_gate_fails(self):
+        self.assertFalse(eval_parity_gate("NCCL_PARITY_RESULT fail\nsome noise\nNCCL_PARITY_RESULT pass\n"))
 
     def test_pipeline_script_consistency(self):
         with open("scripts/03_deploy_workloads.sh", "r") as f:
             script_text = f.read()
         self.assertIn('grep -E "^NCCL_GATE_RESULT " | tail -n 1', script_text)
-        self.assertIn('grep -E -q "^NCCL_GATE_RESULT fail"', script_text)
+        self.assertIn('grep -E "^NCCL_GATE_RESULT fail" | head -n 1', script_text)
         self.assertIn("busbw_gbps=", script_text)
         self.assertIn('grep -E "^NCCL_PARITY_RESULT " | tail -n 1', script_text)
+        self.assertIn('grep -E "^NCCL_PARITY_RESULT fail" | head -n 1', script_text)
         self.assertIn('grep -E -q "^NCCL_PARITY_RESULT pass$"', script_text)
 
 if __name__ == "__main__":

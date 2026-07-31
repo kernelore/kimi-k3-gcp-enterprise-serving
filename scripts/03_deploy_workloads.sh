@@ -15,7 +15,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TF_DIR="${PROJECT_ROOT}/terraform"
 TEMPLATE_DIR="${TF_DIR}/manifests/templates"
 GENERATED_DIR="${TF_DIR}/manifests/generated"
-CONFIG_FILE="${SCRIPT_DIR}/config.env"
+CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.env}"
 
 if [ ! -f "${CONFIG_FILE}" ]; then
   if [ "${1:-}" = "--render-only" ] || [ "${1:-}" = "--stage-only" ]; then
@@ -184,12 +184,27 @@ export SGLANG_PARALLEL_PROFILE="${SGLANG_PARALLEL_PROFILE:-tp16}"
 if [ "${SGLANG_PARALLEL_PROFILE}" = "tp8pp2" ]; then
   export SGLANG_TP_SIZE="8"
   export SGLANG_PP_SIZE="2"
+  export SGLANG_EP_SIZE="8"
 else
   export SGLANG_TP_SIZE="${SGLANG_TP_SIZE:-16}"
   export SGLANG_PP_SIZE="${SGLANG_PP_SIZE:-1}"
+  export SGLANG_EP_SIZE="${SGLANG_EP_SIZE:-16}"
 fi
 export SGLANG_PP_LAYER_PARTITION="${SGLANG_PP_LAYER_PARTITION:-}"
-export SGLANG_EP_SIZE="${SGLANG_EP_SIZE:-16}"
+
+# Parallel-geometry validation guard
+# Note: The wider literature describes EP <= TP x DP with even divisibility; we enforce the narrower {1, TP} because those are the only values this architecture ever uses and a false reject at render time costs nothing, while a false accept costs a 16-GPU startup failure mid-incident.
+EXPECTED_TOTAL_GPUS=$(( NODES_PER_REPLICA * 8 ))
+ACTUAL_PARALLEL_GPUS=$(( SGLANG_TP_SIZE * SGLANG_PP_SIZE ))
+if [ "${ACTUAL_PARALLEL_GPUS}" -ne "${EXPECTED_TOTAL_GPUS}" ]; then
+  echo "ERROR: Invalid parallel geometry: SGLANG_TP_SIZE (${SGLANG_TP_SIZE}) * SGLANG_PP_SIZE (${SGLANG_PP_SIZE}) = ${ACTUAL_PARALLEL_GPUS}, expected ${EXPECTED_TOTAL_GPUS} (NODES_PER_REPLICA ${NODES_PER_REPLICA} * 8)." >&2
+  exit 1
+fi
+
+if [ "${SGLANG_EP_SIZE}" -ne 1 ] && [ "${SGLANG_EP_SIZE}" -ne "${SGLANG_TP_SIZE}" ]; then
+  echo "ERROR: Invalid SGLANG_EP_SIZE (${SGLANG_EP_SIZE}) for SGLANG_TP_SIZE (${SGLANG_TP_SIZE}). SGLang supports ep_size of 1 or ep_size == tp_size (EP is intra-stage: with PP=N each stage owns TP x DP GPUs and EP cannot exceed that)." >&2
+  exit 1
+fi
 export SGLANG_PORT="${SGLANG_PORT:-8000}"
 export SGLANG_MEM_FRACTION_STATIC="${SGLANG_MEM_FRACTION_STATIC:-0.85}"
 export SGLANG_SCHEDULE_POLICY="${SGLANG_SCHEDULE_POLICY:-lpm}"
@@ -296,12 +311,14 @@ else
 
   echo "    Polling NCCL RoCEv2 rank-0 pod (nccl-roce-test-0) for machine marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   MARKER_LINE=""
+  FAIL_SEEN=""
   BUSBW_VAL=""
   MAX_ATTEMPTS=$(( FABRIC_GATE_TIMEOUT_SECONDS / 5 ))
   ATTEMPT=0
   while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
     LOG_OUTPUT=$(kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test 2>/dev/null || true)
     MARKER_LINE=$(echo "${LOG_OUTPUT}" | grep -E "^NCCL_GATE_RESULT " | tail -n 1 || true)
+    FAIL_SEEN=$(echo "${LOG_OUTPUT}" | grep -E "^NCCL_GATE_RESULT fail" | head -n 1 || true)
     if [ -n "${MARKER_LINE}" ]; then
       break
     fi
@@ -316,9 +333,9 @@ else
     exit 1
   fi
 
-  if echo "${MARKER_LINE}" | grep -E -q "^NCCL_GATE_RESULT fail"; then
-    echo "ERROR: NCCL RoCEv2 verification reported failure marker (${MARKER_LINE})!" >&2
-    kubectl logs nccl-roce-test-0 -n llm-serving --tail=50 >&2 || true
+  if [ -n "${FAIL_SEEN}" ]; then
+    echo "ERROR: NCCL RoCEv2 verification reported failure marker (${FAIL_SEEN})!" >&2
+    kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test --tail=50 >&2 || true
     cleanup_fabric_pods
     exit 1
   fi
@@ -342,11 +359,13 @@ else
 
   echo "    Polling NCCL parity check rank-0 pod (nccl-parity-check-0) for parity marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   PARITY_MARKER=""
+  FAIL_SEEN=""
   MAX_ATTEMPTS=$(( FABRIC_GATE_TIMEOUT_SECONDS / 5 ))
   ATTEMPT=0
   while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
     LOG_OUTPUT=$(kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check 2>/dev/null || true)
     PARITY_MARKER=$(echo "${LOG_OUTPUT}" | grep -E "^NCCL_PARITY_RESULT " | tail -n 1 || true)
+    FAIL_SEEN=$(echo "${LOG_OUTPUT}" | grep -E "^NCCL_PARITY_RESULT fail" | head -n 1 || true)
     if [ -n "${PARITY_MARKER}" ]; then
       break
     fi
@@ -360,8 +379,8 @@ else
     cleanup_fabric_pods
     exit 1
   fi
-  if echo "${PARITY_MARKER}" | grep -E -q "^NCCL_PARITY_RESULT fail"; then
-    echo "ERROR: NCCL parity check failed: rank 0 emitted fail marker (${PARITY_MARKER})!" >&2
+  if [ -n "${FAIL_SEEN}" ]; then
+    echo "ERROR: NCCL parity check failed: rank 0 emitted fail marker (${FAIL_SEEN})!" >&2
     kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
     cleanup_fabric_pods
     exit 1
@@ -425,7 +444,9 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
 
     if [ -n "${GCS_WEIGHTS_BUCKET:-}" ] && [ "${GCS_WEIGHTS_BUCKET}" != "" ] && [ "${POPULATE_WEIGHTS_CACHE:-false}" != "true" ] && [ -f "${GENERATED_DIR}/02-hydrate-weights-gcs.yaml" ]; then
       echo "--> 5b. Hydrating Kimi K3 weights directly from GCS (${GCS_WEIGHTS_BUCKET})..."
-      echo "    NOTE: High-throughput transfer from GCS runs at multi-GiB/s (~2 minutes total)."
+      # Arithmetic basis: 1,560,998,983,786 bytes = 1,453.7 GiB checkpoint across 96 shards.
+      # At 1.0-2.5 GiB/s sustained parallel GCS read: 1453.7 / 2.5 = 581s (~10 min), 1453.7 / 1.0 = 1454s (~24 min).
+      echo "    NOTE: High-throughput transfer from GCS runs at 1.0-2.5 GiB/s (~10-25 minutes total for 1,453.7 GiB)."
       kubectl apply -f "${GENERATED_DIR}/02-hydrate-weights-gcs.yaml"
       echo "    You can check job logs using: kubectl logs -n llm-serving -l app=kimi-k3-weight-staging -f"
     else
@@ -434,7 +455,9 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
       fi
       echo "--> 5b. Applying Kimi K3 weight staging job from Hugging Face (${GENERATED_DIR}/02-download-weights.yaml)..."
       kubectl apply -f "${GENERATED_DIR}/02-download-weights.yaml"
-      echo "    NOTE: Hugging Face download takes ~15-20 min for 2.8T checkpoints."
+      # Arithmetic basis: 1,560,998,983,786 bytes = 1,453.7 GiB checkpoint across 96 shards.
+      # Over public internet HF CDN at 100-300 MiB/s (~0.1-0.3 GiB/s): 1453.7 / 0.3 = 1.4h (~1.5h), 1453.7 / 0.1 = 4.1h (~4h).
+      echo "    NOTE: Hugging Face download takes ~1.5-4 hours for 1,453.7 GiB checkpoint over public internet (at 100-300 MiB/s)."
       echo "    You can check job logs using: kubectl logs -n llm-serving -l app=kimi-k3-weight-staging -f"
     fi
     echo "--> Waiting for weight staging job to complete (timeout: 7200s)..."
