@@ -100,6 +100,14 @@ t5_adv_04() {
   # P4-5: Ensure 03_deploy_workloads.sh carries error guard and no raw fallback for REDIS_PASSWORD
   assert_match 'ERROR: Failed to obtain REDIS_PASSWORD' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Missing REDIS_PASSWORD error guard in 03_deploy_workloads.sh"
   assert_no_match 'REDIS_PASSWORD:-redis-secret-password-change-me' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Prohibited REDIS_PASSWORD default fallback found outside render-only conditional"
+
+  # F6-6: Ensure cleanup_fabric_pods covers all exit 1 paths in section 3b
+  assert_match 'cleanup_fabric_pods' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Missing cleanup_fabric_pods in 03_deploy_workloads.sh"
+  local cleanup_cnt=$(grep -c 'cleanup_fabric_pods' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" || true)
+  if [ "${cleanup_cnt}" -lt 9 ]; then
+    echo "ERROR: cleanup_fabric_pods count (${cleanup_cnt}) is less than expected 9 (definition + 8 exit/success paths)" >&2
+    return 1
+  fi
 }
 
 # T5_ADV_05: Remediated Bug Fixes Verification (ADV-T5-09, Script Syntax, and Governance)

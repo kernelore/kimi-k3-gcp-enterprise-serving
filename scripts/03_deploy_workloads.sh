@@ -272,6 +272,10 @@ echo "--> 4. Waiting for local-nvme-raid-formatter DaemonSet rollout..."
 kubectl rollout status daemonset/local-nvme-raid-formatter -n kube-system --timeout=180s || echo "WARNING: DaemonSet rollout timeout (may be waiting for spot nodes to register)."
 
 # 3b. Verify RoCEv2 Network Fabric and NCCL bus bandwidth floor (>= 100 GB/s)
+cleanup_fabric_pods() {
+  kubectl delete statefulset nccl-roce-test nccl-parity-check -n llm-serving --ignore-not-found=true >/dev/null 2>&1 || true
+}
+
 if [ "${SKIP_FABRIC_CHECK:-false}" = "true" ]; then
   echo "WARNING: SKIP_FABRIC_CHECK=true set. Bypassing RoCEv2 network fabric and NCCL bus bandwidth verification!" >&2
 else
@@ -297,25 +301,30 @@ else
   if [ -z "${MARKER_LINE}" ]; then
     echo "ERROR: NCCL RoCEv2 verification failed: marker absent from nccl-roce-test-0 at timeout (${FABRIC_GATE_TIMEOUT_SECONDS}s)!" >&2
     kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test --tail=50 >&2 || true
+    cleanup_fabric_pods
     exit 1
   fi
 
   if echo "${MARKER_LINE}" | grep -E -q "^NCCL_GATE_RESULT fail"; then
     echo "ERROR: NCCL RoCEv2 verification reported failure marker (${MARKER_LINE})!" >&2
     kubectl logs nccl-roce-test-0 -n llm-serving --tail=50 >&2 || true
+    cleanup_fabric_pods
     exit 1
   fi
   BUSBW_VAL=$(echo "${MARKER_LINE}" | awk -F'busbw_gbps=' '{print $2}' | awk '{print $1}' | xargs || true)
   if [ -z "${BUSBW_VAL}" ]; then
     echo "ERROR: NCCL RoCEv2 bus bandwidth value is empty (${MARKER_LINE})!" >&2
+    cleanup_fabric_pods
     exit 1
   fi
   if ! echo "${BUSBW_VAL}" | grep -E -q '^[0-9]+(\.[0-9]+)?$'; then
     echo "ERROR: NCCL RoCEv2 bus bandwidth value '${BUSBW_VAL}' is non-numeric or invalid!" >&2
+    cleanup_fabric_pods
     exit 1
   fi
   if ! awk -v val="${BUSBW_VAL}" 'BEGIN {exit !(val >= 100.0)}' 2>/dev/null; then
     echo "ERROR: NCCL RoCEv2 bus bandwidth (${BUSBW_VAL} GB/s) is below required 100 GB/s floor!" >&2
+    cleanup_fabric_pods
     exit 1
   fi
   echo "    [OK] NCCL RoCEv2 bus bandwidth meets >= 100 GB/s requirement (${BUSBW_VAL} GB/s)."
@@ -337,21 +346,24 @@ else
   if [ -z "${PARITY_MARKER}" ]; then
     echo "ERROR: NCCL parity check failed: marker absent from nccl-parity-check-0 at timeout (${FABRIC_GATE_TIMEOUT_SECONDS}s)!" >&2
     kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    cleanup_fabric_pods
     exit 1
   fi
   if echo "${PARITY_MARKER}" | grep -E -q "^NCCL_PARITY_RESULT fail"; then
     echo "ERROR: NCCL parity check failed: rank 0 emitted fail marker (${PARITY_MARKER})!" >&2
     kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    cleanup_fabric_pods
     exit 1
   fi
   if ! echo "${PARITY_MARKER}" | grep -E -q "^NCCL_PARITY_RESULT pass$"; then
     echo "ERROR: NCCL parity check reported failure or invalid marker (${PARITY_MARKER})!" >&2
     kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    cleanup_fabric_pods
     exit 1
   fi
   echo "    [OK] NCCL serving-image parity verified (${PARITY_MARKER})."
 
-  kubectl delete statefulset nccl-roce-test nccl-parity-check -n llm-serving --ignore-not-found=true
+  cleanup_fabric_pods
 fi
 
 # 4. Apply weights download/hydration job (if staging disk is empty or initial setup)
