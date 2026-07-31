@@ -7,7 +7,7 @@ resource "google_compute_global_address" "private_ip_alloc" {
   project       = var.project_id
   purpose       = "VPC_PEERING"
   address_type  = "INTERNAL"
-  address       = "10.200.0.0"
+  address       = "10.90.0.0"
   prefix_length = 16
   network       = var.network_id
 }
