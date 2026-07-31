@@ -119,9 +119,9 @@ t5_adv_05() {
 
 # T5_ADV_06: Weights Cache Consistency Verification (F11)
 t5_adv_06() {
-  assert_match 'force_destroy.*=.*true' "${PROJECT_ROOT}/terraform/modules/storage/main.tf" "Missing force_destroy in storage/main.tf"
+  assert_match 'force_destroy\s*=\s*true' "${PROJECT_ROOT}/terraform/modules/storage/main.tf" "Missing force_destroy = true in storage main.tf"
   assert_match 'PURGE_WEIGHTS_CACHE' "${PROJECT_ROOT}/README.md" "Missing PURGE_WEIGHTS_CACHE documentation in README.md"
-  assert_no_match 'weights-cache.*retained|weights_cache.*retained|retained.*weights-cache' "${PROJECT_ROOT}/README.md" "README improperly claims weights-cache bucket is retained"
+  assert_no_match 'retained.*weight.*cache|weight.*cache.*retained' "${PROJECT_ROOT}/README.md" "README improperly claims weight cache bucket is retained"
 }
 
 run_tier_5_tests() {
