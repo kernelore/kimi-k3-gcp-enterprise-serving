@@ -164,8 +164,12 @@ spec:
           value: "${SGLANG_QUANTIZATION}"
         - name: SGLANG_ENABLE_TORCH_COMPILE
           value: "${SGLANG_ENABLE_TORCH_COMPILE}"
-        - name: SGLANG_ATTENTION_BACKEND
-          value: "${SGLANG_ATTENTION_BACKEND}"
+        - name: SGLANG_PREFILL_ATTENTION_BACKEND
+          value: "${SGLANG_PREFILL_ATTENTION_BACKEND}"
+        - name: SGLANG_DECODE_ATTENTION_BACKEND
+          value: "${SGLANG_DECODE_ATTENTION_BACKEND}"
+        - name: SGLANG_LINEAR_ATTN_PREFILL_BACKEND
+          value: "${SGLANG_LINEAR_ATTN_PREFILL_BACKEND}"
         - name: SGLANG_CONTEXT_LENGTH
           value: "${SGLANG_CONTEXT_LENGTH}"
         - name: SGLANG_REASONING_PARSER
@@ -269,6 +273,10 @@ spec:
           NODE_RANK=${POD_INDEX:-${HOSTNAME##*-}}
           LEADER_HOST="${LEADER_ADDR}:5000"
           echo "Starting SGLang worker node rank ${NODE_RANK} connecting to leader ${LEADER_HOST}..."
+          # --trust-remote-code makes transformers materialise the Kimi K3 modelling code
+          # under HF_MODULES_CACHE. Give each rank its own directory: the default lives on
+          # the container's HOME and is not guaranteed writable or rank-private.
+          export HF_MODULES_CACHE="/tmp/hf_modules_${POD_INDEX:-0}"
           EXTRA_ARGS=""
           if [ -n "${SGLANG_QUANTIZATION}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --quantization ${SGLANG_QUANTIZATION}"
@@ -276,8 +284,24 @@ spec:
           if [ "${SGLANG_ENABLE_TORCH_COMPILE}" = "true" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --enable-torch-compile"
           fi
-          if [ -n "${SGLANG_ATTENTION_BACKEND}" ]; then
-            EXTRA_ARGS="${EXTRA_ARGS} --attention-backend ${SGLANG_ATTENTION_BACKEND}"
+          if [ -n "${SGLANG_PREFILL_ATTENTION_BACKEND}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --prefill-attention-backend ${SGLANG_PREFILL_ATTENTION_BACKEND}"
+          fi
+          # Decode stays unset by default so SGLang auto-selects. Kimi K3 is an MLA
+          # architecture to SGLang: configs/model_config.py maps
+          # KimiK3ForConditionalGeneration into the same branch as KimiLinearForCausalLM
+          # and sets attention_arch = AttentionArch.MLA, so use_mla_backend() is true.
+          # _get_default_attn_backend then resolves MLA on Blackwell/SM100 to flashinfer.
+          # Do NOT pin flashmla (Hopper kernel) and do NOT pin trtllm_mha (the SM100
+          # default for MHA architectures, which K3 is not).
+          if [ -n "${SGLANG_DECODE_ATTENTION_BACKEND}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --decode-attention-backend ${SGLANG_DECODE_ATTENTION_BACKEND}"
+          fi
+          # KDA linear-attention prefill kernel for the 69 KDA layers. SGLang admits
+          # cutedsl here only for the MLA-hybrid family (K3/KimiLinear); the engine
+          # default is triton. Blank this to fall back to the engine default.
+          if [ -n "${SGLANG_LINEAR_ATTN_PREFILL_BACKEND}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --linear-attn-prefill-backend ${SGLANG_LINEAR_ATTN_PREFILL_BACKEND}"
           fi
           if [ -n "${SGLANG_REASONING_PARSER}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --reasoning-parser ${SGLANG_REASONING_PARSER}"
@@ -285,19 +309,22 @@ spec:
           if [ -n "${SGLANG_TOOL_CALL_PARSER}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --tool-call-parser ${SGLANG_TOOL_CALL_PARSER}"
           fi
-          EXTRA_ARGS="${EXTRA_ARGS} --moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3"
-          # DAY-0: --disable-cuda-graph (or --cuda-graph-backend-decode=disabled) if CUDA graph capture OOMs occur on Blackwell during warmup; drop --mem-fraction-static to 0.80 if OOM at ~94% of weight loading
+          EXTRA_ARGS="${EXTRA_ARGS} --moe-runner-backend flashinfer_mxfp4 --kv-cache-dtype fp8_e4m3"
+          # DAY-0: drop --mem-fraction-static to 0.80 if OOM at ~94% of weight loading
           # DAY-0: --dcp-size deliberately NOT enabled. Google's a4x recipe uses --dcp-size 16 on NVL72 (~900 GB/s all-to-all).
           # On our 2-node RoCEv2 fabric (100 GB/s floor) DCP's per-decode-step collectives land on the critical path,
           # and only the 24 MLA layers hold the KV context it shards (69 KDA layers hold fixed-size recurrent state).
           # Revisit only if first-deployment measurement shows decode is memory-bound rather than interconnect-bound.
           if [ -z "${SGLANG_PP_LAYER_PARTITION:-}" ]; then unset SGLANG_PP_LAYER_PARTITION; fi
           # Multi-node loading of the 1.56 TB checkpoint can exceed the default distributed-init timeout
+          # --mamba-full-memory-ratio provenance: AI-Hypercomputer/gpu-recipes
+          # a4x/multi-host-serving/sglang (4-node A4X/GB200 TP16 config). Sizes the KDA
+          # recurrent-state pool; must be re-measured on our 2-node A4/B200 topology at
+          # first deployment. NOTE: comments must stay outside the backslash-continued
+          # command below -- a '#' on a continued line silently truncates the argv.
           exec python3 -m sglang.launch_server \
             --model-path /mnt/rox/Kimi-K3 \
             --served-model-name moonshotai/Kimi-K3 \
-            # Provenance: AI-Hypercomputer/gpu-recipes a4x/multi-host-serving/sglang (4-node A4X/GB200 TP16 config)
-            # Sizes KDA recurrent-state pool; must be re-measured on 2-node A4/B200 topology at first deployment
             --mamba-full-memory-ratio 7.21 \
             --dist-init-addr "${LEADER_HOST}" \
             --dist-timeout 3600 \
