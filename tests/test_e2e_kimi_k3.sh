@@ -43,15 +43,31 @@ fi
 # Whatever ran last would otherwise be left on disk, so a later `kubectl apply -f` or manual
 # diff against the generated tree would read manifests built for the wrong engine and a
 # nonexistent project. Re-render for the configured engine before reporting the summary.
+# shellcheck disable=SC2317  # invoked indirectly from the EXIT trap below
 restore_configured_render() {
   if [ -f "${PROJECT_ROOT}/scripts/config.env" ]; then
     (cd "${PROJECT_ROOT}" && ./scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1) || true
   fi
 }
 
-# Preserve the real exit code across the restore: on_exit reads $? and must not see the
-# render's status. `(exit N)` re-arms $? for the call that follows.
-trap 'E2E_RC=$?; restore_configured_render; (exit ${E2E_RC}); on_exit' EXIT
+# Single named handler rather than a compound trap string, so the exit-code juggling below
+# stays readable and testable.
+# shellcheck disable=SC2317  # invoked indirectly from the EXIT trap below
+e2e_on_exit() {
+  local rc=$?
+  # errexit is still active inside the handler, and the `(exit "${rc}")` below is a
+  # deliberately-failing command on the failure path. Without this, set -e aborts the
+  # handler at that line and on_exit never runs -- no summary, no TEST_SUMMARY.log,
+  # exactly when a failing run needs them most.
+  set +e
+  restore_configured_render
+  # on_exit reads $? itself, so re-arm it with the suite's real code -- otherwise the
+  # restore's own (successful) status would be reported as the suite result.
+  (exit "${rc}")
+  on_exit
+}
+
+trap e2e_on_exit EXIT
 
 # Default tier selections
 RUN_TIER_1=0
