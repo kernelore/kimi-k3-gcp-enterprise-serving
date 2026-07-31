@@ -98,6 +98,8 @@ workbench/
 *.md
 !README.md
 !docs/PHASE6_RUNBOOK.md
+!docs/PR_BODY_hardening-v4.md
+!docs/PR_BODY_hardening-v4.md
 .*md
 .*.md
 .*.md.*

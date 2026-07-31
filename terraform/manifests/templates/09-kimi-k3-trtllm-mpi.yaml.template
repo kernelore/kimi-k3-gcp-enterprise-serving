@@ -134,6 +134,8 @@ spec:
           value: "eth0"
         - name: GLOO_SOCKET_IFNAME
           value: "eth0"
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "expandable_segments:True"
         - name: MIN_WEIGHTS_GIB
           value: "${MIN_WEIGHTS_GIB}"
         - name: EXPECTED_MODEL_ARCHITECTURE

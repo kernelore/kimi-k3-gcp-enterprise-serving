@@ -107,12 +107,13 @@ def check_floors():
                     print(f"ERROR: Could not find action pin for '{dep}' in {rel_path}", file=sys.stderr)
                     failed = True
                     continue
-                for actual_str in matches:
-                    actual_int = int(actual_str)
-                    if actual_int < int(floor_val):
-                        print(f"ERROR: Floor violation in {rel_path}: '{dep}@v{actual_str}' is below floor v{floor_val}!", file=sys.stderr)
-                        failed = True
-                    else:
+                if not check_workflow_content(content, dep, floor_val):
+                    for actual_str in matches:
+                        if int(actual_str) < int(floor_val):
+                            print(f"ERROR: Floor violation in {rel_path}: '{dep}@v{actual_str}' is below floor v{floor_val}!", file=sys.stderr)
+                    failed = True
+                else:
+                    for actual_str in matches:
                         print(f"    [OK] {rel_path}: {dep}@v{actual_str} (>= floor v{floor_val})")
             
             elif "google/cloud-sdk" in dep:

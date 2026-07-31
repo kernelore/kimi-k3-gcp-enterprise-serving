@@ -4,10 +4,10 @@ import subprocess
 import unittest
 
 CANNED_NCCL_OUTPUT = """
-#                                           out-of-place                       in-place          
-#       size         count      type   op    time  algbw  busbw #wrong     time  algbw  busbw #wrong
-#        (B)    (elements)                   (us) (GB/s) (GB/s)          (us) (GB/s) (GB/s)
-  1073741824     268435456     float  sum  20480  52.43 124.50      0    20490  52.40 124.45      0
+#                                                                           out-of-place                       in-place          
+#       size         count      type   redop  root    time  algbw  busbw #wrong     time  algbw  busbw #wrong
+#        (B)    (elements)                            (us) (GB/s) (GB/s)          (us) (GB/s) (GB/s)
+  1073741824     268435456     float    sum    -1  20480  52.43 124.50      0    20490  52.40 124.45      0
 # Out of bounds values : 0 fatal 0 warn 0 total
 # Avg bus bandwidth    : 124.5
 """
@@ -95,6 +95,19 @@ class TestNcclBandwidthParse(unittest.TestCase):
 
     def test_parity_invalid_marker(self):
         self.assertFalse(eval_parity_gate("NCCL_PARITY_RESULT unknown\n"))
+
+    def test_fail_then_pass_marker(self):
+        self.assertTrue(eval_nccl_gate("NCCL_GATE_RESULT fail\nNCCL_GATE_RESULT busbw_gbps=120.0\n"))
+        self.assertTrue(eval_parity_gate("NCCL_PARITY_RESULT fail\nNCCL_PARITY_RESULT pass\n"))
+
+    def test_pipeline_script_consistency(self):
+        with open("scripts/03_deploy_workloads.sh", "r") as f:
+            script_text = f.read()
+        self.assertIn('grep -E "^NCCL_GATE_RESULT " | tail -n 1', script_text)
+        self.assertIn('grep -E -q "^NCCL_GATE_RESULT fail"', script_text)
+        self.assertIn("busbw_gbps=", script_text)
+        self.assertIn('grep -E "^NCCL_PARITY_RESULT " | tail -n 1', script_text)
+        self.assertIn('grep -E -q "^NCCL_PARITY_RESULT pass$"', script_text)
 
 if __name__ == "__main__":
     unittest.main()

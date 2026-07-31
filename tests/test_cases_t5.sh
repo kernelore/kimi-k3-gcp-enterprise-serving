@@ -68,6 +68,9 @@ t5_adv_02() {
 
   assert_match 'MODEL_REPO_ID|Kimi-K3|moonshot' "${PROJECT_ROOT}/terraform/manifests/templates/02-download-weights.yaml.template" "Missing HuggingFace target model repo in download template"
   assert_match 'gsutil|gcloud|GCS_BUCKET' "${PROJECT_ROOT}/terraform/manifests/templates/02-hydrate-weights-gcs.yaml.template" "Missing GCS transfer tooling in hydration template"
+  assert_match 'fla-core' "${PROJECT_ROOT}/docker/Dockerfile.sglang" "Missing fla-core requirement in docker/Dockerfile.sglang"
+  assert_match '--served-model-name moonshotai/Kimi-K3' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-sglang-mpi.yaml.template" "Missing --served-model-name in SGLang template"
+  assert_no_match '^\s*--dcp-size' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-sglang-mpi.yaml.template" "Prohibited active --dcp-size flag found in SGLang exec line"
 }
 
 # T5_ADV_03: Gateway, Observability, HPA, and MoE Compilation Specializations
@@ -98,6 +101,19 @@ t5_adv_04() {
   # P4-5: Ensure 03_deploy_workloads.sh carries error guard and no raw fallback for REDIS_PASSWORD
   assert_match 'ERROR: Failed to obtain REDIS_PASSWORD' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Missing REDIS_PASSWORD error guard in 03_deploy_workloads.sh"
   assert_no_match 'REDIS_PASSWORD:-redis-secret-password-change-me' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Prohibited REDIS_PASSWORD default fallback found outside render-only conditional"
+
+  # F6-6: Ensure cleanup_fabric_pods covers all exit 1 paths in section 3b
+  assert_match 'cleanup_fabric_pods' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Missing cleanup_fabric_pods in 03_deploy_workloads.sh"
+  local cleanup_cnt
+  cleanup_cnt=$(grep -c 'cleanup_fabric_pods' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" || true)
+  if [ "${cleanup_cnt}" -lt 9 ]; then
+    echo "ERROR: cleanup_fabric_pods count (${cleanup_cnt}) is less than expected 9 (definition + 8 exit/success paths)" >&2
+    return 1
+  fi
+
+  # F6-13: LIVE_VALIDATION=yes guard assertion
+  assert_match 'LIVE_VALIDATION' "${PROJECT_ROOT}/scripts/02_deploy_infra.sh" "Missing LIVE_VALIDATION guard in 02_deploy_infra.sh"
+  assert_match 'LIVE_VALIDATION' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Missing LIVE_VALIDATION guard in 03_deploy_workloads.sh"
 }
 
 # T5_ADV_05: Remediated Bug Fixes Verification (ADV-T5-09, Script Syntax, and Governance)
@@ -117,11 +133,23 @@ t5_adv_05() {
   done
 }
 
-# T5_ADV_06: Weights Cache Consistency Verification (F11)
+# T5_ADV_06: Weights Backup Consistency Verification (P7-1)
 t5_adv_06() {
-  assert_match 'force_destroy\s*=\s*true' "${PROJECT_ROOT}/terraform/modules/storage/main.tf" "Missing force_destroy = true in storage main.tf"
-  assert_match 'PURGE_WEIGHTS_CACHE' "${PROJECT_ROOT}/README.md" "Missing PURGE_WEIGHTS_CACHE documentation in README.md"
-  assert_no_match 'retained.*weight.*cache|weight.*cache.*retained' "${PROJECT_ROOT}/README.md" "README improperly claims weight cache bucket is retained"
+  assert_match 'PURGE_WEIGHTS_BACKUP' "${PROJECT_ROOT}/README.md" "Missing PURGE_WEIGHTS_BACKUP documentation in README.md"
+  assert_no_match 'resource\s+"google_storage_bucket"\s+"[^"]*weights' "${PROJECT_ROOT}/terraform/modules/storage/main.tf" "terraform/modules/storage/main.tf declares a google_storage_bucket for weights"
+  assert_match 'PURGE_WEIGHTS_BACKUP.*true.*FORCE_DESTROY.*true|FORCE_DESTROY.*true.*PURGE_WEIGHTS_BACKUP.*true' "${PROJECT_ROOT}/scripts/06_destroy_all.sh" "scripts/06_destroy_all.sh must require both PURGE_WEIGHTS_BACKUP=true and FORCE_DESTROY=true to delete weights backup bucket"
+}
+
+# T5_ADV_07: SGLang Parallel Profile Verification (P7-2)
+t5_adv_07() {
+  local sglang_yaml="${PROJECT_ROOT}/terraform/manifests/generated/09-kimi-k3-sglang-mpi.yaml"
+  (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" SGLANG_PARALLEL_PROFILE="tp16" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
+  assert_match '--tp-size "16"' "${sglang_yaml}" "Default SGLang render missing --tp-size 16"
+  assert_no_match '--pp-size "2"' "${sglang_yaml}" "Default SGLang render unexpectedly contains --pp-size 2"
+  (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" SGLANG_PARALLEL_PROFILE="tp8pp2" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
+  assert_match '--tp-size "8"' "${sglang_yaml}" "tp8pp2 SGLang render missing --tp-size 8"
+  assert_match '--pp-size "2"' "${sglang_yaml}" "tp8pp2 SGLang render missing --pp-size 2"
+  (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
 }
 
 run_tier_5_tests() {
@@ -132,4 +160,5 @@ run_tier_5_tests() {
   run_test_case "T5_ADV_04_Remediated_Script_Security_Network_Isolation" t5_adv_04
   run_test_case "T5_ADV_05_Benchmark_Exception_Resilience_Syntax" t5_adv_05
   run_test_case "T5_ADV_06_Weights_Cache_Consistency" t5_adv_06
+  run_test_case "T5_ADV_07_SGLang_Parallel_Profile" t5_adv_07
 }

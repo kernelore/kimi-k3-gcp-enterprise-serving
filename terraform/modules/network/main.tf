@@ -59,7 +59,7 @@ resource "google_compute_firewall" "allow_internal_primary_vpc" {
     protocol = "icmp"
   }
 
-  source_ranges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  source_ranges = ["10.10.0.0/16", "10.64.0.0/14", "10.80.0.0/20"]
 }
 
 resource "google_compute_firewall" "allow_ssh_roce_primary" {

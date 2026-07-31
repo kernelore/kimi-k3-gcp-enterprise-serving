@@ -33,6 +33,7 @@ t1_f1_05() {
       assert_no_match 'glm52|glm-5|NVFP4|vllm' "${PROJECT_ROOT}/${f}" "Prohibited legacy model string in root file ${f}"
     fi
   done
+  assert_no_match '1,130|42 concurrent' "${PROJECT_ROOT}/README.md" "Stale KV cache arithmetic 1,130 GB or 42 concurrent found in README.md"
 }
 
 # F2: Docker Container Runtimes & Python Benchmark Harnesses
@@ -145,6 +146,7 @@ t1_f5_03() {
     if [ -f "${f}" ]; then
       assert_match "set_nccl_env.sh" "${f}" "Missing set_nccl_env.sh in ${f}"
       assert_match "GLOO_SOCKET_IFNAME" "${f}" "Missing GLOO_SOCKET_IFNAME in ${f}"
+      assert_match "expandable_segments" "${f}" "Missing expandable_segments in ${f}"
     fi
   done
   assert_match "GLOO_SOCKET_IFNAME" "${PROJECT_ROOT}/terraform/manifests/templates/00c-nccl-test-job.yaml.template" "Missing GLOO_SOCKET_IFNAME in 00c template"
@@ -176,7 +178,7 @@ t1_f6_01() {
 t1_f6_02() {
   # Scans all directories under KIMI3_GCPA4/ to assert zero .md files exist except authorized documentation (ignoring .agents, .gemini, .venv, .git, .terraform)
   local md_files
-  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md', 'PHASE6_RUNBOOK.md')])")
+  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md', 'PHASE6_RUNBOOK.md', 'PR_BODY_hardening-v4.md')])")
   assert_equals "[]" "${md_files}" "Unauthorized markdown files found in project: ${md_files}"
 }
 

@@ -115,7 +115,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-kimi-k3-2.8t-mxfp4}"
+export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-moonshotai/Kimi-K3}"
 
 echo "=============================================================================="
 echo "Kimi K3 Sovereign Enterprise Inference - Benchmark Execution Suite"

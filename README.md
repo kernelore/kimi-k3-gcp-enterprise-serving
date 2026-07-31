@@ -1,4 +1,4 @@
-# Enterprise Inference Architecture
+# KIMI K3 Enterprise Inference Architecture
 
 [![Google Cloud](https://img.shields.io/badge/Google_Cloud-Blackwell_B200-4285F4?style=flat-square&logo=googlecloud&logoColor=white)](https://cloud.google.com/compute/docs/gpus)
 [![NVIDIA](https://img.shields.io/badge/NVIDIA-MXFP4_MoE-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/)
@@ -103,17 +103,13 @@ For both SGLang (TP=16, PP=1, EP=16) and TensorRT-LLM (TP=8, PP=2, EP=8), the vo
 
 ### 2. Serving VRAM Footprint (V<sub>total</sub>)
 
-Total serving VRAM across a distributed replica pool must satisfy static model weights, dynamic activation buffers in `MXFP8`, PagedAttention KV cache, and CUDA/TensorRT runtime overhead:
+Total serving VRAM across a distributed replica pool is derived step-by-step from static model weight allocation and memory fraction limits:
 
-$$V_{\text{total}} = V_{\text{weights (MXFP4)}} + V_{\text{activations (MXFP8)}} + V_{\text{CUDA/TRT-LLM runtime}} + V_{\text{KV-cache pool}}$$
-
-$$V_{\text{total}} \approx 1,400\,\text{GB} + 150\,\text{GB} + 200\,\text{GB} + 1,130\,\text{GB} = 2,880\,\text{GB HBM3e}$$
-
-Across a **2-Node Blackwell Replica Pool (`16x B200 HGX GPUs`)**, aggregate high-bandwidth memory is:
-
-$$V_{\text{pool}} = 2\,\text{nodes} \times 8\,\text{GPUs/node} \times 180\,\text{GB/GPU} = 2,880\,\text{GB HBM3e (1,440 GB/node)}$$
-
-Subtracting static weights (1,400 GB), activation buffers (150 GB), and CUDA/TRT-LLM runtime overhead (200 GB) leaves **1,130 GB of dedicated HBM3e memory for PagedAttention KV Cache** across the 16 GPUs (~70.6 GB KV cache per GPU).
+- **Total HBM Pool**: 16 × B200 × 180 GB = **2,880 GB** (1,440 GB per node)
+- **Checkpoint Weight Sharding**: 1,560.94 GB checkpoint / 16 GPUs = **97.6 GB/GPU** of weights
+- **Static Pool Sizing (`--mem-fraction-static 0.85`)**: 0.85 × 180 GB = **153 GB/GPU** static pool
+- **KV/State Headroom per GPU**: 153 GB − 97.6 GB = **55.4 GB/GPU**
+- **Aggregate KV Cache Pool**: 55.4 GB × 16 GPUs ≈ **887 GB**
 
 ### 3. Concurrent 128k Context Session Capacity
 
@@ -121,14 +117,14 @@ For an active context window of 128,000 tokens (128k), assuming FP8 KV cache qua
 
 $$\text{KV Footprint per 128k Session} \approx 26.9\,\text{GB}$$
 
-$$\text{Max Concurrent 128k Sessions per Replica} = \left\lfloor \frac{1,130\,\text{GB}}{26.9\,\text{GB}} \right\rfloor = 42\text{ concurrent streams}$$
+$$\text{Max Concurrent 128k Sessions per Replica} = \left\lfloor \frac{887\,\text{GB}}{26.9\,\text{GB}} \right\rfloor = 32\text{ concurrent streams}$$
 *Estimate, pending release.*
 
-$$\text{Concurrent 128k Sessions per GPU} \approx 2.6\text{ streams/GPU}$$
+$$\text{Concurrent 128k Sessions per GPU} \approx 2.0\text{ streams/GPU}$$
 *Estimate, pending release.*
 
 > [!NOTE]
-> **KDA Recurrent State vs. KV Caching Caveat:** The KDA recurrent-state component across Kimi K3's 69 linear attention layers makes per-session memory far flatter in context length than pure-attention models. While the $\approx 26.9\,\text{GB}$ per 128k session derivation estimates roughly 42 concurrent sessions per replica, first-deployment measurement supersedes the math.
+> **KDA Recurrent State vs. KV Caching Caveat:** The KDA recurrent-state component across Kimi K3's 69 linear attention layers makes per-session memory far flatter in context length than pure-attention models. While the $\approx 26.9\,\text{GB}$ per 128k session derivation estimates roughly 32 concurrent sessions per replica, first-deployment measurement supersedes the math.
 
 ### 4. Cluster Capacity Scaling Reference Table (DP=N Replicas)
 
@@ -136,10 +132,10 @@ While **1x 2-Node Replica (DP=1, 16x B200 GPUs) serves as the turnkey MVP baseli
 
 | Cluster Scale (DP=N Replicas) | Physical Nodes (`a4-highgpu-8g`) | Total B200 GPUs | Total HBM3e Memory | Dedicated KV Cache Pool | Max Concurrent 128k Streams (*estimate, pending release*) | Aggregate Output Throughput |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1x Replica (DP=1, MVP Baseline)** | 2 Nodes | 16 | 2,880 GB (180 GB/GPU) | 1,130 GB | ~42 sessions | 1.0x (R<sub>base</sub>) |
-| **2x Replicas (DP=2)** | 4 Nodes | 32 | 5,760 GB | 2,260 GB | ~84 sessions | 2.0x (2 R<sub>base</sub>) |
-| **4x Replicas (DP=4)** | 8 Nodes | 64 | 11,520 GB | 4,520 GB | ~168 sessions | 4.0x (4 R<sub>base</sub>) |
-| **Nx Replicas (DP=N)** | 2N Nodes | 16N | N x 2,880 GB | N x 1,130 GB | N x 42 sessions | Nx (N R<sub>base</sub>) |
+| **1x Replica (DP=1, MVP Baseline)** | 2 Nodes | 16 | 2,880 GB (180 GB/GPU) | 887 GB | ~32 sessions | 1.0x (R<sub>base</sub>) |
+| **2x Replicas (DP=2)** | 4 Nodes | 32 | 5,760 GB | 1,774 GB | ~64 sessions | 2.0x (2 R<sub>base</sub>) |
+| **4x Replicas (DP=4)** | 8 Nodes | 64 | 11,520 GB | 3,548 GB | ~128 sessions | 4.0x (4 R<sub>base</sub>) |
+| **Nx Replicas (DP=N)** | 2N Nodes | 16N | N x 2,880 GB | N x 887 GB | N x 32 sessions | Nx (N R<sub>base</sub>) |
 
 > **Per-GPU Normalization Rule:** In all benchmark normalization calculations and performance reporting, aggregate cluster throughput must be divided by **`16.0`** (for a 1-replica 2-node pool) rather than 8.0, reflecting the 16x B200 GPUs required to host Kimi K3's 2.8T parameter footprint.
 
@@ -207,6 +203,9 @@ significantly:
         GPUDirect RDMA over RoCEv2 (tuned via GKE gIB `set_nccl_env.sh`) for high-speed inter-host tensor passing
         across the 16x B200 GPUs.
     -   **Performance Optimizations**: Utilizes `--moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3` with RadixAttention prefix caching. Note that prefix caching reuse benefits only the 24 MLA attention layers; the 69 KDA linear recurrent state layers are not prefix-shareable.
+    -   **Parallelism Profiles (`SGLANG_PARALLEL_PROFILE`)**: Supports `tp16` (default `--tp-size 16`, confining all parallelism to TP/EP=16 across 16 GPUs) and `tp8pp2` (fallback `--tp-size 8 --pp-size 2` when inter-node RoCEv2 interconnect proves throughput-bound, confining TP all-reduce collectives to NVLink within each node and transferring pipeline activations over RoCE).
+        - *When to flip*: Flip to `tp8pp2` if inter-node all-reduce over RoCEv2 is measured as the primary latency bottleneck at first deployment.
+        - *Uneven Layer Split Caveat*: Kimi-K3 has `num_hidden_layers = 93` (an odd number), so PP=2 automatic split is uneven by construction. Furthermore, full-attention (MLA) layers occur at every 4th layer plus the last (`text_config.linear_attn_config.full_attn_layers`), causing the two pipeline stages to receive unequal MLA counts and unequal KV-cache memory. Environment variable `SGLANG_PP_LAYER_PARTITION` exists to override the automatic split, and the correct partition is `TBD — to be measured at first deployment`.
 
 2.  **NVIDIA TensorRT-LLM (Experimental Option | `INFERENCE_ENGINE="trtllm"`)**:
 
@@ -262,7 +261,7 @@ Feature / Metric              | SGLang (`sglang`)                               
 
 ---
 
-## 📦 Hybrid 3-Tier Storage Co-Design & Weight Cache Lifecycle
+## 📦 Hybrid 3-Tier Storage Co-Design & Weight Backup Lifecycle
 
 To eliminate multi-hour weight downloads when scaling compute pods (the volume holds weights only; TRT-LLM PyTorch backend loads checkpoints directly without pre-compiled engine files), the architecture implements a hybrid 3-tier storage co-design:
 
@@ -282,26 +281,26 @@ To eliminate multi-hour weight downloads when scaling compute pods (the volume h
                                                   ^
                                                   | (High-Speed Backup Hydration @ *TBD — to be measured at first deployment*)
 +---------------------------------------------------------------------------------------------------+
-|                   Tier 3: Cloud Storage (GCS) Backup Cache Bucket                                 |
-|  - URI: `gs://<project>-kimi-k3-weights-backup/mxfp4` | Cost: ~$40/month (outside TF state)       |
+|                   Tier 3: Cloud Storage (GCS) Weight Backup Bucket                                |
+|  - URI: `gs://<project>-kimi-k3-weights-backup` | Cost: ~$40/month (outside TF state)             |
 |  - Content: Persistent backup of verified weight shards for rapid disaster recovery hydration (*TBD — to be measured at first deployment*) |
 +---------------------------------------------------------------------------------------------------+
 ```
 
-### Weight Cache Hydration Lifecycle
+### Weight Backup Hydration Lifecycle
 
-When deploying a fresh cluster or recovering from a disaster, downloading 1,453.7 GiB of weights from external model hubs can take hours. Using a pre-populated GCS weight cache bucket (`Tier 3`), the automated hydration job (`02-hydrate-weights-gcs.yaml.template`) transfers the entire 1,453.7 GiB weight footprint into the 2,000 GB Hyperdisk ML volume in ***TBD — to be measured at first deployment*** (hydration throughput scales with hyperdisk_ml_throughput_mibps (default 24,576 MiB/s; 6,144 MiB/s is a known-good fallback if regional quota is unavailable)).
+When deploying a fresh cluster or recovering from a disaster, downloading 1,453.7 GiB of weights from external model hubs can take hours. Using a pre-populated GCS weight backup bucket (`Tier 3`), the automated hydration job (`02-hydrate-weights-gcs.yaml.template`) transfers the entire 1,453.7 GiB weight footprint into the 2,000 GB Hyperdisk ML volume in ***TBD — to be measured at first deployment*** (hydration throughput scales with hyperdisk_ml_throughput_mibps (default 24,576 MiB/s; 6,144 MiB/s is a known-good fallback if regional quota is unavailable)).
 
 #### Operational Seeding & Hydration Commands
 
 ```bash
-# 1. Standard deploy leveraging an existing GCS weight cache bucket
-export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-kimi-k3-weights-cache/mxfp4"
+# 1. Standard deploy leveraging an existing GCS weight backup bucket
+export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-kimi-k3-weights-backup"
 ./scripts/03_deploy_workloads.sh
 
-# 2. Automatically populate / seed the GCS cache after an initial Hugging Face download
+# 2. Automatically populate / seed the GCS weight backup after an initial Hugging Face download
 export POPULATE_WEIGHTS_CACHE="true"
-export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-kimi-k3-weights-cache/mxfp4"
+export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-kimi-k3-weights-backup"
 ./scripts/03_deploy_workloads.sh
 
 # 3. Force re-staging of model weight shards (flips volume back to ReadWrite mode temporarily)
@@ -311,9 +310,9 @@ export FORCE_WEIGHT_JOB="true"
 
 #### Complete Teardown & State Bucket Retention
 
-By default, `./scripts/06_destroy_all.sh` and `terraform destroy` remove all Terraform-managed resources—including the GKE cluster, RoCEv2 network, Cloud SQL instance, Hyperdisk ML ReadOnlyMany (`ROX`) volume, and GCS weight cache bucket—to ensure zero ongoing cloud spend. For temporary overnight pauses that retain weights and disks, use the scheduled evening turndown CronJob or scale the serving StatefulSet to 0.
+By default, `./scripts/06_destroy_all.sh` and `terraform destroy` remove all Terraform-managed resources—including the GKE cluster, RoCEv2 network, Cloud SQL instance, and Hyperdisk ML ReadOnlyMany (`ROX`) volume—to ensure zero ongoing cloud spend. For temporary overnight pauses that retain weights and disks, use the scheduled evening turndown CronJob or scale the serving StatefulSet to 0.
 
-The only GCS bucket retained after `./scripts/06_destroy_all.sh` is the out-of-band Terraform remote state bucket (`gs://${PROJECT_ID}-kimi-k3-tfstate`), listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To explicitly delete the state bucket when no longer needed:
+There are two GCS buckets retained after `./scripts/06_destroy_all.sh`: the out-of-band Terraform remote state bucket (`gs://${PROJECT_ID}-kimi-k3-tfstate`) and the out-of-band weight backup bucket (`gs://${PROJECT_ID}-kimi-k3-weights-backup`), both listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To explicitly delete retained buckets when no longer needed:
 
 ```bash
 # Delete the out-of-band Terraform remote state bucket
@@ -561,11 +560,11 @@ workloads, release Persistent Volumes, and run `terraform destroy`:
     SDN propagation delay occurs.
 3.  Proactively cleans up the 2,000 GB Hyperdisk ML ReadOnlyMany (`ROX`) volume
     and local NVMe scratch arrays.
-4.  Supports `PURGE_WEIGHTS_CACHE=true` for explicit pre-destroy weight cache bucket purge (the bucket is in any case destroyed by `terraform destroy` since `force_destroy = true`).
+4.  Supports `PURGE_WEIGHTS_BACKUP=true` (when set alongside `FORCE_DESTROY=true`) for explicit pre-destroy weight backup bucket purge (out-of-band bucket is not destroyed by `terraform destroy`).
 
 ### Retained Storage & Bucket Purge Guide
 
-`./scripts/06_destroy_all.sh` executes `terraform destroy`, which deletes all Terraform-managed resources including the GCS weight cache bucket and Hyperdisk ML volume. The only bucket remaining is the out-of-band Terraform remote state bucket, which is listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To completely remove the state bucket:
+`./scripts/06_destroy_all.sh` executes `terraform destroy`, which deletes all Terraform-managed resources including the Hyperdisk ML volume. There are now **two** retained out-of-band buckets: the Terraform remote state bucket (`gs://${PROJECT_ID}-kimi-k3-tfstate`) and the weight backup bucket (`gs://${PROJECT_ID}-kimi-k3-weights-backup`), which are listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To completely remove retained storage:
 
 ```bash
 # 1. Purge and delete the Terraform remote state bucket
@@ -574,6 +573,6 @@ gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-tfstate"
 # 2. Purge and delete the Trajectory audit backup bucket
 gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-trajectories"
 
-# 3. (Optional) Delete custom GCS weight cache bucket if created
+# 3. (Optional) Delete out-of-band GCS weight backup bucket if created
 gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-weights-backup"
 ```

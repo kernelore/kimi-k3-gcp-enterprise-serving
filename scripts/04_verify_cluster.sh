@@ -21,7 +21,7 @@ fi
 source "${CONFIG_FILE}"
 
 : "${PROJECT_ROOT}"
-export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-kimi-k3-2.8t-mxfp4}"
+export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-moonshotai/Kimi-K3}"
 export INFERENCE_ENGINE="${INFERENCE_ENGINE:-sglang}"
 if [ "${INFERENCE_ENGINE}" = "sglang" ]; then
   ENGINE_CONTAINER="sglang-mpi-node"

@@ -109,11 +109,6 @@ resource "google_storage_bucket_iam_member" "trajectory_writer" {
   member = "serviceAccount:${google_service_account.serving_sa.email}"
 }
 
-resource "google_storage_bucket_iam_member" "weights_cache_writer" {
-  bucket = var.weights_cache_bucket_name
-  role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${google_service_account.serving_sa.email}"
-}
 
 resource "google_project_iam_member" "artifact_reader" {
   project = var.project_id

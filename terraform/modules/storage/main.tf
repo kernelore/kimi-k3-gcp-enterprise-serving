@@ -43,20 +43,6 @@ resource "google_storage_bucket" "trajectory_bucket" {
   }
 }
 
-# Persistent Weights Cache Bucket (force_destroy=true ensures complete teardown on terraform destroy)
-resource "google_storage_bucket" "weights_cache" {
-  name                        = "${var.project_id}-${var.model_family}-weights-cache"
-  location                    = var.region
-  project                     = var.project_id
-  force_destroy               = true
-  uniform_bucket_level_access = true
-
-  labels = {
-    env   = var.env_label
-    owner = var.owner_label
-    ttl   = var.ttl_label
-  }
-}
 
 # Sovereign Artifact Registry Repository for Kimi K3 Container Images
 resource "google_artifact_registry_repository" "kimi_repo" {

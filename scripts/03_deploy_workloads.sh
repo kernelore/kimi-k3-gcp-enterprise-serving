@@ -46,7 +46,8 @@ validate_hf_token() {
 }
 
 export MODEL_REPO_ID="${MODEL_REPO_ID:-moonshotai/Kimi-K3}"
-export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-kimi-k3-2.8t-mxfp4}"
+export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-moonshotai/Kimi-K3}"
+export FABRIC_GATE_TIMEOUT_SECONDS="${FABRIC_GATE_TIMEOUT_SECONDS:-900}"
 export TRTLLM_TP_SIZE="${TRTLLM_TP_SIZE:-8}"
 export TRTLLM_PP_SIZE="${TRTLLM_PP_SIZE:-2}"
 export TRTLLM_EP_SIZE="${TRTLLM_EP_SIZE:-8}"
@@ -98,6 +99,11 @@ export HF_TOKEN_BASE64
 export GATEWAY_MASTER_KEY="${GATEWAY_MASTER_KEY:-sk-kimi-k3-master-secret-key-change-me}"
 export DB_PASSWORD="${DB_PASSWORD:-kimi-k3-gateway-admin-secret}"
 if [ "${1:-}" != "--render-only" ] && [ "${1:-}" != "--stage-only" ]; then
+  if [ "${LIVE_VALIDATION:-no}" != "yes" ]; then
+    echo "ERROR: refusing to create billable GCP resources without LIVE_VALIDATION=yes" >&2
+    echo "Would have deployed workload manifests and inference engine StatefulSets to cluster '${CLUSTER_NAME:-unknown}' in project '${PROJECT_ID:-unknown}'." >&2
+    exit 1
+  fi
   if [ "${GATEWAY_MASTER_KEY}" = "sk-kimi-k3-master-secret-key-change-me" ]; then
     echo "ERROR: GATEWAY_MASTER_KEY must be set to a secure secret outside render-only/stage-only mode!" >&2
     echo "ERROR: Failed to obtain GATEWAY_MASTER_KEY (insecure default detected)" >&2
@@ -174,8 +180,14 @@ fi
 export DB_CONNECTION_NAME
 
 export TRTLLM_VIP="kimi-k3-serving-svc.llm-serving.svc.cluster.local"
-export SGLANG_TP_SIZE="${SGLANG_TP_SIZE:-16}"
-export SGLANG_PP_SIZE="${SGLANG_PP_SIZE:-1}"
+export SGLANG_PARALLEL_PROFILE="${SGLANG_PARALLEL_PROFILE:-tp16}"
+if [ "${SGLANG_PARALLEL_PROFILE}" = "tp8pp2" ]; then
+  export SGLANG_TP_SIZE="8"
+  export SGLANG_PP_SIZE="2"
+else
+  export SGLANG_TP_SIZE="${SGLANG_TP_SIZE:-16}"
+  export SGLANG_PP_SIZE="${SGLANG_PP_SIZE:-1}"
+fi
 export SGLANG_PP_LAYER_PARTITION="${SGLANG_PP_LAYER_PARTITION:-}"
 export SGLANG_EP_SIZE="${SGLANG_EP_SIZE:-16}"
 export SGLANG_PORT="${SGLANG_PORT:-8000}"
@@ -213,7 +225,7 @@ export INFERENCE_ENGINE INFERENCE_SERVER_LABEL SERVING_IMAGE
 # 1. Render manifest templates (excluding HF_TOKEN from substitution to prevent plaintext baking)
 echo "--> 1. Rendering manifest templates from ${TEMPLATE_DIR} to ${GENERATED_DIR}..."
 # shellcheck disable=SC2016
-BASE_ALLOWED_VARS='${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${SERVING_MODEL_NAME} ${TRTLLM_TP_SIZE} ${TRTLLM_PP_SIZE} ${TRTLLM_EP_SIZE} ${TRTLLM_MAX_SEQ_LEN} ${SGLANG_TP_SIZE} ${SGLANG_PP_SIZE} ${SGLANG_PP_LAYER_PARTITION} ${SGLANG_EP_SIZE} ${SGLANG_PORT} ${SGLANG_MEM_FRACTION_STATIC} ${SGLANG_SCHEDULE_POLICY} ${SGLANG_QUANTIZATION} ${SGLANG_ENABLE_TORCH_COMPILE} ${SGLANG_ATTENTION_BACKEND} ${SGLANG_CONTEXT_LENGTH} ${SGLANG_REASONING_PARSER} ${SGLANG_TOOL_CALL_PARSER} ${EXPECTED_MODEL_ARCHITECTURE} ${MIN_WEIGHTS_GIB} ${LEADER_ADDR} ${HYPERDISK_ML_SIZE_GB} ${GCS_WEIGHTS_BUCKET} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${TRTLLM_VIP} ${GPU_MAX_NODES} ${SERVING_REPLICAS} ${NODES_PER_REPLICA} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${SERVING_IMAGE}'
+BASE_ALLOWED_VARS='${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${SERVING_MODEL_NAME} ${TRTLLM_TP_SIZE} ${TRTLLM_PP_SIZE} ${TRTLLM_EP_SIZE} ${TRTLLM_MAX_SEQ_LEN} ${SGLANG_PARALLEL_PROFILE} ${SGLANG_TP_SIZE} ${SGLANG_PP_SIZE} ${SGLANG_PP_LAYER_PARTITION} ${SGLANG_EP_SIZE} ${SGLANG_PORT} ${SGLANG_MEM_FRACTION_STATIC} ${SGLANG_SCHEDULE_POLICY} ${SGLANG_QUANTIZATION} ${SGLANG_ENABLE_TORCH_COMPILE} ${SGLANG_ATTENTION_BACKEND} ${SGLANG_CONTEXT_LENGTH} ${SGLANG_REASONING_PARSER} ${SGLANG_TOOL_CALL_PARSER} ${EXPECTED_MODEL_ARCHITECTURE} ${MIN_WEIGHTS_GIB} ${LEADER_ADDR} ${HYPERDISK_ML_SIZE_GB} ${GCS_WEIGHTS_BUCKET} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${TRTLLM_VIP} ${GPU_MAX_NODES} ${SERVING_REPLICAS} ${NODES_PER_REPLICA} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${SERVING_IMAGE}'
 for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
   if [ -f "${template_file}" ]; then
     basename=$(basename "${template_file}" .template)
@@ -271,6 +283,10 @@ echo "--> 4. Waiting for local-nvme-raid-formatter DaemonSet rollout..."
 kubectl rollout status daemonset/local-nvme-raid-formatter -n kube-system --timeout=180s || echo "WARNING: DaemonSet rollout timeout (may be waiting for spot nodes to register)."
 
 # 3b. Verify RoCEv2 Network Fabric and NCCL bus bandwidth floor (>= 100 GB/s)
+cleanup_fabric_pods() {
+  kubectl delete statefulset nccl-roce-test nccl-parity-check -n llm-serving --ignore-not-found=true >/dev/null 2>&1 || true
+}
+
 if [ "${SKIP_FABRIC_CHECK:-false}" = "true" ]; then
   echo "WARNING: SKIP_FABRIC_CHECK=true set. Bypassing RoCEv2 network fabric and NCCL bus bandwidth verification!" >&2
 else
@@ -278,10 +294,10 @@ else
   kubectl apply -f "${GENERATED_DIR}/00c-nccl-test-job.yaml"
   kubectl apply -f "${GENERATED_DIR}/00d-serving-nccl-parity-job.yaml"
 
-  echo "    Polling NCCL RoCEv2 rank-0 pod (nccl-roce-test-0) for machine marker (timeout: 300s)..."
+  echo "    Polling NCCL RoCEv2 rank-0 pod (nccl-roce-test-0) for machine marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   MARKER_LINE=""
   BUSBW_VAL=""
-  MAX_ATTEMPTS=60
+  MAX_ATTEMPTS=$(( FABRIC_GATE_TIMEOUT_SECONDS / 5 ))
   ATTEMPT=0
   while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
     LOG_OUTPUT=$(kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test 2>/dev/null || true)
@@ -294,34 +310,39 @@ else
   done
 
   if [ -z "${MARKER_LINE}" ]; then
-    echo "ERROR: NCCL RoCEv2 verification failed: marker absent from nccl-roce-test-0 at timeout (300s)!" >&2
+    echo "ERROR: NCCL RoCEv2 verification failed: marker absent from nccl-roce-test-0 at timeout (${FABRIC_GATE_TIMEOUT_SECONDS}s)!" >&2
     kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test --tail=50 >&2 || true
+    cleanup_fabric_pods
     exit 1
   fi
 
   if echo "${MARKER_LINE}" | grep -E -q "^NCCL_GATE_RESULT fail"; then
     echo "ERROR: NCCL RoCEv2 verification reported failure marker (${MARKER_LINE})!" >&2
     kubectl logs nccl-roce-test-0 -n llm-serving --tail=50 >&2 || true
+    cleanup_fabric_pods
     exit 1
   fi
   BUSBW_VAL=$(echo "${MARKER_LINE}" | awk -F'busbw_gbps=' '{print $2}' | awk '{print $1}' | xargs || true)
   if [ -z "${BUSBW_VAL}" ]; then
     echo "ERROR: NCCL RoCEv2 bus bandwidth value is empty (${MARKER_LINE})!" >&2
+    cleanup_fabric_pods
     exit 1
   fi
   if ! echo "${BUSBW_VAL}" | grep -E -q '^[0-9]+(\.[0-9]+)?$'; then
     echo "ERROR: NCCL RoCEv2 bus bandwidth value '${BUSBW_VAL}' is non-numeric or invalid!" >&2
+    cleanup_fabric_pods
     exit 1
   fi
   if ! awk -v val="${BUSBW_VAL}" 'BEGIN {exit !(val >= 100.0)}' 2>/dev/null; then
     echo "ERROR: NCCL RoCEv2 bus bandwidth (${BUSBW_VAL} GB/s) is below required 100 GB/s floor!" >&2
+    cleanup_fabric_pods
     exit 1
   fi
   echo "    [OK] NCCL RoCEv2 bus bandwidth meets >= 100 GB/s requirement (${BUSBW_VAL} GB/s)."
 
-  echo "    Polling NCCL parity check rank-0 pod (nccl-parity-check-0) for parity marker (timeout: 300s)..."
+  echo "    Polling NCCL parity check rank-0 pod (nccl-parity-check-0) for parity marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   PARITY_MARKER=""
-  MAX_ATTEMPTS=60
+  MAX_ATTEMPTS=$(( FABRIC_GATE_TIMEOUT_SECONDS / 5 ))
   ATTEMPT=0
   while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
     LOG_OUTPUT=$(kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check 2>/dev/null || true)
@@ -334,23 +355,26 @@ else
   done
 
   if [ -z "${PARITY_MARKER}" ]; then
-    echo "ERROR: NCCL parity check failed: marker absent from nccl-parity-check-0 at timeout (300s)!" >&2
+    echo "ERROR: NCCL parity check failed: marker absent from nccl-parity-check-0 at timeout (${FABRIC_GATE_TIMEOUT_SECONDS}s)!" >&2
     kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    cleanup_fabric_pods
     exit 1
   fi
   if echo "${PARITY_MARKER}" | grep -E -q "^NCCL_PARITY_RESULT fail"; then
     echo "ERROR: NCCL parity check failed: rank 0 emitted fail marker (${PARITY_MARKER})!" >&2
     kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    cleanup_fabric_pods
     exit 1
   fi
   if ! echo "${PARITY_MARKER}" | grep -E -q "^NCCL_PARITY_RESULT pass$"; then
     echo "ERROR: NCCL parity check reported failure or invalid marker (${PARITY_MARKER})!" >&2
     kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    cleanup_fabric_pods
     exit 1
   fi
   echo "    [OK] NCCL serving-image parity verified (${PARITY_MARKER})."
 
-  kubectl delete statefulset nccl-roce-test nccl-parity-check -n llm-serving --ignore-not-found=true
+  cleanup_fabric_pods
 fi
 
 # 4. Apply weights download/hydration job (if staging disk is empty or initial setup)
