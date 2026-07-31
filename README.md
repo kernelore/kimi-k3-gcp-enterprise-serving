@@ -1,4 +1,4 @@
-# Kimi K3 Enterprise Serving Architecture
+# Enterprise Inference Architecture
 
 [![Google Cloud](https://img.shields.io/badge/Google_Cloud-Blackwell_B200-4285F4?style=flat-square&logo=googlecloud&logoColor=white)](https://cloud.google.com/compute/docs/gpus)
 [![NVIDIA](https://img.shields.io/badge/NVIDIA-MXFP4_MoE-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/)
@@ -78,7 +78,7 @@ RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 | **Google Kubernetes Engine (GKE)** | `module.cluster` | Private nodes with public, IAM-gated control-plane endpoint (or fully private with `enable_private_endpoint = true`) orchestrating dual-engine (SGLang / TRT-LLM) pods, Workload Identity Federation, and node pool autoscaling. |
 | **Compute Engine A4 VMs** | `module.node_pool_spot` | `a4-highgpu-8g` Blackwell instances equipped with 8x NVIDIA B200 GPUs (1,440 GB HBM3e, 180 GB/GPU) and 32x local NVMe SSDs (12 TiB) per node, operating in 2-node pairs over RoCEv2. |
 | **Hyperdisk ML (`ROX`)** | `module.storage` | 2,000 GB (2 TB) high-throughput block volume flipped to `ReadOnlyMany` mode for shared, zero-cold-start model weight mounting. |
-| **Cloud Memorystore for Redis** | `module.cache` | In-memory tier for exact-match prompt caching (single-digit-ms in-VPC, *TBD — to be measured at first deployment* verified via port-forward) and gateway token-bucket rate limiting (RPM/TPM). |
+| **Cloud Memorystore for Redis** | `module.cache` | In-memory tier for exact-match prompt caching (single-digit-ms in-VPC, *TBD — to be measured at first deployment* verified via port-forward) and gateway token-bucket rate limiting (RPM/TPM). Note: exact-match prompt caching applies at the gateway level; inside the serving engine, RadixAttention prefix caching reuse benefits only the 24 MLA attention layers, while KDA linear layers are not prefix-shareable. |
 | **Cloud SQL for PostgreSQL** | `module.database` | Private database accessed via Cloud SQL Auth Proxy storing virtual API keys, user budgets, and gateway routing configurations. |
 | **BigQuery** | `module.audit` | Serverless audit dataset (`kimi_k3_enterprise_audit`) for asynchronous logging of conversation trajectories and token telemetry. |
 | **Cloud Storage (GCS)** | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Remote Terraform state versioning and high-speed weight hydration backup bucket (hydration duration and throughput: *TBD — to be measured at first deployment*). |
@@ -127,6 +127,9 @@ $$\text{Max Concurrent 128k Sessions per Replica} = \left\lfloor \frac{1,130\,\t
 $$\text{Concurrent 128k Sessions per GPU} \approx 2.6\text{ streams/GPU}$$
 *Estimate, pending release.*
 
+> [!NOTE]
+> **KDA Recurrent State vs. KV Caching Caveat:** The KDA recurrent-state component across Kimi K3's 69 linear attention layers makes per-session memory far flatter in context length than pure-attention models. While the $\approx 26.9\,\text{GB}$ per 128k session derivation estimates roughly 42 concurrent sessions per replica, first-deployment measurement supersedes the math.
+
 ### 4. Cluster Capacity Scaling Reference Table (DP=N Replicas)
 
 While **1x 2-Node Replica (DP=1, 16x B200 GPUs) serves as the turnkey MVP baseline**, the architecture scales out horizontally to N replicas via Data Parallelism (DP=N) over ReadOnlyMany Hyperdisk ML:
@@ -165,6 +168,8 @@ general_settings:
 
 Truncating or stripping thought blocks during multi-turn agentic execution causes catastrophic reasoning degradation and context misalignment. The gateway guarantees end-to-end transmission of raw reasoning tokens to client applications and BigQuery audit logs. Note that using the older `kimi_k2` parser value silently leaks chain-of-thought into `content`; this repo pins `kimi_k3`.
 
+In multi-turn agentic workflows, client applications must echo back the full assistant message including reasoning (`<think>...</think>`) and tool-call content between turns. While the LiteLLM Gateway preserves thought blocks and guarantees their transmission, the obligation to echo them back in subsequent turn history rests entirely on the client.
+
 ### 3. Clarification Guardrails against Action Overfitting (Roadmap / Unimplemented)
 
 Large-scale agentic models can exhibit "action overfitting"—prematurely invoking external tools or APIs when user prompts lack critical parameters. As a planned roadmap capability (currently unimplemented), the LiteLLM Gateway architecture evaluates an automated clarification guardrail pipeline to intercept tool-use requests with high semantic ambiguity, injecting a clarification prompt guardrail before allowing tool execution.
@@ -201,7 +206,7 @@ significantly:
     -   **Inter-Node Interconnect**: SGLang relies on NCCL
         GPUDirect RDMA over RoCEv2 (tuned via GKE gIB `set_nccl_env.sh`) for high-speed inter-host tensor passing
         across the 16x B200 GPUs.
-    -   **Performance Optimizations**: Utilizes `--moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3` with RadixAttention prefix caching.
+    -   **Performance Optimizations**: Utilizes `--moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3` with RadixAttention prefix caching. Note that prefix caching reuse benefits only the 24 MLA attention layers; the 69 KDA linear recurrent state layers are not prefix-shareable.
 
 2.  **NVIDIA TensorRT-LLM (Experimental Option | `INFERENCE_ENGINE="trtllm"`)**:
 
@@ -240,7 +245,7 @@ Feature / Metric              | SGLang (`sglang`)                               
 **Inter-Node Networking**     | RoCEv2 GPUDirect RDMA (tuned via GKE gIB `set_nccl_env.sh`) | RoCEv2 GPUDirect RDMA (tuned via GKE gIB `set_nccl_env.sh`)
 **Weight & Kernel Format**    | Native `KimiK3ForConditionalGeneration` / FlashInfer / FlashMLA | Direct PyTorch checkpoint loading (Experimental)
 **Parsers**                   | `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3` | Custom regex parser
-**Prefix Caching**            | RadixAttention (Optimal for multi-turn & tree search)  | Standard KV Cache block reuse
+**Prefix Caching**            | RadixAttention (only for 24 MLA layers; 69 KDA layers not prefix-shareable) | Standard KV Cache block reuse (MLA layers only)
 **Memory Management**         | `--mem-fraction-static 0.85`                           | `--kv_cache_free_gpu_memory_fraction 0.90`
 **Ideal Workload Profile**    | Dynamic interactive sessions, structured JSON, reasoning prompts | Maximum raw throughput batch serving (experimental)
 
