@@ -279,12 +279,14 @@ spec:
           fi
           EXTRA_ARGS="${EXTRA_ARGS} --moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3"
           # DAY-0: --disable-cuda-graph (or --cuda-graph-backend-decode=disabled) if CUDA graph capture OOMs occur on Blackwell during warmup; drop --mem-fraction-static to 0.80 if OOM at ~94% of weight loading
-          # DAY-0: --mamba-full-memory-ratio candidate if KDA recurrent-state sizing is needed for 2-node B200
           if [ -z "${SGLANG_PP_LAYER_PARTITION:-}" ]; then unset SGLANG_PP_LAYER_PARTITION; fi
           # Multi-node loading of the 1.56 TB checkpoint can exceed the default distributed-init timeout
           exec python3 -m sglang.launch_server \
             --model-path /mnt/rox/Kimi-K3 \
             --served-model-name moonshotai/Kimi-K3 \
+            # Provenance: AI-Hypercomputer/gpu-recipes a4x/multi-host-serving/sglang (4-node A4X/GB200 TP16 config)
+            # Sizes KDA recurrent-state pool; must be re-measured on 2-node A4/B200 topology at first deployment
+            --mamba-full-memory-ratio 7.21 \
             --dist-init-addr "${LEADER_HOST}" \
             --dist-timeout 3600 \
             --nnodes 2 \
