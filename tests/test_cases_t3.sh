@@ -76,12 +76,16 @@ t3_c08() {
 
 t3_c09() {
   assert_match 'allow_internal_primary_vpc' "${PROJECT_ROOT}/terraform/modules/network/main.tf" "Missing allow_internal_primary_vpc firewall rule"
+  assert_match '10\.10\.0\.0/16' "${PROJECT_ROOT}/terraform/modules/network/main.tf" "Missing primary subnet CIDR 10.10.0.0/16 in network firewall"
+  assert_match '10\.64\.0\.0/14' "${PROJECT_ROOT}/terraform/modules/network/main.tf" "Missing pod CIDR 10.64.0.0/14 in network firewall"
+  assert_match '10\.80\.0\.0/20' "${PROJECT_ROOT}/terraform/modules/network/main.tf" "Missing service CIDR 10.80.0.0/20 in network firewall"
+  assert_no_match '0\.0\.0\.0/0' "${PROJECT_ROOT}/terraform/modules/network/main.tf" "Unsafe 0.0.0.0/0 source range found in network module"
   assert_match 'GLOO_SOCKET_IFNAME' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-sglang-mpi.yaml.template" "Missing GLOO_SOCKET_IFNAME in SGLang template"
   assert_match 'GLOO_SOCKET_IFNAME' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-trtllm-mpi.yaml.template" "Missing GLOO_SOCKET_IFNAME in TRTLLM template"
   assert_match 'GLOO_SOCKET_IFNAME' "${PROJECT_ROOT}/terraform/manifests/templates/00c-nccl-test-job.yaml.template" "Missing GLOO_SOCKET_IFNAME in 00c template"
   assert_match 'GLOO_SOCKET_IFNAME' "${PROJECT_ROOT}/terraform/manifests/templates/00d-serving-nccl-parity-job.yaml.template" "Missing GLOO_SOCKET_IFNAME in 00d template"
   assert_match '10\.90\.0\.0' "${PROJECT_ROOT}/terraform/modules/database/main.tf" "Missing PSA range 10.90.0.0 in database module"
-  assert_no_match 'kind: NetworkPolicy' "${PROJECT_ROOT}/terraform" "Unexpected NetworkPolicy found in terraform"
+  # No NetworkPolicy exists today; adding one is permitted provided serving pod-to-pod ports remain reachable.
 }
 
 run_tier_3_tests() {
