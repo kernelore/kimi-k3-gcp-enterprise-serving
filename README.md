@@ -1,4 +1,4 @@
-# Enterprise Inference Architecture
+# KIMI K3 Enterprise Inference Architecture
 
 [![Google Cloud](https://img.shields.io/badge/Google_Cloud-Blackwell_B200-4285F4?style=flat-square&logo=googlecloud&logoColor=white)](https://cloud.google.com/compute/docs/gpus)
 [![NVIDIA](https://img.shields.io/badge/NVIDIA-MXFP4_MoE-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/)
