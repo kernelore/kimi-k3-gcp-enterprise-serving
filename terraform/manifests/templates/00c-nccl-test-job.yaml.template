@@ -118,9 +118,6 @@ spec:
               exit 1
             fi
             BUSBW=$(grep -i "Avg bus bandwidth" "${LOG_FILE}" | awk '{print $NF}' || true)
-            if [ -z "${BUSBW}" ]; then
-              BUSBW=$(awk '/^[0-9]/ {sum+=$7; count++} END {if (count>0) print sum/count; else print 0}' "${LOG_FILE}")
-            fi
             echo "Observed Avg Bus Bandwidth: ${BUSBW} GB/s"
             if awk -v bw="${BUSBW:-0}" 'BEGIN {exit !(bw >= 100.0)}'; then
               echo "NCCL RoCEv2 verification completed successfully."
