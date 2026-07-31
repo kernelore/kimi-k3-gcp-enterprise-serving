@@ -70,6 +70,7 @@ t5_adv_02() {
   assert_match 'gsutil|gcloud|GCS_BUCKET' "${PROJECT_ROOT}/terraform/manifests/templates/02-hydrate-weights-gcs.yaml.template" "Missing GCS transfer tooling in hydration template"
   assert_match 'fla-core' "${PROJECT_ROOT}/docker/Dockerfile.sglang" "Missing fla-core requirement in docker/Dockerfile.sglang"
   assert_match '--served-model-name moonshotai/Kimi-K3' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-sglang-mpi.yaml.template" "Missing --served-model-name in SGLang template"
+  assert_no_match '--dcp-size' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-sglang-mpi.yaml.template" "Prohibited active --dcp-size flag found in SGLang exec line"
 }
 
 # T5_ADV_03: Gateway, Observability, HPA, and MoE Compilation Specializations

@@ -279,6 +279,10 @@ spec:
           fi
           EXTRA_ARGS="${EXTRA_ARGS} --moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3"
           # DAY-0: --disable-cuda-graph (or --cuda-graph-backend-decode=disabled) if CUDA graph capture OOMs occur on Blackwell during warmup; drop --mem-fraction-static to 0.80 if OOM at ~94% of weight loading
+          # DAY-0: --dcp-size deliberately NOT enabled. Google's a4x recipe uses --dcp-size 16 on NVL72 (~900 GB/s all-to-all).
+          # On our 2-node RoCEv2 fabric (100 GB/s floor) DCP's per-decode-step collectives land on the critical path,
+          # and only the 24 MLA layers hold the KV context it shards (69 KDA layers hold fixed-size recurrent state).
+          # Revisit only if first-deployment measurement shows decode is memory-bound rather than interconnect-bound.
           if [ -z "${SGLANG_PP_LAYER_PARTITION:-}" ]; then unset SGLANG_PP_LAYER_PARTITION; fi
           # Multi-node loading of the 1.56 TB checkpoint can exceed the default distributed-init timeout
           exec python3 -m sglang.launch_server \
