@@ -140,6 +140,18 @@ t5_adv_06() {
   assert_match 'PURGE_WEIGHTS_BACKUP.*true.*FORCE_DESTROY.*true|FORCE_DESTROY.*true.*PURGE_WEIGHTS_BACKUP.*true' "${PROJECT_ROOT}/scripts/06_destroy_all.sh" "scripts/06_destroy_all.sh must require both PURGE_WEIGHTS_BACKUP=true and FORCE_DESTROY=true to delete weights backup bucket"
 }
 
+# T5_ADV_07: SGLang Parallel Profile Verification (P7-2)
+t5_adv_07() {
+  local sglang_yaml="${PROJECT_ROOT}/terraform/manifests/generated/09-kimi-k3-sglang-mpi.yaml"
+  (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" SGLANG_PARALLEL_PROFILE="tp16" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
+  assert_match '--tp-size "16"' "${sglang_yaml}" "Default SGLang render missing --tp-size 16"
+  assert_no_match '--pp-size "2"' "${sglang_yaml}" "Default SGLang render unexpectedly contains --pp-size 2"
+  (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" SGLANG_PARALLEL_PROFILE="tp8pp2" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
+  assert_match '--tp-size "8"' "${sglang_yaml}" "tp8pp2 SGLang render missing --tp-size 8"
+  assert_match '--pp-size "2"' "${sglang_yaml}" "tp8pp2 SGLang render missing --pp-size 2"
+  (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
+}
+
 run_tier_5_tests() {
   log_info "=== Executing Tier 5: Adversarial White-Box Coverage Hardening Suite ==="
   run_test_case "T5_ADV_01_Domain_Manifest_Assertions" t5_adv_01
@@ -148,4 +160,5 @@ run_tier_5_tests() {
   run_test_case "T5_ADV_04_Remediated_Script_Security_Network_Isolation" t5_adv_04
   run_test_case "T5_ADV_05_Benchmark_Exception_Resilience_Syntax" t5_adv_05
   run_test_case "T5_ADV_06_Weights_Cache_Consistency" t5_adv_06
+  run_test_case "T5_ADV_07_SGLang_Parallel_Profile" t5_adv_07
 }
