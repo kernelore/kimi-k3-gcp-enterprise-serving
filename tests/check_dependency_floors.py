@@ -45,6 +45,16 @@ def parse_version_tuple(v_str):
         parts.append(0)
     return tuple(parts)
 
+def check_workflow_content(content: str, dep: str, floor_val: int) -> bool:
+    pattern = r'uses:\s*' + re.escape(dep) + r'@v([0-9]+)'
+    matches = re.findall(pattern, content)
+    if not matches:
+        return False
+    for actual_str in matches:
+        if int(actual_str) < int(floor_val):
+            return False
+    return True
+
 def check_floors():
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     failed = False
