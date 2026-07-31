@@ -12,15 +12,15 @@
 **Target Hardware:** Google Kubernetes Engine (GKE) Blackwell (`2x
 a4-highgpu-8g` nodes — 16x NVIDIA B200 HGX total per serving pod replica over
 RoCEv2 fabric) \
-**Target Workload:** High-Throughput Enterprise AI Engineering & Autonomous Agentic Workflows (`32k` to `128k` active context window out of `1,048,576` maximum
-capacity) \
+**Target Workload:** High-Throughput Enterprise AI Engineering & Autonomous Agentic Workflows (`32k` to `128k` active context window out of the `1,048,576` maximum
+declared by the checkpoint's `max_position_embeddings`; this stack deploys `--context-length 131072` via `SGLANG_CONTEXT_LENGTH`) \
 **Deployment Scope (Zonal Baseline → Regional HA Ready):** By default, the entire stack is provisioned with Zonal scope (`europe-north1-b` for the GKE cluster, Cloud SQL instance, Memorystore Redis cache, and Hyperdisk ML volume) to eliminate cross-zone network egress charges and accelerate deployment. The deployment can be easily extended to a Regional HA architecture by configuring `location = var.region` on the GKE cluster, setting `availability_type = "REGIONAL"` on Cloud SQL, upgrading Memorystore Redis to `tier = "STANDARD_HA"`, and distributing GPU worker replicas (`DP=N`) across multiple availability zones behind the internal load balancer.
 
 ---
 
 ## ⚡ Executive Summary & Full Tier 0-1-2 Architecture Overview
 
-Deploying **Kimi K3** (`moonshotai/Kimi-K3`) at production scale represents a frontier engineering challenge. Featuring **2.8 Trillion total parameters** (**104 Billion activated per token**), **Stable LatentMoE** (`896` total routed experts, `16` active + `2` shared experts per token, 93 total layers: 69 KDA + 24 Gated MLA attention + 1 dense MLP layer), **Kimi Delta Attention (`KDA`)**, and **Attention Residuals (`AttnRes`)**, the model is trained end-to-end with **Quantization-Aware Training (QAT)** utilizing **`MXFP4` (Microscaling 4-bit weights)** and **`MXFP8` activations** via `compressed-tensors` (group size 32; attention, shared experts, dense MLP, lm_head, and vision encoder kept in bf16). Under `KimiK3ForConditionalGeneration`, the architecture is multimodal (KimiLinear text backbone + MoonViT-V2 401M vision encoder); this serving stack natively validates text serving.
+Deploying **Kimi K3** (`moonshotai/Kimi-K3`) at production scale represents a frontier engineering challenge. Featuring **2.8 Trillion total parameters** (**104 Billion activated per token**), **Stable LatentMoE** (`896` total routed experts, `16` active + `2` shared experts per token, 93 total layers = 69 KDA + 24 Gated MLA attention, with `first_k_dense_replace = 1` giving the first layer a dense MLP instead of a routed MoE block — it is not a 94th layer), **Kimi Delta Attention (`KDA`)**, and **Attention Residuals (`AttnRes`)**, the model is trained end-to-end with **Quantization-Aware Training (QAT)** utilizing **`MXFP4` (Microscaling 4-bit weights)** and **`MXFP8` activations** via `compressed-tensors` (group size 32; attention, shared experts, dense MLP, lm_head, and vision encoder kept in bf16). Under `KimiK3ForConditionalGeneration`, the architecture is multimodal (KimiLinear text backbone + MoonViT-V2 401M vision encoder); this serving stack natively validates text serving.
 
 Because the full model weight footprint in `MXFP4` occupies **1,453.7 GiB (96 safetensors shards) (= 1,560.9 GB; plan ~1.56 TB)** on
 disk and requires **`~2.8 TB` aggregate serving VRAM** (V<sub>weights</sub> +
@@ -56,7 +56,7 @@ RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 |  |  - Intra-Node: NVLink (1.8 TB/s) TP=8            | RoCEv2  |  - Intra-Node: NVLink (1.8 TB/s) TP=8        |  |
 |  |  - Inter-Node: GPUDirect RDMA PP=1..2 / EP=8..16 | 3.2Tbps |  - Inter-Node: GPUDirect RDMA PP=1..2 / EP=8..16 |  |
 |  |  - SGLang / TRT-LLM Execution Engine             | MTU 8896|  - SGLang / TRT-LLM MoE MXFP4 Kernels        |  |
-|  |  - Dedicated KV Cache Pool: ~525 GB HBM3e        |         |  - Dedicated KV Cache Pool: ~525 GB HBM3e    |  |
+|  |  - KV/State Pool (derived): ~443 GB              |         |  - KV/State Pool (derived): ~443 GB          |  |
 |  +--------------------------+-----------------------+         +----------------------+-----------------------+  |
 +-----------------------------|--------------------------------------------------------|--------------------------+
                               |                                                        |
@@ -76,13 +76,13 @@ RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 | Google Cloud Product | Resource Identifier in Stack | Architectural Role & Implementation Details |
 | :--- | :--- | :--- |
 | **Google Kubernetes Engine (GKE)** | `module.cluster` | Private nodes with public, IAM-gated control-plane endpoint (or fully private with `enable_private_endpoint = true`) orchestrating dual-engine (SGLang / TRT-LLM) pods, Workload Identity Federation, and node pool autoscaling. |
-| **Compute Engine A4 VMs** | `module.node_pool_spot` | `a4-highgpu-8g` Blackwell instances equipped with 8x NVIDIA B200 GPUs (1,440 GB HBM3e, 180 GB/GPU) and 32x local NVMe SSDs (12 TiB) per node, operating in 2-node pairs over RoCEv2. |
+| **Compute Engine A4 VMs** | `module.node_pool_spot` | `a4-highgpu-8g` Blackwell instances equipped with 8x NVIDIA B200 GPUs (1,440 GB HBM3e, 180 GB/GPU) and 32x local NVMe SSDs (32 × 375 GiB = 12,000 GiB ≈ 11.7 TiB) per node, operating in 2-node pairs over RoCEv2. |
 | **Hyperdisk ML (`ROX`)** | `module.storage` | 2,000 GB (2 TB) high-throughput block volume flipped to `ReadOnlyMany` mode for shared, zero-cold-start model weight mounting. |
 | **Cloud Memorystore for Redis** | `module.cache` | In-memory tier for exact-match prompt caching (single-digit-ms in-VPC, *TBD — to be measured at first deployment* verified via port-forward) and gateway token-bucket rate limiting (RPM/TPM). Note: exact-match prompt caching applies at the gateway level; inside the serving engine, RadixAttention prefix caching reuse benefits only the 24 MLA attention layers, while KDA linear layers are not prefix-shareable. |
 | **Cloud SQL for PostgreSQL** | `module.database` | Private database accessed via Cloud SQL Auth Proxy storing virtual API keys, user budgets, and gateway routing configurations. |
 | **BigQuery** | `module.audit` | Serverless audit dataset (`kimi_k3_enterprise_audit`) for asynchronous logging of conversation trajectories and token telemetry. |
 | **Cloud Storage (GCS)** | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Remote Terraform state versioning and high-speed weight hydration backup bucket (hydration duration and throughput: *TBD — to be measured at first deployment*). |
-| **Artifact Registry** | `module.storage` | Secure private container registry hosting pinned custom SGLang (`lmsysorg/sglang:kimi-k3@sha256:81a9c00654b3e4c7c681a4728a64fcb4853aa698dc9fea1959bbf4eb26bfb2e5`) / experimental TensorRT-LLM Blackwell serving images. |
+| **Artifact Registry** | `module.storage` | Secure private container registry hosting the custom SGLang and experimental TensorRT-LLM Blackwell serving images. The image actually built and deployed is `${REGION}-docker.pkg.dev/${PROJECT_ID}/kimi-prod/sglang-blackwell:latest` (`03_deploy_workloads.sh:237`) — a **mutable tag**, not a digest. The digest pin sits one level up, on the base image in `docker/Dockerfile.sglang`: `FROM lmsysorg/sglang:kimi-k3@sha256:81a9c00654b3e4c7c681a4728a64fcb4853aa698dc9fea1959bbf4eb26bfb2e5`. |
 | **Cloud Build** | `scripts/03_deploy_workloads.sh` | Serverless build pipeline for automated, self-healing image compilation from `docker/Dockerfile`. |
 | **Virtual Private Cloud (VPC)** | `module.network` | Private network topology with Private Services Access (PSA), IAP SSH restrictions, and secondary RoCEv2 fabric (MTU 8896). |
 | **Managed Service for Prometheus (GMP)** | `module.observability` | Native metrics pipeline capturing NVIDIA DCGM GPU metrics and serving request telemetry. |
@@ -109,7 +109,10 @@ Total serving VRAM across a distributed replica pool is derived step-by-step fro
 - **Checkpoint Weight Sharding**: 1,560.94 GB checkpoint / 16 GPUs = **97.6 GB/GPU** of weights
 - **Static Pool Sizing (`--mem-fraction-static 0.85`)**: 0.85 × 180 GB = **153 GB/GPU** static pool
 - **KV/State Headroom per GPU**: 153 GB − 97.6 GB = **55.4 GB/GPU**
-- **Aggregate KV Cache Pool**: 55.4 GB × 16 GPUs ≈ **887 GB**
+- **Aggregate KV/State Pool**: 55.4 GB × 16 GPUs ≈ **887 GB** (≈443 GB/node)
+
+> [!IMPORTANT]
+> Every figure in this section is a **paper derivation, not a measurement.** It also treats the KV pool as uniform, which Kimi K3 is not: only the 24 MLA layers consume per-token KV, while the 69 KDA layers hold a fixed-size recurrent state per *sequence* (sized by `--mamba-full-memory-ratio`). Real capacity is bounded by both pools at once and must be read from the engine's own reported budget at deployment, not from this arithmetic.
 
 ### 3. Concurrent 128k Context Session Capacity
 
@@ -202,7 +205,7 @@ significantly:
     -   **Inter-Node Interconnect**: SGLang relies on NCCL
         GPUDirect RDMA over RoCEv2 (tuned via GKE gIB `set_nccl_env.sh`) for high-speed inter-host tensor passing
         across the 16x B200 GPUs.
-    -   **Performance Optimizations**: Utilizes `--moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3` with RadixAttention prefix caching. Note that prefix caching reuse benefits only the 24 MLA attention layers; the 69 KDA linear recurrent state layers are not prefix-shareable.
+    -   **Performance Optimizations**: Utilizes `--moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3` with RadixAttention prefix caching. The *prefill* attention backend is configured separately through `SGLANG_ATTENTION_BACKEND` (default `triton`, emitted as `--attention-backend`), and the hybrid KDA recurrent-state pool is sized by `--mamba-full-memory-ratio 7.21`. Note that prefix caching reuse benefits only the 24 MLA attention layers; the 69 KDA linear recurrent state layers are not prefix-shareable.
     -   **Parallelism Profiles (`SGLANG_PARALLEL_PROFILE`)**: Supports `tp16` (default `--tp-size 16`, confining all parallelism to TP/EP=16 across 16 GPUs) and `tp8pp2` (fallback `--tp-size 8 --pp-size 2` when inter-node RoCEv2 interconnect proves throughput-bound, confining TP all-reduce collectives to NVLink within each node and transferring pipeline activations over RoCE; the profile also drops EP to 8 for the same reason).
         - *When to flip*: Flip to `tp8pp2` if inter-node all-reduce over RoCEv2 is measured as the primary latency bottleneck at first deployment.
         - *Uneven Layer Split Caveat*: Kimi-K3 has `num_hidden_layers = 93` (an odd number), so PP=2 automatic split is uneven by construction. Furthermore, full-attention (MLA) layers occur at every 4th layer plus the last (`text_config.linear_attn_config.full_attn_layers`), causing the two pipeline stages to receive unequal MLA counts and unequal KV-cache memory. Environment variable `SGLANG_PP_LAYER_PARTITION` exists to override the automatic split, and the correct partition is `TBD — to be measured at first deployment`.
@@ -274,8 +277,8 @@ To eliminate multi-hour weight downloads when scaling compute pods (the volume h
                                                   ^
                                                   | (Concurrent Read-Only Mount across 2N Nodes)
 +---------------------------------------------------------------------------------------------------+
-|                     Tier 2: Local NVMe SSD RAID 0 Scratch Array (`/mnt/scratch`)                 |
-|  - Capacity: 32x 375 GiB Local NVMe SSDs = 12 TiB per node | Formatted XFS via RAID 0 DaemonSet   |
+|                     Tier 2: Local NVMe SSD RAID 0 Scratch Array (`/mnt/scratch`)                  |
+|  - Capacity: 32x 375 GiB Local NVMe SSDs = 11.7 TiB/node | Formatted XFS via RAID 0 DaemonSet     |
 |  - Content: Ultra-fast local buffer for MPI shared memory exchange and runtime staging logs       |
 +---------------------------------------------------------------------------------------------------+
                                                   ^
@@ -325,14 +328,17 @@ gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-tfstate"
 
 ```
 kimi-k3-gcp-enterprise-serving/
+├── .github/                       # CI workflow (shellcheck, secret scan, render + dependency gates) and Dependabot config
 ├── LICENSE                        # Apache-2.0 License
 ├── README.md                      # Reference architecture and operational runbook (this file)
 ├── benchmarks/                    # Synthetic load testing and stress benchmark Python suites
 │   ├── benchmark_kimi_k3.py       # Standard enterprise performance benchmark (TTFT, TPOT, Throughput)
+│   ├── generate_comparison.py     # Parity validator; regenerates the engine comparison table between the README markers
 │   ├── massive_benchmark_kimi_k3.py # High-concurrency stress test simulating 20 agent streams
 │   ├── run_prefill_benchmark_kimi_k3.py # Empirical prompt-ingestion prefill benchmark (8k-in/16-out)
 │   ├── run_saturation_sweep_kimi_k3.py # Direct engine saturation sweep across concurrency levels c=1..64
-│   └── soak_benchmark_kimi_k3.py  # 30-minute continuous stability endurance test (1,800 seconds)
+│   ├── soak_benchmark_kimi_k3.py  # 30-minute continuous stability endurance test (1,800 seconds)
+│   └── telemetry_sanitizer.py     # Redacts API keys and sensitive fields from telemetry before publication
 ├── docker/                        # Container definitions for custom serving runtimes
 │   ├── Dockerfile                 # Experimental TensorRT-LLM serving container image definition
 │   └── Dockerfile.sglang          # Primary default SGLang serving container image (lmsysorg/sglang:kimi-k3@sha256:81a9c006...)
@@ -347,13 +353,15 @@ kimi-k3-gcp-enterprise-serving/
 │   ├── config.env.example         # Template configuration for environment variables and resource tags
 │   ├── requirements.txt           # Python client dependencies (BigQuery and Cloud Storage)
 │   └── test_live_gateway.py       # Turnkey live chat completion script for verifying gateway inference
-└── terraform/                     # Modular, enterprise-grade Terraform infrastructure definitions
-    ├── main.tf                    # Root composition module integrating cluster, network, and storage modules
-    ├── variables.tf / outputs.tf  # Global input variables and cluster/storage/database outputs
-    ├── terraform.tfvars.example   # Example variables template
-    ├── modules/                   # Infrastructure modules: cluster, network, node_pool_spot, storage,
-    │                              # database, cache, audit, gateway_iam, observability
-    └── manifests/                 # Kubernetes YAML templates and generated runtime manifests
+├── terraform/                     # Modular, enterprise-grade Terraform infrastructure definitions
+│   ├── main.tf                    # Root composition module integrating cluster, network, and storage modules
+│   ├── variables.tf / outputs.tf  # Global input variables and cluster/storage/database outputs
+│   ├── terraform.tfvars.example   # Example variables template
+│   ├── modules/                   # Infrastructure modules: cluster, network, node_pool_spot, storage,
+│   │                              # database, cache, audit, gateway_iam, observability
+│   └── manifests/                 # Kubernetes YAML templates and generated runtime manifests
+└── tests/                         # Offline suites: tiered cases t1-t5, adversarial gates, secret scan,
+                                   # render exceptions, dependency floors, NCCL parse and provenance checks
 ```
 
 ---
@@ -362,7 +370,10 @@ kimi-k3-gcp-enterprise-serving/
 
 ### 1. K8s Readiness Ejection & LiteLLM Router Retries
 
-The Tier 1 Enterprise AI Gateway and Kubernetes infrastructure utilize active health probing via readiness probes and LiteLLM router retries. If a serving pod experiences GPU ECC faults, NVLink lockups, or network drops, Kubernetes readiness probes fail, ejecting the unhealthy replica from the upstream ClusterIP routing pool while LiteLLM automatically retries failed requests against healthy replicas with zero client-facing error leakage.
+The Tier 1 Enterprise AI Gateway and Kubernetes infrastructure utilize active health probing via readiness probes and LiteLLM router retries. If a serving pod experiences GPU ECC faults, NVLink lockups, or network drops, Kubernetes readiness probes fail and eject the pod from the upstream ClusterIP routing pool, and LiteLLM retries the failed request.
+
+> [!WARNING]
+> **At the shipped default this provides no redundancy.** The stack deploys a single 2-node replica (`SERVING_REPLICAS=1`, `GPU_MAX_NODES=2`), so there is no second healthy replica to retry against — readiness ejection simply empties the routing pool and requests fail until the replica recovers. Retry-to-a-healthy-peer only becomes meaningful at `DP≥2` (4+ GPU nodes). Failover has not been exercised on a live deployment.
 
 ### 2. Dynamic Spot Preemption Priorities (P0 > P1 > P2)
 
@@ -570,9 +581,9 @@ workloads, release Persistent Volumes, and run `terraform destroy`:
 # 1. Purge and delete the Terraform remote state bucket
 gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-tfstate"
 
-# 2. Purge and delete the Trajectory audit backup bucket
-gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-trajectories"
-
-# 3. (Optional) Delete out-of-band GCS weight backup bucket if created
+# 2. (Optional) Delete out-of-band GCS weight backup bucket if created
 gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-weights-backup"
 ```
+
+> [!NOTE]
+> The trajectory bucket (`gs://${PROJECT_ID}-kimi-k3-trajectories`) is **not** listed above because it is the one Terraform-managed bucket in the stack (`terraform/modules/storage/main.tf`), so `terraform destroy` already removes it. Only the two out-of-band buckets above survive teardown.
