@@ -134,6 +134,8 @@ spec:
           value: "INIT,NET,GRAPH"
         - name: NCCL_SOCKET_IFNAME
           value: "eth0"
+        - name: GLOO_SOCKET_IFNAME
+          value: "eth0"
         - name: SGLANG_TP_SIZE
           value: "${SGLANG_TP_SIZE}"
         - name: SGLANG_PP_SIZE
@@ -274,11 +276,14 @@ spec:
             EXTRA_ARGS="${EXTRA_ARGS} --tool-call-parser ${SGLANG_TOOL_CALL_PARSER}"
           fi
           EXTRA_ARGS="${EXTRA_ARGS} --moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3"
-          # DAY-0: --disable-cuda-graph (or --cuda-graph-backend-decode=disabled) if CUDA graph capture OOMs occur on Blackwell during warmup
+          # DAY-0: --disable-cuda-graph (or --cuda-graph-backend-decode=disabled) if CUDA graph capture OOMs occur on Blackwell during warmup; drop --mem-fraction-static to 0.80 if OOM at ~94% of weight loading
+          # DAY-0: --mamba-full-memory-ratio candidate if KDA recurrent-state sizing is needed for 2-node B200
           if [ -z "${SGLANG_PP_LAYER_PARTITION:-}" ]; then unset SGLANG_PP_LAYER_PARTITION; fi
+          # Multi-node loading of the 1.56 TB checkpoint can exceed the default distributed-init timeout
           exec python3 -m sglang.launch_server \
             --model-path /mnt/rox/Kimi-K3 \
             --dist-init-addr "${LEADER_HOST}" \
+            --dist-timeout 3600 \
             --nnodes 2 \
             --node-rank "${NODE_RANK}" \
             --port "${SGLANG_PORT}" \

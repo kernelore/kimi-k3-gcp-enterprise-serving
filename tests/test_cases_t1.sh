@@ -133,6 +133,7 @@ t1_f4_05() {
 t1_f5_01() {
   assert_match 'count.*8|range\(8\)' "${PROJECT_ROOT}/terraform/modules/network/main.tf" "Missing 8 secondary networks in network module"
   assert_match 'range\(8\)' "${PROJECT_ROOT}/terraform/modules/node_pool_spot/main.tf" "Missing 8 NIC attachments in spot pool module"
+  assert_match 'allow_internal_primary_vpc' "${PROJECT_ROOT}/terraform/modules/network/main.tf" "Missing allow_internal_primary_vpc in network module"
 }
 
 t1_f5_02() {
@@ -143,8 +144,11 @@ t1_f5_03() {
   for f in "${PROJECT_ROOT}"/terraform/manifests/generated/09-*.yaml; do
     if [ -f "${f}" ]; then
       assert_match "set_nccl_env.sh" "${f}" "Missing set_nccl_env.sh in ${f}"
+      assert_match "GLOO_SOCKET_IFNAME" "${f}" "Missing GLOO_SOCKET_IFNAME in ${f}"
     fi
   done
+  assert_match "GLOO_SOCKET_IFNAME" "${PROJECT_ROOT}/terraform/manifests/templates/00c-nccl-test-job.yaml.template" "Missing GLOO_SOCKET_IFNAME in 00c template"
+  assert_match "GLOO_SOCKET_IFNAME" "${PROJECT_ROOT}/terraform/manifests/templates/00d-serving-nccl-parity-job.yaml.template" "Missing GLOO_SOCKET_IFNAME in 00d template"
 }
 
 t1_f5_04() {
@@ -172,7 +176,7 @@ t1_f6_01() {
 t1_f6_02() {
   # Scans all directories under KIMI3_GCPA4/ to assert zero .md files exist except authorized documentation (ignoring .agents, .gemini, .venv, .git, .terraform)
   local md_files
-  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform', '_worker_notes')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md')])")
+  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md', 'PHASE6_RUNBOOK.md')])")
   assert_equals "[]" "${md_files}" "Unauthorized markdown files found in project: ${md_files}"
 }
 

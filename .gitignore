@@ -97,6 +97,7 @@ workbench/
 # Only README.md is permitted in external Git source control.
 *.md
 !README.md
+!docs/PHASE6_RUNBOOK.md
 .*md
 .*.md
 .*.md.*

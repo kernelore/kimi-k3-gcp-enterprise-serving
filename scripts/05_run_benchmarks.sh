@@ -306,14 +306,31 @@ if [ "${IN_CLUSTER}" = "true" ]; then
   echo "    Retrieving in-cluster benchmark results..."
   BENCH_POD=$(kubectl get pod -n llm-serving -l app=kimi-k3-benchmark -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
   mkdir -p "${RESULTS_DIR}"
+  RESULT_FILE="${RESULTS_DIR}/incluster_${MODE}_results.json"
   if [ -n "${BENCH_POD}" ]; then
     if ! kubectl cp -n llm-serving "${BENCH_POD}:/tmp/results/" "${RESULTS_DIR}/" 2>/dev/null; then
       echo "    [INFO] kubectl cp failed; extracting JSON result from pod logs..."
       kubectl logs -n llm-serving "${BENCH_POD}" | awk '/=== JSON_RESULT_START ===/{flag=1; next} /=== JSON_RESULT_END ===/{flag=0} flag' > "${RESULTS_DIR}/incluster_${MODE}_results.json" || true
       if [ ! -s "${RESULTS_DIR}/incluster_${MODE}_results.json" ]; then
-        echo "WARNING: Extracted benchmark JSON from pod logs is empty." >&2
+        echo "ERROR: Extracted benchmark JSON from pod logs is empty." >&2
         rm -f "${RESULTS_DIR}/incluster_${MODE}_results.json"
+        exit 1
       fi
+    fi
+    res_file="${RESULTS_DIR}/incluster_${MODE}_results.json"
+    if [ -f "${res_file}" ]; then
+      if ! python3 -m json.tool "${res_file}" >/dev/null 2>&1; then
+        echo "ERROR: Benchmark result file ${res_file} contains invalid JSON." >&2
+        exit 1
+      fi
+    fi
+    if [ ! -s "${RESULT_FILE}" ]; then
+      echo "ERROR: Retrieved benchmark result file ${RESULT_FILE} is missing or empty." >&2
+      exit 1
+    fi
+    if ! python3 -m json.tool "${RESULT_FILE}" >/dev/null 2>&1; then
+      echo "ERROR: Benchmark result file ${RESULT_FILE} is not valid JSON!" >&2
+      exit 1
     fi
   fi
   echo "    [OK] In-cluster benchmark job execution finished and results retrieved."

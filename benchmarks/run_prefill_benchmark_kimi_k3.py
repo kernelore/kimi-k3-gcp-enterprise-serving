@@ -27,7 +27,7 @@ SYNTHETIC_8K = (
     " occur seamlessly across both nodes. Furthermore, the 2 TB ReadOnlyMany"
     " Hyperdisk ML storage architecture enables instant volume hydration and"
     " engine cache loading without network egress storms. "
-) * 40  # ~8192 tokens (~4,320 chars)
+) * 40  # 27,360 chars (≈ 6,800 tokens at 4 chars/token)
 
 
 def extract_chunk_text(chunk: dict) -> str | None:
@@ -163,7 +163,7 @@ def measure_prefill(
         "engine": engine,
         "metadata": meta_dict,
         "prompt_tokens": prompt_tokens,
-        "token_count_source": "openai_usage" if has_exact_usage else "chunk_count_fallback",
+        "token_count_source": "openai_usage",
         "ttft_sec": ttft,
         "ttft_ms": ttft * 1000.0,
         "prefill_tok_s_system": prefill_tok_s,

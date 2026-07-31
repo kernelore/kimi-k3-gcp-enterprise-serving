@@ -21,9 +21,9 @@ FLOORS = {
         "google-cloud-bigquery": "3.42.2",
     },
     ".github/workflows/ci.yml": {
-        "actions/checkout": 4,
-        "hashicorp/setup-terraform": 3,
-        "actions/setup-python": 5,
+        "actions/checkout": 7,
+        "hashicorp/setup-terraform": 4,
+        "actions/setup-python": 7,
     },
     "terraform/manifests/templates/00-local-nvme-raid.yaml.template": {
         "google/cloud-sdk": "500.0.0",
@@ -44,6 +44,16 @@ def parse_version_tuple(v_str):
     while len(parts) < 3:
         parts.append(0)
     return tuple(parts)
+
+def check_workflow_content(content: str, dep: str, floor_val: int) -> bool:
+    pattern = r'uses:\s*' + re.escape(dep) + r'@v([0-9]+)'
+    matches = re.findall(pattern, content)
+    if not matches:
+        return False
+    for actual_str in matches:
+        if int(actual_str) < int(floor_val):
+            return False
+    return True
 
 def check_floors():
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))

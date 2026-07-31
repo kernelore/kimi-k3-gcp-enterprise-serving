@@ -91,7 +91,13 @@ t5_adv_04() {
 
   # P4-7: Ensure 05_run_benchmarks.sh prevents directory doubling and validates empty output
   assert_no_match '\$\{RESULTS_DIR\}/\$\{INFERENCE_ENGINE\}' "${PROJECT_ROOT}/scripts/05_run_benchmarks.sh" "Directory doubling found in 05_run_benchmarks.sh"
-  assert_match '! -s "\$\{RESULTS_DIR\}/incluster_' "${PROJECT_ROOT}/scripts/05_run_benchmarks.sh" "Missing empty output validation in 05_run_benchmarks.sh"
+  assert_match '! -s "\$\{RESULT_FILE\}"|! -s "\$\{RESULTS_DIR\}/incluster_' "${PROJECT_ROOT}/scripts/05_run_benchmarks.sh" "Missing empty output validation in 05_run_benchmarks.sh"
+  assert_match 'ERROR: Extracted benchmark JSON from pod logs is empty' "${PROJECT_ROOT}/scripts/05_run_benchmarks.sh" "Missing ERROR message on empty extracted benchmark JSON in 05_run_benchmarks.sh"
+  assert_match 'python3 -m json\.tool' "${PROJECT_ROOT}/scripts/05_run_benchmarks.sh" "Missing json.tool validation in 05_run_benchmarks.sh"
+
+  # P4-5: Ensure 03_deploy_workloads.sh carries error guard and no raw fallback for REDIS_PASSWORD
+  assert_match 'ERROR: Failed to obtain REDIS_PASSWORD' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Missing REDIS_PASSWORD error guard in 03_deploy_workloads.sh"
+  assert_no_match 'REDIS_PASSWORD:-redis-secret-password-change-me' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Prohibited REDIS_PASSWORD default fallback found outside render-only conditional"
 }
 
 # T5_ADV_05: Remediated Bug Fixes Verification (ADV-T5-09, Script Syntax, and Governance)
@@ -111,6 +117,13 @@ t5_adv_05() {
   done
 }
 
+# T5_ADV_06: Weights Cache Consistency Verification (F11)
+t5_adv_06() {
+  assert_match 'force_destroy\s*=\s*true' "${PROJECT_ROOT}/terraform/modules/storage/main.tf" "Missing force_destroy = true in storage main.tf"
+  assert_match 'PURGE_WEIGHTS_CACHE' "${PROJECT_ROOT}/README.md" "Missing PURGE_WEIGHTS_CACHE documentation in README.md"
+  assert_no_match 'retained.*weight.*cache|weight.*cache.*retained' "${PROJECT_ROOT}/README.md" "README improperly claims weight cache bucket is retained"
+}
+
 run_tier_5_tests() {
   log_info "=== Executing Tier 5: Adversarial White-Box Coverage Hardening Suite ==="
   run_test_case "T5_ADV_01_Domain_Manifest_Assertions" t5_adv_01
@@ -118,4 +131,5 @@ run_tier_5_tests() {
   run_test_case "T5_ADV_03_Gateway_Observability_Config" t5_adv_03
   run_test_case "T5_ADV_04_Remediated_Script_Security_Network_Isolation" t5_adv_04
   run_test_case "T5_ADV_05_Benchmark_Exception_Resilience_Syntax" t5_adv_05
+  run_test_case "T5_ADV_06_Weights_Cache_Consistency" t5_adv_06
 }

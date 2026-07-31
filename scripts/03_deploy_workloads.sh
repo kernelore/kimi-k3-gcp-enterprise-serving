@@ -97,7 +97,17 @@ HF_TOKEN_BASE64=$(echo -n "${HF_TOKEN:-placeholder_token}" | base64 -w 0 2>/dev/
 export HF_TOKEN_BASE64
 export GATEWAY_MASTER_KEY="${GATEWAY_MASTER_KEY:-sk-kimi-k3-master-secret-key-change-me}"
 export DB_PASSWORD="${DB_PASSWORD:-kimi-k3-gateway-admin-secret}"
-export SGLANG_CONTEXT_LENGTH="${SGLANG_CONTEXT_LENGTH:-131072}"
+if [ "${1:-}" != "--render-only" ] && [ "${1:-}" != "--stage-only" ]; then
+  if [ "${GATEWAY_MASTER_KEY}" = "sk-kimi-k3-master-secret-key-change-me" ]; then
+    echo "ERROR: GATEWAY_MASTER_KEY must be set to a secure secret outside render-only/stage-only mode!" >&2
+    echo "ERROR: Failed to obtain GATEWAY_MASTER_KEY (insecure default detected)" >&2
+    exit 1
+  fi
+  if [ "${DB_PASSWORD}" = "kimi-k3-gateway-admin-secret" ]; then
+    echo "ERROR: Failed to obtain DB_PASSWORD (insecure default detected)" >&2
+    exit 1
+  fi
+fi
 
 get_tf_output() {
   local val
@@ -117,34 +127,50 @@ get_gcloud_val() {
   fi
 }
 
-if [ "${1:-}" = "--render-only" ] || [ "${1:-}" = "--stage-only" ]; then
-  REDIS_PASSWORD="redis-secret-password-change-me"
-  REDIS_HOST="redis-cache.local"
-  DB_CONNECTION_NAME="${PROJECT_ID}:${REGION}:kimi-k3-gateway-db"
-else
-  REDIS_PASSWORD=$(get_tf_output redis_auth_string)
-  if [ -z "${REDIS_PASSWORD}" ]; then
-    REDIS_PASSWORD=$(get_gcloud_val redis instances get-auth-string kimi-k3-gateway-cache --region="${REGION}" --format="value(authString)" --quiet)
+REDIS_PASSWORD=$(get_tf_output redis_auth_string)
+if [ -z "${REDIS_PASSWORD}" ]; then
+  REDIS_PASSWORD=$(get_gcloud_val redis instances get-auth-string kimi-k3-gateway-cache --region="${REGION}" --format="value(authString)" --quiet)
+fi
+if [ -z "${REDIS_PASSWORD}" ]; then
+  if [ "${1:-}" = "--render-only" ] || [ "${1:-}" = "--stage-only" ]; then
+    REDIS_PASSWORD="redis-secret-password-change-me"
+  else
+    echo "ERROR: Failed to obtain REDIS_PASSWORD from Terraform output or gcloud!" >&2
+    exit 1
   fi
-  REDIS_PASSWORD="${REDIS_PASSWORD:-redis-secret-password-change-me}"
-
-  # Extract Redis and Cloud SQL details from Terraform (or gcloud fallback)
-  REDIS_HOST=$(get_tf_output redis_host)
-  if [ -z "${REDIS_HOST}" ]; then
-    REDIS_HOST=$(get_gcloud_val redis instances describe kimi-k3-gateway-cache --region="${REGION}" --format="value(host)" --quiet)
-  fi
-  REDIS_HOST="${REDIS_HOST:-redis-cache.local}"
-
-  DB_CONNECTION_NAME=$(get_tf_output db_instance_connection_name)
-  if [ -z "${DB_CONNECTION_NAME}" ]; then
-    DB_CONNECTION_NAME=$(get_gcloud_val sql instances describe kimi-k3-gateway-db --format="value(connectionName)" --quiet)
-  fi
-  DB_CONNECTION_NAME="${DB_CONNECTION_NAME:-${PROJECT_ID}:${REGION}:kimi-k3-gateway-db}"
 fi
 export REDIS_PASSWORD
+
 REDIS_PASSWORD_ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote_plus(sys.argv[1]))" "${REDIS_PASSWORD}")
 export REDIS_PASSWORD_ENCODED
+
+# Extract Redis and Cloud SQL details from Terraform (or gcloud fallback)
+REDIS_HOST=$(get_tf_output redis_host)
+if [ -z "${REDIS_HOST}" ]; then
+  REDIS_HOST=$(get_gcloud_val redis instances describe kimi-k3-gateway-cache --region="${REGION}" --format="value(host)" --quiet)
+fi
+if [ -z "${REDIS_HOST}" ]; then
+  if [ "${1:-}" = "--render-only" ] || [ "${1:-}" = "--stage-only" ]; then
+    REDIS_HOST="redis-cache.local"
+  else
+    echo "ERROR: Failed to obtain REDIS_HOST from Terraform output or gcloud!" >&2
+    exit 1
+  fi
+fi
 export REDIS_HOST
+
+DB_CONNECTION_NAME=$(get_tf_output db_instance_connection_name)
+if [ -z "${DB_CONNECTION_NAME}" ]; then
+  DB_CONNECTION_NAME=$(get_gcloud_val sql instances describe kimi-k3-gateway-db --format="value(connectionName)" --quiet)
+fi
+if [ -z "${DB_CONNECTION_NAME}" ]; then
+  if [ "${1:-}" = "--render-only" ] || [ "${1:-}" = "--stage-only" ]; then
+    DB_CONNECTION_NAME="${PROJECT_ID}:${REGION}:kimi-k3-gateway-db"
+  else
+    echo "ERROR: Failed to obtain DB_CONNECTION_NAME from Terraform output or gcloud!" >&2
+    exit 1
+  fi
+fi
 export DB_CONNECTION_NAME
 
 export TRTLLM_VIP="kimi-k3-serving-svc.llm-serving.svc.cluster.local"
@@ -153,7 +179,7 @@ export SGLANG_PP_SIZE="${SGLANG_PP_SIZE:-1}"
 export SGLANG_PP_LAYER_PARTITION="${SGLANG_PP_LAYER_PARTITION:-}"
 export SGLANG_EP_SIZE="${SGLANG_EP_SIZE:-16}"
 export SGLANG_PORT="${SGLANG_PORT:-8000}"
-export SGLANG_MEM_FRACTION_STATIC="${SGLANG_MEM_FRACTION_STATIC:-0.90}"
+export SGLANG_MEM_FRACTION_STATIC="${SGLANG_MEM_FRACTION_STATIC:-0.85}"
 export SGLANG_SCHEDULE_POLICY="${SGLANG_SCHEDULE_POLICY:-lpm}"
 export SGLANG_QUANTIZATION="${SGLANG_QUANTIZATION:-}"
 export SGLANG_ENABLE_TORCH_COMPILE="${SGLANG_ENABLE_TORCH_COMPILE:-false}"
@@ -161,7 +187,6 @@ export SGLANG_ATTENTION_BACKEND="${SGLANG_ATTENTION_BACKEND:-triton}"
 export SGLANG_CONTEXT_LENGTH="${SGLANG_CONTEXT_LENGTH:-131072}"
 export SGLANG_REASONING_PARSER="${SGLANG_REASONING_PARSER:-}"
 export SGLANG_TOOL_CALL_PARSER="${SGLANG_TOOL_CALL_PARSER:-}"
-export SGLANG_EXTRA_ARGS="${SGLANG_EXTRA_ARGS:---moe-runner-backend flashinfer_mxfp4 --decode-attention-backend flashmla --kv-cache-dtype fp8_e4m3}"
 export EXPECTED_MODEL_ARCHITECTURE="${EXPECTED_MODEL_ARCHITECTURE:-}"
 export MIN_WEIGHTS_GIB="${MIN_WEIGHTS_GIB:-1000}"
 export LEADER_ADDR="${LEADER_ADDR:-kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local}"
@@ -188,7 +213,7 @@ export INFERENCE_ENGINE INFERENCE_SERVER_LABEL SERVING_IMAGE
 # 1. Render manifest templates (excluding HF_TOKEN from substitution to prevent plaintext baking)
 echo "--> 1. Rendering manifest templates from ${TEMPLATE_DIR} to ${GENERATED_DIR}..."
 # shellcheck disable=SC2016
-BASE_ALLOWED_VARS='${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${SERVING_MODEL_NAME} ${TRTLLM_TP_SIZE} ${TRTLLM_PP_SIZE} ${TRTLLM_EP_SIZE} ${TRTLLM_MAX_SEQ_LEN} ${SGLANG_TP_SIZE} ${SGLANG_PP_SIZE} ${SGLANG_PP_LAYER_PARTITION} ${SGLANG_EP_SIZE} ${SGLANG_PORT} ${SGLANG_MEM_FRACTION_STATIC} ${SGLANG_SCHEDULE_POLICY} ${SGLANG_QUANTIZATION} ${SGLANG_ENABLE_TORCH_COMPILE} ${SGLANG_ATTENTION_BACKEND} ${SGLANG_CONTEXT_LENGTH} ${SGLANG_REASONING_PARSER} ${SGLANG_TOOL_CALL_PARSER} ${SGLANG_EXTRA_ARGS} ${EXPECTED_MODEL_ARCHITECTURE} ${MIN_WEIGHTS_GIB} ${LEADER_ADDR} ${HYPERDISK_ML_SIZE_GB} ${GCS_WEIGHTS_BUCKET} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${TRTLLM_VIP} ${GPU_MAX_NODES} ${SERVING_REPLICAS} ${NODES_PER_REPLICA} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${SERVING_IMAGE}'
+BASE_ALLOWED_VARS='${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${SERVING_MODEL_NAME} ${TRTLLM_TP_SIZE} ${TRTLLM_PP_SIZE} ${TRTLLM_EP_SIZE} ${TRTLLM_MAX_SEQ_LEN} ${SGLANG_TP_SIZE} ${SGLANG_PP_SIZE} ${SGLANG_PP_LAYER_PARTITION} ${SGLANG_EP_SIZE} ${SGLANG_PORT} ${SGLANG_MEM_FRACTION_STATIC} ${SGLANG_SCHEDULE_POLICY} ${SGLANG_QUANTIZATION} ${SGLANG_ENABLE_TORCH_COMPILE} ${SGLANG_ATTENTION_BACKEND} ${SGLANG_CONTEXT_LENGTH} ${SGLANG_REASONING_PARSER} ${SGLANG_TOOL_CALL_PARSER} ${EXPECTED_MODEL_ARCHITECTURE} ${MIN_WEIGHTS_GIB} ${LEADER_ADDR} ${HYPERDISK_ML_SIZE_GB} ${GCS_WEIGHTS_BUCKET} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${TRTLLM_VIP} ${GPU_MAX_NODES} ${SERVING_REPLICAS} ${NODES_PER_REPLICA} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${SERVING_IMAGE}'
 for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
   if [ -f "${template_file}" ]; then
     basename=$(basename "${template_file}" .template)
@@ -246,47 +271,85 @@ echo "--> 4. Waiting for local-nvme-raid-formatter DaemonSet rollout..."
 kubectl rollout status daemonset/local-nvme-raid-formatter -n kube-system --timeout=180s || echo "WARNING: DaemonSet rollout timeout (may be waiting for spot nodes to register)."
 
 # 3b. Verify RoCEv2 Network Fabric and NCCL bus bandwidth floor (>= 100 GB/s)
-if [ "${SKIP_FABRIC_CHECK:-false}" != "true" ]; then
+if [ "${SKIP_FABRIC_CHECK:-false}" = "true" ]; then
+  echo "WARNING: SKIP_FABRIC_CHECK=true set. Bypassing RoCEv2 network fabric and NCCL bus bandwidth verification!" >&2
+else
   echo "--> 3b. Verifying RoCEv2 RDMA network fabric and NCCL bus bandwidth (floor >= 100 GB/s)..."
   kubectl apply -f "${GENERATED_DIR}/00c-nccl-test-job.yaml"
   kubectl apply -f "${GENERATED_DIR}/00d-serving-nccl-parity-job.yaml"
-  echo "    Waiting for NCCL RoCEv2 StatefulSet rollout (timeout: 600s)..."
-  if ! kubectl rollout status statefulset/nccl-roce-test -n llm-serving --timeout=600s; then
-    echo "ERROR: NCCL RoCEv2 test StatefulSet rollout failed or timed out!" >&2
-    kubectl logs -n llm-serving -l app=nccl-roce-test --tail=50 >&2 || true
-    exit 1
-  fi
-  echo "    Checking NCCL bus bandwidth result..."
+
+  echo "    Polling NCCL RoCEv2 rank-0 pod (nccl-roce-test-0) for machine marker (timeout: 300s)..."
+  MARKER_LINE=""
   BUSBW_VAL=""
-  MAX_ATTEMPTS=30
+  MAX_ATTEMPTS=60
   ATTEMPT=0
   while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-    LOG_OUTPUT=$(kubectl logs statefulset/nccl-roce-test -n llm-serving -c nccl-test 2>/dev/null || kubectl logs nccl-roce-test-0 -n llm-serving 2>/dev/null || true)
-    BUSBW_LINE=$(echo "${LOG_OUTPUT}" | grep -i "# Avg bus bandwidth" | tail -n 1 || true)
-    if [ -n "${BUSBW_LINE}" ]; then
-      BUSBW_VAL=$(echo "${BUSBW_LINE}" | awk -F':' '{print $2}' | xargs || true)
+    LOG_OUTPUT=$(kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test 2>/dev/null || true)
+    MARKER_LINE=$(echo "${LOG_OUTPUT}" | grep -E "^NCCL_GATE_RESULT " | tail -n 1 || true)
+    if [ -n "${MARKER_LINE}" ]; then
       break
     fi
     ATTEMPT=$((ATTEMPT + 1))
     sleep 5
   done
 
-  if [ -n "${BUSBW_VAL}" ]; then
-    echo "    Observed NCCL bus bandwidth: ${BUSBW_VAL} GB/s"
-    if ! awk "BEGIN {exit !(${BUSBW_VAL:-0} >= 100.0)}" 2>/dev/null; then
-      echo "ERROR: NCCL RoCEv2 bus bandwidth (${BUSBW_VAL} GB/s) is below required 100 GB/s floor!" >&2
-      exit 1
-    fi
-    echo "    [OK] NCCL RoCEv2 bus bandwidth meets >= 100 GB/s requirement."
-  else
-    echo "    WARNING: Could not parse NCCL bus bandwidth from logs." >&2
-  fi
-
-  echo "    Waiting for NCCL parity check StatefulSet rollout (timeout: 300s)..."
-  if ! kubectl rollout status statefulset/nccl-parity-check -n llm-serving --timeout=300s; then
-    echo "ERROR: NCCL parity check StatefulSet failed!" >&2
+  if [ -z "${MARKER_LINE}" ]; then
+    echo "ERROR: NCCL RoCEv2 verification failed: marker absent from nccl-roce-test-0 at timeout (300s)!" >&2
+    kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test --tail=50 >&2 || true
     exit 1
   fi
+
+  if echo "${MARKER_LINE}" | grep -E -q "^NCCL_GATE_RESULT fail"; then
+    echo "ERROR: NCCL RoCEv2 verification reported failure marker (${MARKER_LINE})!" >&2
+    kubectl logs nccl-roce-test-0 -n llm-serving --tail=50 >&2 || true
+    exit 1
+  fi
+  BUSBW_VAL=$(echo "${MARKER_LINE}" | awk -F'busbw_gbps=' '{print $2}' | awk '{print $1}' | xargs || true)
+  if [ -z "${BUSBW_VAL}" ]; then
+    echo "ERROR: NCCL RoCEv2 bus bandwidth value is empty (${MARKER_LINE})!" >&2
+    exit 1
+  fi
+  if ! echo "${BUSBW_VAL}" | grep -E -q '^[0-9]+(\.[0-9]+)?$'; then
+    echo "ERROR: NCCL RoCEv2 bus bandwidth value '${BUSBW_VAL}' is non-numeric or invalid!" >&2
+    exit 1
+  fi
+  if ! awk -v val="${BUSBW_VAL}" 'BEGIN {exit !(val >= 100.0)}' 2>/dev/null; then
+    echo "ERROR: NCCL RoCEv2 bus bandwidth (${BUSBW_VAL} GB/s) is below required 100 GB/s floor!" >&2
+    exit 1
+  fi
+  echo "    [OK] NCCL RoCEv2 bus bandwidth meets >= 100 GB/s requirement (${BUSBW_VAL} GB/s)."
+
+  echo "    Polling NCCL parity check rank-0 pod (nccl-parity-check-0) for parity marker (timeout: 300s)..."
+  PARITY_MARKER=""
+  MAX_ATTEMPTS=60
+  ATTEMPT=0
+  while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+    LOG_OUTPUT=$(kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check 2>/dev/null || true)
+    PARITY_MARKER=$(echo "${LOG_OUTPUT}" | grep -E "^NCCL_PARITY_RESULT " | tail -n 1 || true)
+    if [ -n "${PARITY_MARKER}" ]; then
+      break
+    fi
+    ATTEMPT=$((ATTEMPT + 1))
+    sleep 5
+  done
+
+  if [ -z "${PARITY_MARKER}" ]; then
+    echo "ERROR: NCCL parity check failed: marker absent from nccl-parity-check-0 at timeout (300s)!" >&2
+    kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    exit 1
+  fi
+  if echo "${PARITY_MARKER}" | grep -E -q "^NCCL_PARITY_RESULT fail"; then
+    echo "ERROR: NCCL parity check failed: rank 0 emitted fail marker (${PARITY_MARKER})!" >&2
+    kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    exit 1
+  fi
+  if ! echo "${PARITY_MARKER}" | grep -E -q "^NCCL_PARITY_RESULT pass$"; then
+    echo "ERROR: NCCL parity check reported failure or invalid marker (${PARITY_MARKER})!" >&2
+    kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    exit 1
+  fi
+  echo "    [OK] NCCL serving-image parity verified (${PARITY_MARKER})."
+
   kubectl delete statefulset nccl-roce-test nccl-parity-check -n llm-serving --ignore-not-found=true
 fi
 

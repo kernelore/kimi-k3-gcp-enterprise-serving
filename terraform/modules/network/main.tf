@@ -44,6 +44,24 @@ resource "google_compute_firewall" "allow_internal_serving_8000" {
   source_ranges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 }
 
+resource "google_compute_firewall" "allow_internal_primary_vpc" {
+  name    = "allow-internal-primary-vpc"
+  project = var.project_id
+  network = google_compute_network.vpc.id
+
+  allow {
+    protocol = "tcp"
+  }
+  allow {
+    protocol = "udp"
+  }
+  allow {
+    protocol = "icmp"
+  }
+
+  source_ranges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+}
+
 resource "google_compute_firewall" "allow_ssh_roce_primary" {
   name    = "allow-ssh-roce-primary"
   project = var.project_id

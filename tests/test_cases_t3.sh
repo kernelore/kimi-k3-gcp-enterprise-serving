@@ -70,8 +70,18 @@ t3_c08() {
     assert_no_match 'glm52|glm-5|NVFP4|vllm' "${PROJECT_ROOT}/terraform/modules/${submod}" "GLM leakage in submodule ${submod}"
   done
   local md_files
-  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform', '_worker_notes')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md')])")
+  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md', 'PHASE6_RUNBOOK.md')])")
   assert_equals "[]" "${md_files}" "Unauthorized markdown files in project: ${md_files}"
+}
+
+t3_c09() {
+  assert_match 'allow_internal_primary_vpc' "${PROJECT_ROOT}/terraform/modules/network/main.tf" "Missing allow_internal_primary_vpc firewall rule"
+  assert_match 'GLOO_SOCKET_IFNAME' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-sglang-mpi.yaml.template" "Missing GLOO_SOCKET_IFNAME in SGLang template"
+  assert_match 'GLOO_SOCKET_IFNAME' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-trtllm-mpi.yaml.template" "Missing GLOO_SOCKET_IFNAME in TRTLLM template"
+  assert_match 'GLOO_SOCKET_IFNAME' "${PROJECT_ROOT}/terraform/manifests/templates/00c-nccl-test-job.yaml.template" "Missing GLOO_SOCKET_IFNAME in 00c template"
+  assert_match 'GLOO_SOCKET_IFNAME' "${PROJECT_ROOT}/terraform/manifests/templates/00d-serving-nccl-parity-job.yaml.template" "Missing GLOO_SOCKET_IFNAME in 00d template"
+  assert_match '10\.90\.0\.0' "${PROJECT_ROOT}/terraform/modules/database/main.tf" "Missing PSA range 10.90.0.0 in database module"
+  assert_no_match 'kind: NetworkPolicy' "${PROJECT_ROOT}/terraform" "Unexpected NetworkPolicy found in terraform"
 }
 
 run_tier_3_tests() {
@@ -84,4 +94,5 @@ run_tier_3_tests() {
   run_test_case "T3_C06_Hermetic_Build_With_VCS_Governance" t3_c06
   run_test_case "T3_C07_Dual_Engine_Switching_Idempotency" t3_c07
   run_test_case "T3_C08_Sovereign_Audit_Across_All_Modules" t3_c08
+  run_test_case "T3_C09_MultiNode_Network_Audit_Invariants" t3_c09
 }

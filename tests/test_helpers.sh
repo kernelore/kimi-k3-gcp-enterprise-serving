@@ -23,10 +23,9 @@ if [ -z "${PROJECT_ROOT:-}" ]; then
   export PROJECT_ROOT
 fi
 
-# Auto-bootstrap config.env from config.env.example if missing
-if [ ! -f "${PROJECT_ROOT}/scripts/config.env" ] && [ -f "${PROJECT_ROOT}/scripts/config.env.example" ]; then
-  cp "${PROJECT_ROOT}/scripts/config.env.example" "${PROJECT_ROOT}/scripts/config.env"
-  sed -i 's|export PROJECT_ID="YOUR_PROJECT_ID"|export PROJECT_ID="ci-test"|' "${PROJECT_ROOT}/scripts/config.env"
+if [ ! -f "${PROJECT_ROOT}/scripts/config.env" ]; then
+  echo "ERROR: scripts/config.env missing — cp scripts/config.env.example scripts/config.env" >&2
+  exit 1
 fi
 
 # Counters
