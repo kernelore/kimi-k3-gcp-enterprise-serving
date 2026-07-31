@@ -284,6 +284,7 @@ spec:
           # Multi-node loading of the 1.56 TB checkpoint can exceed the default distributed-init timeout
           exec python3 -m sglang.launch_server \
             --model-path /mnt/rox/Kimi-K3 \
+            --served-model-name moonshotai/Kimi-K3 \
             --dist-init-addr "${LEADER_HOST}" \
             --dist-timeout 3600 \
             --nnodes 2 \

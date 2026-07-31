@@ -56,7 +56,7 @@ def parse_args():
       help="TensorRT-LLM completions endpoint URL",
   )
   parser.add_argument(
-      "--model", default="kimi-k3-2.8t-mxfp4", help="Served model ID"
+      "--model", default="moonshotai/Kimi-K3", help="Served model ID"
   )
   parser.add_argument(
       "--output",

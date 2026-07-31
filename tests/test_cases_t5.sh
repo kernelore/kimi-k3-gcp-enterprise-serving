@@ -69,6 +69,7 @@ t5_adv_02() {
   assert_match 'MODEL_REPO_ID|Kimi-K3|moonshot' "${PROJECT_ROOT}/terraform/manifests/templates/02-download-weights.yaml.template" "Missing HuggingFace target model repo in download template"
   assert_match 'gsutil|gcloud|GCS_BUCKET' "${PROJECT_ROOT}/terraform/manifests/templates/02-hydrate-weights-gcs.yaml.template" "Missing GCS transfer tooling in hydration template"
   assert_match 'fla-core' "${PROJECT_ROOT}/docker/Dockerfile.sglang" "Missing fla-core requirement in docker/Dockerfile.sglang"
+  assert_match '--served-model-name moonshotai/Kimi-K3' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-sglang-mpi.yaml.template" "Missing --served-model-name in SGLang template"
 }
 
 # T5_ADV_03: Gateway, Observability, HPA, and MoE Compilation Specializations

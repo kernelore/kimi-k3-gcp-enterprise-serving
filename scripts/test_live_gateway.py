@@ -20,7 +20,7 @@ def send_chat_completion():
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "kimi-k3-2.8t-mxfp4",
+        "model": "moonshotai/Kimi-K3",
         "messages": [{"role": "user", "content": "Hello Kimi K3, verify your MXFP4 routing."}],
         "temperature": 0.2,
         "max_tokens": 100

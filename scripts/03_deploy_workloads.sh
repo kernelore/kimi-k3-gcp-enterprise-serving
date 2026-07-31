@@ -46,7 +46,7 @@ validate_hf_token() {
 }
 
 export MODEL_REPO_ID="${MODEL_REPO_ID:-moonshotai/Kimi-K3}"
-export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-kimi-k3-2.8t-mxfp4}"
+export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-moonshotai/Kimi-K3}"
 export TRTLLM_TP_SIZE="${TRTLLM_TP_SIZE:-8}"
 export TRTLLM_PP_SIZE="${TRTLLM_PP_SIZE:-2}"
 export TRTLLM_EP_SIZE="${TRTLLM_EP_SIZE:-8}"
