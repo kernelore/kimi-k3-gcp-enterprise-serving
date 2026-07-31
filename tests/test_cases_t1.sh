@@ -133,6 +133,7 @@ t1_f4_05() {
 t1_f5_01() {
   assert_match 'count.*8|range\(8\)' "${PROJECT_ROOT}/terraform/modules/network/main.tf" "Missing 8 secondary networks in network module"
   assert_match 'range\(8\)' "${PROJECT_ROOT}/terraform/modules/node_pool_spot/main.tf" "Missing 8 NIC attachments in spot pool module"
+  assert_match 'allow_internal_primary_vpc' "${PROJECT_ROOT}/terraform/modules/network/main.tf" "Missing allow_internal_primary_vpc in network module"
 }
 
 t1_f5_02() {
@@ -143,8 +144,11 @@ t1_f5_03() {
   for f in "${PROJECT_ROOT}"/terraform/manifests/generated/09-*.yaml; do
     if [ -f "${f}" ]; then
       assert_match "set_nccl_env.sh" "${f}" "Missing set_nccl_env.sh in ${f}"
+      assert_match "GLOO_SOCKET_IFNAME" "${f}" "Missing GLOO_SOCKET_IFNAME in ${f}"
     fi
   done
+  assert_match "GLOO_SOCKET_IFNAME" "${PROJECT_ROOT}/terraform/manifests/templates/00c-nccl-test-job.yaml.template" "Missing GLOO_SOCKET_IFNAME in 00c template"
+  assert_match "GLOO_SOCKET_IFNAME" "${PROJECT_ROOT}/terraform/manifests/templates/00d-serving-nccl-parity-job.yaml.template" "Missing GLOO_SOCKET_IFNAME in 00d template"
 }
 
 t1_f5_04() {

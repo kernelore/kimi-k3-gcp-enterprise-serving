@@ -134,6 +134,8 @@ spec:
           value: "INIT,NET,GRAPH"
         - name: NCCL_SOCKET_IFNAME
           value: "eth0"
+        - name: GLOO_SOCKET_IFNAME
+          value: "eth0"
         - name: SGLANG_TP_SIZE
           value: "${SGLANG_TP_SIZE}"
         - name: SGLANG_PP_SIZE

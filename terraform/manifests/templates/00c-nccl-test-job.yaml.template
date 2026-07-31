@@ -68,6 +68,8 @@ spec:
           value: "INIT,NET,GRAPH"
         - name: NCCL_SOCKET_IFNAME
           value: "eth0"
+        - name: GLOO_SOCKET_IFNAME
+          value: "eth0"
         securityContext:
           capabilities:
             add:
@@ -82,6 +84,7 @@ spec:
           echo 'NCCL_DEBUG="INFO"' >> /etc/environment
           echo 'NCCL_DEBUG_SUBSYS="INIT,NET,GRAPH"' >> /etc/environment
           echo 'NCCL_SOCKET_IFNAME="eth0"' >> /etc/environment
+          echo 'GLOO_SOCKET_IFNAME="eth0"' >> /etc/environment
           echo 'source /usr/local/gib/scripts/set_nccl_env.sh 2>/dev/null || true' >> /etc/profile
           echo 'source /usr/local/gib/scripts/set_nccl_env.sh 2>/dev/null || true' >> /root/.bashrc
           export LD_LIBRARY_PATH="/third_party/nccl/build/lib:/nccl-plugin-gib/build:/nccl-tuner/build:/nccl-shim/build:/usr/local/nvidia/lib64:/usr/local/gib/lib64:/usr/local/nvidia/lib:/usr/local/gib/lib"
@@ -90,6 +93,7 @@ spec:
           export NCCL_DEBUG="INFO"
           export NCCL_DEBUG_SUBSYS="INIT,NET,GRAPH"
           export NCCL_SOCKET_IFNAME="eth0"
+          export GLOO_SOCKET_IFNAME="eth0"
           NODE_RANK=${HOSTNAME##*-}
           echo "Resolving pod IPs for /etc/hosts..."
           while ! getent hosts nccl-roce-test-0.nccl-test-headless.llm-serving.svc.cluster.local >/dev/null || ! getent hosts nccl-roce-test-1.nccl-test-headless.llm-serving.svc.cluster.local >/dev/null; do
@@ -108,7 +112,7 @@ spec:
             sleep 15
             echo "Running 2-node all_reduce_perf over RoCEv2 fabric..."
             LOG_FILE=$(mktemp)
-            if ! mpirun -n 16 --allow-run-as-root -x LD_LIBRARY_PATH -x PATH -x NCCL_CONF_FILE=/usr/local/gib/scripts/nccl.conf -x NCCL_DEBUG -x NCCL_DEBUG_SUBSYS -x NCCL_SOCKET_IFNAME --mca plm_rsh_args "-p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" --hostfile /tmp/hostfile /third_party/nccl-tests/build/all_reduce_perf -b 8M -e 512M -f 2 -g 1 2>&1 | tee "${LOG_FILE}"; then
+            if ! mpirun -n 16 --allow-run-as-root -x LD_LIBRARY_PATH -x PATH -x NCCL_CONF_FILE=/usr/local/gib/scripts/nccl.conf -x NCCL_DEBUG -x NCCL_DEBUG_SUBSYS -x NCCL_SOCKET_IFNAME -x GLOO_SOCKET_IFNAME --mca plm_rsh_args "-p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" --hostfile /tmp/hostfile /third_party/nccl-tests/build/all_reduce_perf -b 8M -e 512M -f 2 -g 1 2>&1 | tee "${LOG_FILE}"; then
               echo "ERROR: mpirun failed!" >&2
               echo "NCCL_GATE_RESULT fail"
               exit 1
