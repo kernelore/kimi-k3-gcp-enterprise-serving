@@ -11,7 +11,7 @@ Live deployment and validation are strictly gated by the following prerequisite 
    - **Hyperdisk ML**: `ROX` ReadOnlyMany block storage quota (2,000 GB minimum).
    - **Cloud SQL**: PostgreSQL 15 instance quota.
    - **Cloud Memorystore**: Redis instance quota.
-   - **Networking**: Cloud NAT and Private Service Connect (`10.90.0.0/16`).
+   - **Networking**: Cloud NAT and Private Service Access / VPC peering (`10.90.0.0/16`).
 
 ---
 
@@ -46,7 +46,7 @@ graph TD
 - **Failure Action**: Abort deployment; do not launch inference engines on degraded interconnects.
 
 ### Step 4: Dual-Engine Workload & Gateway Deployment (`03_deploy_workloads.sh`)
-- **Action**: Execute `bash scripts/03_deploy_workloads.sh` to deploy SGLang and TensorRT-LLM StatefulSets (`replicas: 2`) and Tier 1 LiteLLM Gateway.
+- **Action**: Execute `bash scripts/03_deploy_workloads.sh` to deploy the selected inference engine StatefulSet (`SGLang` or `TensorRT-LLM` per `INFERENCE_ENGINE`, `replicas: 2`) and Tier 1 LiteLLM Gateway.
 - **Go/No-Go Gate**: Rank-0 containers must pass liveness/readiness probes and emit successful initialization markers within timeout (`3600s`).
 
 ### Step 5: Live Gateway & Reasoning CoT Verification (`04_verify_cluster.sh` & `test_live_gateway.py`)
@@ -69,7 +69,7 @@ graph TD
   gcloud redis instances list --project="${PROJECT_ID}"
   gcloud storage ls --project="${PROJECT_ID}"
   ```
-- **Go/No-Go Gate**: All four commands must return empty lists for validation project resources, confirming zero billing leakage.
+- **Go/No-Go Gate**: Disks, SQL instances, and Redis instances must return empty lists; the storage bucket sweep must list only the documented retained bucket set (`TF_STATE_BUCKET` / retained weight cache buckets) and flag any unexpected or orphaned resources.
 
 ---
 
@@ -101,4 +101,4 @@ The table below outlines expected GCP billing costs for a full Phase 6 live vali
 | **Cloud SQL / Redis / NAT** | PostgreSQL 15, Memorystore Redis, Cloud NAT + Router | ~$8.50 / hr | ~$34.00 | ~$51.00 |
 | **Total Estimated Cost** | **Full Live Validation Environment** | **~$85.00 / hr** | **~$340.00** | **~$510.00** |
 
-*Note: Estimates based on Google Cloud Spot / us-central1 pricing. Costs scale linearly with Data Parallelism replicas (`DP=N`).*
+*Note: Figures are estimated for default region `europe-north1` (or explicitly queried region). All figures are estimates. Costs scale linearly with Data Parallelism replicas (`DP=N`).*
