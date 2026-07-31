@@ -25,20 +25,32 @@ rm -f /tmp/survivors.txt
 
 SGLANG_MANIFEST="terraform/manifests/generated/09-kimi-k3-sglang-mpi.yaml"
 if [ -f "${SGLANG_MANIFEST}" ]; then
-  if ! grep -q -- "--moe-runner-backend flashinfer_mxfp4 --kv-cache-dtype fp8_e4m3" "${SGLANG_MANIFEST}"; then
-    echo "ERROR: SGLang performance flags not found on reachable runtime path in generated manifest!" >&2
-    exit 1
-  fi
-
-  # Attention-backend drift guard. Kimi K3 is a KDA/MLA hybrid on Blackwell:
-  #   flashmla     - Hopper-only kernel
-  #   trtllm_mla   - not the dispatch path SGLang selects for this family
-  #   trtllm_mha   - the SM100 default for MHA architectures; K3 is AttentionArch.MLA
-  #   --attention-backend  - sets the base for BOTH phases, silently pinning decode
-  # Decode must stay unpinned so SGLang's own SM100 dispatch (flashinfer) applies.
-  # Comment lines are exempt - they document precisely why these are forbidden.
+  # Both checks below run against the manifest with comment lines stripped. Comments are
+  # exempt from the forbidden list (they document precisely why those flags are forbidden),
+  # and they must not be able to satisfy the required list either - a flag mentioned only
+  # in prose is not a flag that reaches the engine.
   grep -vE '^[[:space:]]*#' "${SGLANG_MANIFEST}" > /tmp/sglang_code.txt
-  for FORBIDDEN in "flashmla" "trtllm_mla" "trtllm_mha" "--attention-backend " "--disable-cuda-graph" "--cuda-graph-backend-decode"; do
+
+  # Positive parity with the SGLang cookbook's B200 / nnodes 2 cell.
+  for REQUIRED in "--disable-flashinfer-autotune" "--watchdog-timeout 3600" \
+                  '--model-loader-extra-config' "--reasoning-parser" "--tool-call-parser" \
+                  "--trust-remote-code" "--mem-fraction-static"; do
+    if ! grep -q -- "${REQUIRED}" /tmp/sglang_code.txt; then
+      echo "ERROR: cookbook flag '${REQUIRED}' missing from generated manifest!" >&2
+      rm -f /tmp/sglang_code.txt
+      exit 1
+    fi
+  done
+
+  # Wrong-recipe drift guard. This deployment is A4 (B200 HGX, 2 nodes). Flags below come
+  # from a different machine class or a different model family and must never be hardcoded:
+  #   flashmla                   - cookbook uses it only on H100/H200 (Hopper)
+  #   trtllm_mla                 - not the dispatch path SGLang selects for this family
+  #   trtllm_mha                 - the SM100 default for MHA architectures; K3 is AttentionArch.MLA
+  #   --attention-backend        - sets the base for BOTH phases, silently pinning decode
+  #   --mamba-full-memory-ratio  - carried from AI-Hypercomputer/gpu-recipes a4x (GB200/NVL72),
+  #                                a different machine entirely; absent from the cookbook
+  for FORBIDDEN in "flashmla" "trtllm_mla" "trtllm_mha" "--attention-backend " "--disable-cuda-graph" "--cuda-graph-backend-decode" "--mamba-full-memory-ratio"; do
     if grep -q -- "${FORBIDDEN}" /tmp/sglang_code.txt; then
       echo "ERROR: forbidden SGLang flag '${FORBIDDEN}' present in generated manifest!" >&2
       rm -f /tmp/sglang_code.txt

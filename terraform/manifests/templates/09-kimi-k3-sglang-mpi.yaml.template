@@ -170,6 +170,10 @@ spec:
           value: "${SGLANG_DECODE_ATTENTION_BACKEND}"
         - name: SGLANG_LINEAR_ATTN_PREFILL_BACKEND
           value: "${SGLANG_LINEAR_ATTN_PREFILL_BACKEND}"
+        - name: SGLANG_MOE_RUNNER_BACKEND
+          value: "${SGLANG_MOE_RUNNER_BACKEND}"
+        - name: SGLANG_KV_CACHE_DTYPE
+          value: "${SGLANG_KV_CACHE_DTYPE}"
         - name: SGLANG_CONTEXT_LENGTH
           value: "${SGLANG_CONTEXT_LENGTH}"
         - name: SGLANG_REASONING_PARSER
@@ -284,22 +288,24 @@ spec:
           if [ "${SGLANG_ENABLE_TORCH_COMPILE}" = "true" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --enable-torch-compile"
           fi
+          # All three attention backends are UNSET by default, because the SGLang cookbook
+          # pins no attention backend on any Blackwell cell -- B200, B300, GB200 and GB300
+          # all rely on the engine's own dispatch. Only the Hopper cells (H100, H200) pin
+          # --decode-attention-backend flashmla, which is why flashmla must never appear
+          # here, and only the ROCm cells pin --attention-backend triton.
+          # SGLang classifies KimiK3ForConditionalGeneration as AttentionArch.MLA (same
+          # branch as KimiLinearForCausalLM in configs/model_config.py), and
+          # _get_default_attn_backend resolves MLA on SM100 to flashinfer.
+          # Set these only with measurements in hand.
           if [ -n "${SGLANG_PREFILL_ATTENTION_BACKEND}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --prefill-attention-backend ${SGLANG_PREFILL_ATTENTION_BACKEND}"
           fi
-          # Decode stays unset by default so SGLang auto-selects. Kimi K3 is an MLA
-          # architecture to SGLang: configs/model_config.py maps
-          # KimiK3ForConditionalGeneration into the same branch as KimiLinearForCausalLM
-          # and sets attention_arch = AttentionArch.MLA, so use_mla_backend() is true.
-          # _get_default_attn_backend then resolves MLA on Blackwell/SM100 to flashinfer.
-          # Do NOT pin flashmla (Hopper kernel) and do NOT pin trtllm_mha (the SM100
-          # default for MHA architectures, which K3 is not).
           if [ -n "${SGLANG_DECODE_ATTENTION_BACKEND}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --decode-attention-backend ${SGLANG_DECODE_ATTENTION_BACKEND}"
           fi
-          # KDA linear-attention prefill kernel for the 69 KDA layers. SGLang admits
-          # cutedsl here only for the MLA-hybrid family (K3/KimiLinear); the engine
-          # default is triton. Blank this to fall back to the engine default.
+          # KDA linear-attention prefill kernel for the 69 KDA layers. cutedsl is the
+          # Blackwell CuteDSL kernel and SGLang admits it only for the MLA-hybrid family
+          # (K3/KimiLinear), but the cookbook does not select it; engine default is triton.
           if [ -n "${SGLANG_LINEAR_ATTN_PREFILL_BACKEND}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --linear-attn-prefill-backend ${SGLANG_LINEAR_ATTN_PREFILL_BACKEND}"
           fi
@@ -309,23 +315,36 @@ spec:
           if [ -n "${SGLANG_TOOL_CALL_PARSER}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --tool-call-parser ${SGLANG_TOOL_CALL_PARSER}"
           fi
-          EXTRA_ARGS="${EXTRA_ARGS} --moe-runner-backend flashinfer_mxfp4 --kv-cache-dtype fp8_e4m3"
+          # MoE runner and KV-cache dtype are OFF by default. The SGLang cookbook's B200
+          # 2-node cell sets neither; both appear only as opt-in overlays in the playground.
+          # flashinfer_mxfp4 in particular also expects SGLANG_TRTLLM_GEN_MOE_CUBIN_POOL to
+          # point at a cubin pool, which this deployment does not provide.
+          if [ -n "${SGLANG_MOE_RUNNER_BACKEND}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --moe-runner-backend ${SGLANG_MOE_RUNNER_BACKEND}"
+          fi
+          if [ -n "${SGLANG_KV_CACHE_DTYPE}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --kv-cache-dtype ${SGLANG_KV_CACHE_DTYPE}"
+          fi
           # DAY-0: drop --mem-fraction-static to 0.80 if OOM at ~94% of weight loading
-          # DAY-0: --dcp-size deliberately NOT enabled. Google's a4x recipe uses --dcp-size 16 on NVL72 (~900 GB/s all-to-all).
-          # On our 2-node RoCEv2 fabric (100 GB/s floor) DCP's per-decode-step collectives land on the critical path,
-          # and only the 24 MLA layers hold the KV context it shards (69 KDA layers hold fixed-size recurrent state).
+          # DAY-0: --dcp-size deliberately NOT enabled. It is what the cookbook's B200
+          # "balanced" and "high throughput" cells add on top of this "low latency" cell
+          # (--dcp-size 16); we start from low latency. On our 2-node RoCEv2 fabric
+          # (100 GB/s floor) DCP's per-decode-step collectives land on the critical path,
+          # and only the 24 MLA layers hold the KV context it shards (69 KDA layers hold
+          # fixed-size recurrent state).
           # Revisit only if first-deployment measurement shows decode is memory-bound rather than interconnect-bound.
           if [ -z "${SGLANG_PP_LAYER_PARTITION:-}" ]; then unset SGLANG_PP_LAYER_PARTITION; fi
-          # Multi-node loading of the 1.56 TB checkpoint can exceed the default distributed-init timeout
-          # --mamba-full-memory-ratio provenance: AI-Hypercomputer/gpu-recipes
-          # a4x/multi-host-serving/sglang (4-node A4X/GB200 TP16 config). Sizes the KDA
-          # recurrent-state pool; must be re-measured on our 2-node A4/B200 topology at
-          # first deployment. NOTE: comments must stay outside the backslash-continued
-          # command below -- a '#' on a continued line silently truncates the argv.
+          # Flags below track the SGLang Kimi-K3 cookbook's B200 / nnodes 2 cell:
+          # https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3
+          #   --disable-flashinfer-autotune, --watchdog-timeout 3600 and
+          #   --model-loader-extra-config are all prescribed there for this exact topology.
+          # --dist-* and --nnodes/--node-rank are ours: multi-node loading of the 1.56 TB
+          # checkpoint can exceed the default distributed-init timeout.
+          # NOTE: comments must stay outside the backslash-continued command below --
+          # a '#' on a continued line silently truncates the argv.
           exec python3 -m sglang.launch_server \
             --model-path /mnt/rox/Kimi-K3 \
             --served-model-name moonshotai/Kimi-K3 \
-            --mamba-full-memory-ratio 7.21 \
             --dist-init-addr "${LEADER_HOST}" \
             --dist-timeout 3600 \
             --nnodes 2 \
@@ -334,6 +353,9 @@ spec:
             --host 0.0.0.0 \
             --trust-remote-code \
             --enable-metrics \
+            --disable-flashinfer-autotune \
+            --watchdog-timeout 3600 \
+            --model-loader-extra-config '{"enable_multithread_load": true}' \
             --context-length "${SGLANG_CONTEXT_LENGTH}" \
             --tp-size "${SGLANG_TP_SIZE}" \
             --pp-size "${SGLANG_PP_SIZE}" \

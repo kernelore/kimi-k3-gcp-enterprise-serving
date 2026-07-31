@@ -38,8 +38,20 @@ if [ -f "${SCRIPT_DIR}/test_cases_t5.sh" ]; then
   source "${SCRIPT_DIR}/test_cases_t5.sh"
 fi
 
-# Register trap for clean exit summary
-trap on_exit EXIT
+# Tier 1/3/4/5 cases re-render terraform/manifests/generated/ under forced engines and
+# synthetic values (INFERENCE_ENGINE=trtllm, PROJECT_ID=test-proj, CLUSTER_NAME=test-cluster).
+# Whatever ran last would otherwise be left on disk, so a later `kubectl apply -f` or manual
+# diff against the generated tree would read manifests built for the wrong engine and a
+# nonexistent project. Re-render for the configured engine before reporting the summary.
+restore_configured_render() {
+  if [ -f "${PROJECT_ROOT}/scripts/config.env" ]; then
+    (cd "${PROJECT_ROOT}" && ./scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1) || true
+  fi
+}
+
+# Preserve the real exit code across the restore: on_exit reads $? and must not see the
+# render's status. `(exit N)` re-arms $? for the call that follows.
+trap 'E2E_RC=$?; restore_configured_render; (exit ${E2E_RC}); on_exit' EXIT
 
 # Default tier selections
 RUN_TIER_1=0

@@ -14,6 +14,21 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 cd "${PROJECT_ROOT}"
 
+# Several checks below re-render terraform/manifests/generated/ under a forced
+# INFERENCE_ENGINE, and the engine loops end on trtllm. Left that way, the generated
+# 09-kimi-k3-sglang-mpi.yaml carries the TRT-LLM container image, and anything that
+# subsequently reads the generated tree -- a manual `kubectl apply -f`, a diff, a
+# hand-built patch -- picks up a manifest that was never meant to be deployed.
+# Always hand the tree back rendered for the engine configured in scripts/config.env.
+restore_configured_render() {
+  local rc=$?
+  if [ -f "${PROJECT_ROOT}/scripts/config.env" ]; then
+    (cd "${PROJECT_ROOT}" && ./scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1) || true
+  fi
+  return "${rc}"
+}
+trap restore_configured_render EXIT
+
 echo "=============================================================================="
 echo "Kimi K3 GCP Enterprise Serving - Automated Remediation Verification Suite"
 echo "=============================================================================="
