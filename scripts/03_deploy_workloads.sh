@@ -311,12 +311,14 @@ else
 
   echo "    Polling NCCL RoCEv2 rank-0 pod (nccl-roce-test-0) for machine marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   MARKER_LINE=""
+  FAIL_SEEN=""
   BUSBW_VAL=""
   MAX_ATTEMPTS=$(( FABRIC_GATE_TIMEOUT_SECONDS / 5 ))
   ATTEMPT=0
   while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
     LOG_OUTPUT=$(kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test 2>/dev/null || true)
     MARKER_LINE=$(echo "${LOG_OUTPUT}" | grep -E "^NCCL_GATE_RESULT " | tail -n 1 || true)
+    FAIL_SEEN=$(echo "${LOG_OUTPUT}" | grep -E "^NCCL_GATE_RESULT fail" | head -n 1 || true)
     if [ -n "${MARKER_LINE}" ]; then
       break
     fi
@@ -331,9 +333,9 @@ else
     exit 1
   fi
 
-  if echo "${MARKER_LINE}" | grep -E -q "^NCCL_GATE_RESULT fail"; then
-    echo "ERROR: NCCL RoCEv2 verification reported failure marker (${MARKER_LINE})!" >&2
-    kubectl logs nccl-roce-test-0 -n llm-serving --tail=50 >&2 || true
+  if [ -n "${FAIL_SEEN}" ]; then
+    echo "ERROR: NCCL RoCEv2 verification reported failure marker (${FAIL_SEEN})!" >&2
+    kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test --tail=50 >&2 || true
     cleanup_fabric_pods
     exit 1
   fi
@@ -357,11 +359,13 @@ else
 
   echo "    Polling NCCL parity check rank-0 pod (nccl-parity-check-0) for parity marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   PARITY_MARKER=""
+  FAIL_SEEN=""
   MAX_ATTEMPTS=$(( FABRIC_GATE_TIMEOUT_SECONDS / 5 ))
   ATTEMPT=0
   while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
     LOG_OUTPUT=$(kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check 2>/dev/null || true)
     PARITY_MARKER=$(echo "${LOG_OUTPUT}" | grep -E "^NCCL_PARITY_RESULT " | tail -n 1 || true)
+    FAIL_SEEN=$(echo "${LOG_OUTPUT}" | grep -E "^NCCL_PARITY_RESULT fail" | head -n 1 || true)
     if [ -n "${PARITY_MARKER}" ]; then
       break
     fi
@@ -375,8 +379,8 @@ else
     cleanup_fabric_pods
     exit 1
   fi
-  if echo "${PARITY_MARKER}" | grep -E -q "^NCCL_PARITY_RESULT fail"; then
-    echo "ERROR: NCCL parity check failed: rank 0 emitted fail marker (${PARITY_MARKER})!" >&2
+  if [ -n "${FAIL_SEEN}" ]; then
+    echo "ERROR: NCCL parity check failed: rank 0 emitted fail marker (${FAIL_SEEN})!" >&2
     kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
     cleanup_fabric_pods
     exit 1
