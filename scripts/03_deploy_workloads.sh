@@ -184,12 +184,27 @@ export SGLANG_PARALLEL_PROFILE="${SGLANG_PARALLEL_PROFILE:-tp16}"
 if [ "${SGLANG_PARALLEL_PROFILE}" = "tp8pp2" ]; then
   export SGLANG_TP_SIZE="8"
   export SGLANG_PP_SIZE="2"
+  export SGLANG_EP_SIZE="8"
 else
   export SGLANG_TP_SIZE="${SGLANG_TP_SIZE:-16}"
   export SGLANG_PP_SIZE="${SGLANG_PP_SIZE:-1}"
+  export SGLANG_EP_SIZE="${SGLANG_EP_SIZE:-16}"
 fi
 export SGLANG_PP_LAYER_PARTITION="${SGLANG_PP_LAYER_PARTITION:-}"
-export SGLANG_EP_SIZE="${SGLANG_EP_SIZE:-16}"
+
+# Parallel-geometry validation guard
+# Note: The wider literature describes EP <= TP x DP with even divisibility; we enforce the narrower {1, TP} because those are the only values this architecture ever uses and a false reject at render time costs nothing, while a false accept costs a 16-GPU startup failure mid-incident.
+EXPECTED_TOTAL_GPUS=$(( NODES_PER_REPLICA * 8 ))
+ACTUAL_PARALLEL_GPUS=$(( SGLANG_TP_SIZE * SGLANG_PP_SIZE ))
+if [ "${ACTUAL_PARALLEL_GPUS}" -ne "${EXPECTED_TOTAL_GPUS}" ]; then
+  echo "ERROR: Invalid parallel geometry: SGLANG_TP_SIZE (${SGLANG_TP_SIZE}) * SGLANG_PP_SIZE (${SGLANG_PP_SIZE}) = ${ACTUAL_PARALLEL_GPUS}, expected ${EXPECTED_TOTAL_GPUS} (NODES_PER_REPLICA ${NODES_PER_REPLICA} * 8)." >&2
+  exit 1
+fi
+
+if [ "${SGLANG_EP_SIZE}" -ne 1 ] && [ "${SGLANG_EP_SIZE}" -ne "${SGLANG_TP_SIZE}" ]; then
+  echo "ERROR: Invalid SGLANG_EP_SIZE (${SGLANG_EP_SIZE}) for SGLANG_TP_SIZE (${SGLANG_TP_SIZE}). SGLang supports ep_size of 1 or ep_size == tp_size (EP is intra-stage: with PP=N each stage owns TP x DP GPUs and EP cannot exceed that)." >&2
+  exit 1
+fi
 export SGLANG_PORT="${SGLANG_PORT:-8000}"
 export SGLANG_MEM_FRACTION_STATIC="${SGLANG_MEM_FRACTION_STATIC:-0.85}"
 export SGLANG_SCHEDULE_POLICY="${SGLANG_SCHEDULE_POLICY:-lpm}"

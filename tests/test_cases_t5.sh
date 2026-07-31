@@ -145,10 +145,15 @@ t5_adv_07() {
   local sglang_yaml="${PROJECT_ROOT}/terraform/manifests/generated/09-kimi-k3-sglang-mpi.yaml"
   (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" SGLANG_PARALLEL_PROFILE="tp16" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
   assert_match '--tp-size "16"' "${sglang_yaml}" "Default SGLang render missing --tp-size 16"
+  assert_match '--ep-size "16"' "${sglang_yaml}" "Default SGLang render missing --ep-size 16"
   assert_no_match '--pp-size "2"' "${sglang_yaml}" "Default SGLang render unexpectedly contains --pp-size 2"
   (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" SGLANG_PARALLEL_PROFILE="tp8pp2" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
   assert_match '--tp-size "8"' "${sglang_yaml}" "tp8pp2 SGLang render missing --tp-size 8"
   assert_match '--pp-size "2"' "${sglang_yaml}" "tp8pp2 SGLang render missing --pp-size 2"
+  assert_match '--ep-size "8"' "${sglang_yaml}" "tp8pp2 SGLang render missing --ep-size 8"
+  if (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" SGLANG_PARALLEL_PROFILE="tp8pp2" SGLANG_EP_SIZE="16" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1); then
+    fail_test "Geometry guard failed to reject tp8pp2 with invalid SGLANG_EP_SIZE=16"
+  fi
   (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
 }
 
