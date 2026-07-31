@@ -103,17 +103,13 @@ For both SGLang (TP=16, PP=1, EP=16) and TensorRT-LLM (TP=8, PP=2, EP=8), the vo
 
 ### 2. Serving VRAM Footprint (V<sub>total</sub>)
 
-Total serving VRAM across a distributed replica pool must satisfy static model weights, dynamic activation buffers in `MXFP8`, PagedAttention KV cache, and CUDA/TensorRT runtime overhead:
+Total serving VRAM across a distributed replica pool is derived step-by-step from static model weight allocation and memory fraction limits:
 
-$$V_{\text{total}} = V_{\text{weights (MXFP4)}} + V_{\text{activations (MXFP8)}} + V_{\text{CUDA/TRT-LLM runtime}} + V_{\text{KV-cache pool}}$$
-
-$$V_{\text{total}} \approx 1,400\,\text{GB} + 150\,\text{GB} + 200\,\text{GB} + 1,130\,\text{GB} = 2,880\,\text{GB HBM3e}$$
-
-Across a **2-Node Blackwell Replica Pool (`16x B200 HGX GPUs`)**, aggregate high-bandwidth memory is:
-
-$$V_{\text{pool}} = 2\,\text{nodes} \times 8\,\text{GPUs/node} \times 180\,\text{GB/GPU} = 2,880\,\text{GB HBM3e (1,440 GB/node)}$$
-
-Subtracting static weights (1,400 GB), activation buffers (150 GB), and CUDA/TRT-LLM runtime overhead (200 GB) leaves **1,130 GB of dedicated HBM3e memory for PagedAttention KV Cache** across the 16 GPUs (~70.6 GB KV cache per GPU).
+- **Total HBM Pool**: 16 × B200 × 180 GB = **2,880 GB** (1,440 GB per node)
+- **Checkpoint Weight Sharding**: 1,560.94 GB checkpoint / 16 GPUs = **97.6 GB/GPU** of weights
+- **Static Pool Sizing (`--mem-fraction-static 0.85`)**: 0.85 × 180 GB = **153 GB/GPU** static pool
+- **KV/State Headroom per GPU**: 153 GB − 97.6 GB = **55.4 GB/GPU**
+- **Aggregate KV Cache Pool**: 55.4 GB × 16 GPUs ≈ **887 GB**
 
 ### 3. Concurrent 128k Context Session Capacity
 
@@ -121,14 +117,14 @@ For an active context window of 128,000 tokens (128k), assuming FP8 KV cache qua
 
 $$\text{KV Footprint per 128k Session} \approx 26.9\,\text{GB}$$
 
-$$\text{Max Concurrent 128k Sessions per Replica} = \left\lfloor \frac{1,130\,\text{GB}}{26.9\,\text{GB}} \right\rfloor = 42\text{ concurrent streams}$$
+$$\text{Max Concurrent 128k Sessions per Replica} = \left\lfloor \frac{887\,\text{GB}}{26.9\,\text{GB}} \right\rfloor = 32\text{ concurrent streams}$$
 *Estimate, pending release.*
 
-$$\text{Concurrent 128k Sessions per GPU} \approx 2.6\text{ streams/GPU}$$
+$$\text{Concurrent 128k Sessions per GPU} \approx 2.0\text{ streams/GPU}$$
 *Estimate, pending release.*
 
 > [!NOTE]
-> **KDA Recurrent State vs. KV Caching Caveat:** The KDA recurrent-state component across Kimi K3's 69 linear attention layers makes per-session memory far flatter in context length than pure-attention models. While the $\approx 26.9\,\text{GB}$ per 128k session derivation estimates roughly 42 concurrent sessions per replica, first-deployment measurement supersedes the math.
+> **KDA Recurrent State vs. KV Caching Caveat:** The KDA recurrent-state component across Kimi K3's 69 linear attention layers makes per-session memory far flatter in context length than pure-attention models. While the $\approx 26.9\,\text{GB}$ per 128k session derivation estimates roughly 32 concurrent sessions per replica, first-deployment measurement supersedes the math.
 
 ### 4. Cluster Capacity Scaling Reference Table (DP=N Replicas)
 
@@ -136,10 +132,10 @@ While **1x 2-Node Replica (DP=1, 16x B200 GPUs) serves as the turnkey MVP baseli
 
 | Cluster Scale (DP=N Replicas) | Physical Nodes (`a4-highgpu-8g`) | Total B200 GPUs | Total HBM3e Memory | Dedicated KV Cache Pool | Max Concurrent 128k Streams (*estimate, pending release*) | Aggregate Output Throughput |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1x Replica (DP=1, MVP Baseline)** | 2 Nodes | 16 | 2,880 GB (180 GB/GPU) | 1,130 GB | ~42 sessions | 1.0x (R<sub>base</sub>) |
-| **2x Replicas (DP=2)** | 4 Nodes | 32 | 5,760 GB | 2,260 GB | ~84 sessions | 2.0x (2 R<sub>base</sub>) |
-| **4x Replicas (DP=4)** | 8 Nodes | 64 | 11,520 GB | 4,520 GB | ~168 sessions | 4.0x (4 R<sub>base</sub>) |
-| **Nx Replicas (DP=N)** | 2N Nodes | 16N | N x 2,880 GB | N x 1,130 GB | N x 42 sessions | Nx (N R<sub>base</sub>) |
+| **1x Replica (DP=1, MVP Baseline)** | 2 Nodes | 16 | 2,880 GB (180 GB/GPU) | 887 GB | ~32 sessions | 1.0x (R<sub>base</sub>) |
+| **2x Replicas (DP=2)** | 4 Nodes | 32 | 5,760 GB | 1,774 GB | ~64 sessions | 2.0x (2 R<sub>base</sub>) |
+| **4x Replicas (DP=4)** | 8 Nodes | 64 | 11,520 GB | 3,548 GB | ~128 sessions | 4.0x (4 R<sub>base</sub>) |
+| **Nx Replicas (DP=N)** | 2N Nodes | 16N | N x 2,880 GB | N x 887 GB | N x 32 sessions | Nx (N R<sub>base</sub>) |
 
 > **Per-GPU Normalization Rule:** In all benchmark normalization calculations and performance reporting, aggregate cluster throughput must be divided by **`16.0`** (for a 1-replica 2-node pool) rather than 8.0, reflecting the 16x B200 GPUs required to host Kimi K3's 2.8T parameter footprint.
 

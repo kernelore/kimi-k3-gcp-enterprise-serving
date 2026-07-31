@@ -33,6 +33,7 @@ t1_f1_05() {
       assert_no_match 'glm52|glm-5|NVFP4|vllm' "${PROJECT_ROOT}/${f}" "Prohibited legacy model string in root file ${f}"
     fi
   done
+  assert_no_match '1,130|42 concurrent' "${PROJECT_ROOT}/README.md" "Stale KV cache arithmetic 1,130 GB or 42 concurrent found in README.md"
 }
 
 # F2: Docker Container Runtimes & Python Benchmark Harnesses
