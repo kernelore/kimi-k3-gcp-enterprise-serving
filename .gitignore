@@ -40,6 +40,7 @@ scratch/
 .gemini/
 .jetski/
 .agents/
+_worker_notes/
 
 # ==============================================================================
 # Terraform Directories, Caches, State, and Overrides

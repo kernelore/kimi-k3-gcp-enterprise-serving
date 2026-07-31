@@ -15,7 +15,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TF_DIR="${PROJECT_ROOT}/terraform"
 TEMPLATE_DIR="${TF_DIR}/manifests/templates"
 GENERATED_DIR="${TF_DIR}/manifests/generated"
-CONFIG_FILE="${SCRIPT_DIR}/config.env"
+CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.env}"
 
 if [ ! -f "${CONFIG_FILE}" ]; then
   if [ "${1:-}" = "--render-only" ] || [ "${1:-}" = "--stage-only" ]; then

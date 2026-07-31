@@ -1,6 +1,9 @@
 #!/bin/bash
 # ==============================================================================
-# test_cases_t3.sh - Tier 3: Cross-Feature Combinations (Pairwise Combinations)
+# test_cases_t3.sh - Tier 3: Architectural Invariants & Anti-Regression Hardening
+# Note: This file defines test-case functions only. Running it directly is a
+# no-op that exits 0. The test suite executes via tests/test_e2e_kimi_k3.sh,
+# which sources this file and calls run_tier_3_tests.
 # ==============================================================================
 set -euo pipefail
 
