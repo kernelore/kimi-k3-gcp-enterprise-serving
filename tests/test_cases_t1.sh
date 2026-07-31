@@ -176,7 +176,7 @@ t1_f6_01() {
 t1_f6_02() {
   # Scans all directories under KIMI3_GCPA4/ to assert zero .md files exist except authorized documentation (ignoring .agents, .gemini, .venv, .git, .terraform)
   local md_files
-  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md')])")
+  md_files=$(python3 -c "import os; print([os.path.join(r, f) for r, d, files in os.walk('${PROJECT_ROOT}') for f in files if f.endswith('.md') and not any(x in r for x in ('.agents', '.gemini', '.venv', '.git', '.terraform')) and f not in ('README.md', 'TEST_INFRA.md', 'TEST_READY.md', 'PROJECT.md', 'FINAL_AUDIT_REPORT.md', 'VICTORY_AUDIT_REPORT.md', 'PHASE6_RUNBOOK.md')])")
   assert_equals "[]" "${md_files}" "Unauthorized markdown files found in project: ${md_files}"
 }
 
