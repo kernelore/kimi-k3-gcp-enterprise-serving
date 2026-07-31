@@ -271,47 +271,85 @@ echo "--> 4. Waiting for local-nvme-raid-formatter DaemonSet rollout..."
 kubectl rollout status daemonset/local-nvme-raid-formatter -n kube-system --timeout=180s || echo "WARNING: DaemonSet rollout timeout (may be waiting for spot nodes to register)."
 
 # 3b. Verify RoCEv2 Network Fabric and NCCL bus bandwidth floor (>= 100 GB/s)
-if [ "${SKIP_FABRIC_CHECK:-false}" != "true" ]; then
+if [ "${SKIP_FABRIC_CHECK:-false}" = "true" ]; then
+  echo "WARNING: SKIP_FABRIC_CHECK=true set. Bypassing RoCEv2 network fabric and NCCL bus bandwidth verification!" >&2
+else
   echo "--> 3b. Verifying RoCEv2 RDMA network fabric and NCCL bus bandwidth (floor >= 100 GB/s)..."
   kubectl apply -f "${GENERATED_DIR}/00c-nccl-test-job.yaml"
   kubectl apply -f "${GENERATED_DIR}/00d-serving-nccl-parity-job.yaml"
-  echo "    Waiting for NCCL RoCEv2 StatefulSet rollout (timeout: 600s)..."
-  if ! kubectl rollout status statefulset/nccl-roce-test -n llm-serving --timeout=600s; then
-    echo "ERROR: NCCL RoCEv2 test StatefulSet rollout failed or timed out!" >&2
-    kubectl logs -n llm-serving -l app=nccl-roce-test --tail=50 >&2 || true
-    exit 1
-  fi
-  echo "    Checking NCCL bus bandwidth result..."
+
+  echo "    Polling NCCL RoCEv2 rank-0 pod (nccl-roce-test-0) for machine marker (timeout: 300s)..."
+  MARKER_LINE=""
   BUSBW_VAL=""
-  MAX_ATTEMPTS=30
+  MAX_ATTEMPTS=60
   ATTEMPT=0
   while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-    LOG_OUTPUT=$(kubectl logs statefulset/nccl-roce-test -n llm-serving -c nccl-test 2>/dev/null || kubectl logs nccl-roce-test-0 -n llm-serving 2>/dev/null || true)
-    BUSBW_LINE=$(echo "${LOG_OUTPUT}" | grep -i "# Avg bus bandwidth" | tail -n 1 || true)
-    if [ -n "${BUSBW_LINE}" ]; then
-      BUSBW_VAL=$(echo "${BUSBW_LINE}" | awk -F':' '{print $2}' | xargs || true)
+    LOG_OUTPUT=$(kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test 2>/dev/null || true)
+    MARKER_LINE=$(echo "${LOG_OUTPUT}" | grep -E "^NCCL_GATE_RESULT " | tail -n 1 || true)
+    if [ -n "${MARKER_LINE}" ]; then
       break
     fi
     ATTEMPT=$((ATTEMPT + 1))
     sleep 5
   done
 
-  if [ -n "${BUSBW_VAL}" ]; then
-    echo "    Observed NCCL bus bandwidth: ${BUSBW_VAL} GB/s"
-    if ! awk "BEGIN {exit !(${BUSBW_VAL:-0} >= 100.0)}" 2>/dev/null; then
-      echo "ERROR: NCCL RoCEv2 bus bandwidth (${BUSBW_VAL} GB/s) is below required 100 GB/s floor!" >&2
-      exit 1
-    fi
-    echo "    [OK] NCCL RoCEv2 bus bandwidth meets >= 100 GB/s requirement."
-  else
-    echo "    WARNING: Could not parse NCCL bus bandwidth from logs." >&2
-  fi
-
-  echo "    Waiting for NCCL parity check StatefulSet rollout (timeout: 300s)..."
-  if ! kubectl rollout status statefulset/nccl-parity-check -n llm-serving --timeout=300s; then
-    echo "ERROR: NCCL parity check StatefulSet failed!" >&2
+  if [ -z "${MARKER_LINE}" ]; then
+    echo "ERROR: NCCL RoCEv2 verification failed: marker absent from nccl-roce-test-0 at timeout (300s)!" >&2
+    kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test --tail=50 >&2 || true
     exit 1
   fi
+
+  if echo "${MARKER_LINE}" | grep -E -q "^NCCL_GATE_RESULT fail"; then
+    echo "ERROR: NCCL RoCEv2 verification reported failure marker (${MARKER_LINE})!" >&2
+    kubectl logs nccl-roce-test-0 -n llm-serving --tail=50 >&2 || true
+    exit 1
+  fi
+  BUSBW_VAL=$(echo "${MARKER_LINE}" | awk -F'busbw_gbps=' '{print $2}' | awk '{print $1}' | xargs || true)
+  if [ -z "${BUSBW_VAL}" ]; then
+    echo "ERROR: NCCL RoCEv2 bus bandwidth value is empty (${MARKER_LINE})!" >&2
+    exit 1
+  fi
+  if ! echo "${BUSBW_VAL}" | grep -E -q '^[0-9]+(\.[0-9]+)?$'; then
+    echo "ERROR: NCCL RoCEv2 bus bandwidth value '${BUSBW_VAL}' is non-numeric or invalid!" >&2
+    exit 1
+  fi
+  if ! awk -v val="${BUSBW_VAL}" 'BEGIN {exit !(val >= 100.0)}' 2>/dev/null; then
+    echo "ERROR: NCCL RoCEv2 bus bandwidth (${BUSBW_VAL} GB/s) is below required 100 GB/s floor!" >&2
+    exit 1
+  fi
+  echo "    [OK] NCCL RoCEv2 bus bandwidth meets >= 100 GB/s requirement (${BUSBW_VAL} GB/s)."
+
+  echo "    Polling NCCL parity check rank-0 pod (nccl-parity-check-0) for parity marker (timeout: 300s)..."
+  PARITY_MARKER=""
+  MAX_ATTEMPTS=60
+  ATTEMPT=0
+  while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+    LOG_OUTPUT=$(kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check 2>/dev/null || true)
+    PARITY_MARKER=$(echo "${LOG_OUTPUT}" | grep -E "^NCCL_PARITY_RESULT " | tail -n 1 || true)
+    if [ -n "${PARITY_MARKER}" ]; then
+      break
+    fi
+    ATTEMPT=$((ATTEMPT + 1))
+    sleep 5
+  done
+
+  if [ -z "${PARITY_MARKER}" ]; then
+    echo "ERROR: NCCL parity check failed: marker absent from nccl-parity-check-0 at timeout (300s)!" >&2
+    kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    exit 1
+  fi
+  if echo "${PARITY_MARKER}" | grep -E -q "^NCCL_PARITY_RESULT fail"; then
+    echo "ERROR: NCCL parity check failed: rank 0 emitted fail marker (${PARITY_MARKER})!" >&2
+    kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    exit 1
+  fi
+  if ! echo "${PARITY_MARKER}" | grep -E -q "^NCCL_PARITY_RESULT pass$"; then
+    echo "ERROR: NCCL parity check reported failure or invalid marker (${PARITY_MARKER})!" >&2
+    kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    exit 1
+  fi
+  echo "    [OK] NCCL serving-image parity verified (${PARITY_MARKER})."
+
   kubectl delete statefulset nccl-roce-test nccl-parity-check -n llm-serving --ignore-not-found=true
 fi
 

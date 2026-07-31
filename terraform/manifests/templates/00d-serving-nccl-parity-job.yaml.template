@@ -166,11 +166,15 @@ spec:
           sys.exit(0)
           EOF
 
+          if [ "${NODE_RANK}" = "0" ]; then
+            trap 'echo "NCCL_PARITY_RESULT fail"' ERR
+          fi
           LOG_FILE=$(mktemp)
           echo "Running 2-node NCCL parity check..."
           if ! python3 /tmp/parity_test.py 2>&1 | tee "${LOG_FILE}"; then
             if [ "${NODE_RANK}" = "0" ]; then
               echo "NCCL SERVING-IMAGE PARITY: FAIL" >&2
+              echo "NCCL_PARITY_RESULT fail"
             fi
             exit 1
           fi
@@ -179,9 +183,11 @@ spec:
             echo "Verifying NCCL debug logs for NET/gIB on rank 0..."
             if grep -q "NET/gIB" "${LOG_FILE}"; then
               echo "NCCL SERVING-IMAGE PARITY: PASS"
+              echo "NCCL_PARITY_RESULT pass"
             else
               echo "ERROR: NCCL debug output does not contain NET/gIB!" >&2
               echo "NCCL SERVING-IMAGE PARITY: FAIL" >&2
+              echo "NCCL_PARITY_RESULT fail"
               exit 1
             fi
           else
