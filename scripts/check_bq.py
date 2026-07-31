@@ -24,6 +24,7 @@ for proxy_var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
 project_id = os.environ.get("PROJECT_ID", "YOUR_PROJECT_ID")
 dataset_id = os.environ.get("AUDIT_DATASET_ID", "kimi_k3_enterprise_audit")
 table_id = os.environ.get("AUDIT_TABLE_ID", "trajectories")
+location = os.environ.get("REGION", "europe-north1")
 
 if project_id == "YOUR_PROJECT_ID" or not project_id:
     print("[FAIL] Error: Please set the PROJECT_ID environment variable (e.g. export PROJECT_ID=my-project-id)")
@@ -85,14 +86,15 @@ if not success:
             token = json.loads(token_resp.read().decode())["access_token"]
             
         api_url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/queries"
-        req_body = json.dumps({"query": f"SELECT count(*) as total_trajectories FROM `{table_ref}`", "useLegacySql": False}).encode("utf-8")
+        req_body = json.dumps({"query": f"SELECT count(*) as total_trajectories FROM `{table_ref}`", "useLegacySql": False, "location": location}).encode("utf-8")
         api_req = urllib.request.Request(api_url, data=req_body, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
         with urllib.request.urlopen(api_req, timeout=10) as resp:
             api_data = json.loads(resp.read().decode())
-            rows = api_data.get("rows", [])
-            if rows:
-                total_rows = int(rows[0]["f"][0]["v"])
-            success = True
+            if api_data.get("jobComplete", False):
+                rows = api_data.get("rows", [])
+                if rows:
+                    total_rows = int(rows[0]["f"][0]["v"])
+                success = True
     except Exception as rest_err:
         print(f"    [NOTE] REST API fallback failed: {rest_err}")
 
@@ -103,7 +105,7 @@ if not success:
         from google.api_core.client_options import ClientOptions
 
         client_options = ClientOptions()
-        client = bigquery.Client(project=project_id, client_options=client_options)
+        client = bigquery.Client(project=project_id, location=location, client_options=client_options)
 
         query = f"SELECT count(*) as total_trajectories FROM `{table_ref}`"
         query_job = client.query(query)
@@ -124,11 +126,14 @@ if not success:
     except Exception as py_err:
         print(f"    [NOTE] Python BigQuery client raised exception ({py_err}).")
 
-if success:
+if success and total_rows > 0:
     print(f"    [PASS] BigQuery audit verification succeeded! Total recorded trajectories: {total_rows}")
     if sample_row:
         print(f"    Sample Row Telemetry (Kimi K3 Schema): {sample_row}")
     sys.exit(0)
+elif success and total_rows == 0:
+    print(f"    [FAIL] BigQuery table `{table_ref}` exists but contains 0 trajectories!")
+    sys.exit(1)
 else:
     print(f"    [FAIL] BigQuery audit verification failed across all client, CLI, and REST transports.")
     sys.exit(1)
