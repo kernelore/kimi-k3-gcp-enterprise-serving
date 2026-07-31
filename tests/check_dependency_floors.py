@@ -21,9 +21,9 @@ FLOORS = {
         "google-cloud-bigquery": "3.42.2",
     },
     ".github/workflows/ci.yml": {
-        "actions/checkout": 4,
-        "hashicorp/setup-terraform": 3,
-        "actions/setup-python": 5,
+        "actions/checkout": 7,
+        "hashicorp/setup-terraform": 4,
+        "actions/setup-python": 7,
     },
     "terraform/manifests/templates/00-local-nvme-raid.yaml.template": {
         "google/cloud-sdk": "500.0.0",
