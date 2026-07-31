@@ -553,6 +553,7 @@ workloads, release Persistent Volumes, and run `terraform destroy`:
     SDN propagation delay occurs.
 3.  Proactively cleans up the 2,000 GB Hyperdisk ML ReadOnlyMany (`ROX`) volume
     and local NVMe scratch arrays.
+4.  Supports `PURGE_WEIGHTS_CACHE=true` for explicit pre-destroy weight cache bucket purge (the bucket is in any case destroyed by `terraform destroy` since `force_destroy = true`).
 
 ### Retained Storage & Bucket Purge Guide
 

@@ -117,6 +117,13 @@ t5_adv_05() {
   done
 }
 
+# T5_ADV_06: Weights Cache Consistency Verification (F11)
+t5_adv_06() {
+  assert_match 'force_destroy.*=.*true' "${PROJECT_ROOT}/terraform/modules/storage/main.tf" "Missing force_destroy in storage/main.tf"
+  assert_match 'PURGE_WEIGHTS_CACHE' "${PROJECT_ROOT}/README.md" "Missing PURGE_WEIGHTS_CACHE documentation in README.md"
+  assert_no_match 'weights-cache.*retained|weights_cache.*retained|retained.*weights-cache' "${PROJECT_ROOT}/README.md" "README improperly claims weights-cache bucket is retained"
+}
+
 run_tier_5_tests() {
   log_info "=== Executing Tier 5: Adversarial White-Box Coverage Hardening Suite ==="
   run_test_case "T5_ADV_01_Domain_Manifest_Assertions" t5_adv_01
@@ -124,4 +131,5 @@ run_tier_5_tests() {
   run_test_case "T5_ADV_03_Gateway_Observability_Config" t5_adv_03
   run_test_case "T5_ADV_04_Remediated_Script_Security_Network_Isolation" t5_adv_04
   run_test_case "T5_ADV_05_Benchmark_Exception_Resilience_Syntax" t5_adv_05
+  run_test_case "T5_ADV_06_Weights_Cache_Consistency" t5_adv_06
 }
