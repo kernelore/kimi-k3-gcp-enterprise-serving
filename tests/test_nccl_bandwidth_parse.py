@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit test for NCCL bus bandwidth log extraction logic (P4-1)."""
 import subprocess
+import unittest
 
 CANNED_NCCL_OUTPUT = """
 #                                           out-of-place                       in-place          
@@ -11,21 +12,21 @@ CANNED_NCCL_OUTPUT = """
 # Avg bus bandwidth    : 124.5
 """
 
-def test_nccl_busbw_extraction():
-    cmd = "grep -i '# Avg bus bandwidth' | tail -n 1 | awk -F':' '{print $2}' | xargs"
-    proc = subprocess.run(
-        cmd,
-        shell=True,
-        input=CANNED_NCCL_OUTPUT,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    val_str = proc.stdout.strip()
-    val = float(val_str)
-    assert val == 124.5, f"Expected 124.5, got {val}"
-    assert val >= 100.0, f"Expected >= 100.0, got {val}"
-    print(f"NCCL bus bandwidth unit test passed: extracted {val} GB/s >= 100.0 GB/s")
+class TestNcclBandwidthParse(unittest.TestCase):
+    def test_nccl_busbw_extraction(self):
+        cmd = "grep -i '# Avg bus bandwidth' | tail -n 1 | awk -F':' '{print $2}' | xargs"
+        proc = subprocess.run(
+            cmd,
+            shell=True,
+            input=CANNED_NCCL_OUTPUT,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        val_str = proc.stdout.strip()
+        val = float(val_str)
+        self.assertEqual(val, 124.5, f"Expected 124.5, got {val}")
+        self.assertGreaterEqual(val, 100.0, f"Expected >= 100.0, got {val}")
 
 if __name__ == "__main__":
-    test_nccl_busbw_extraction()
+    unittest.main()
