@@ -145,6 +145,7 @@ t1_f5_03() {
     if [ -f "${f}" ]; then
       assert_match "set_nccl_env.sh" "${f}" "Missing set_nccl_env.sh in ${f}"
       assert_match "GLOO_SOCKET_IFNAME" "${f}" "Missing GLOO_SOCKET_IFNAME in ${f}"
+      assert_match "expandable_segments" "${f}" "Missing expandable_segments in ${f}"
     fi
   done
   assert_match "GLOO_SOCKET_IFNAME" "${PROJECT_ROOT}/terraform/manifests/templates/00c-nccl-test-job.yaml.template" "Missing GLOO_SOCKET_IFNAME in 00c template"

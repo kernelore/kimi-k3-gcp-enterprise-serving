@@ -136,6 +136,8 @@ spec:
           value: "eth0"
         - name: GLOO_SOCKET_IFNAME
           value: "eth0"
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "expandable_segments:True"
         - name: SGLANG_TP_SIZE
           value: "${SGLANG_TP_SIZE}"
         - name: SGLANG_PP_SIZE
