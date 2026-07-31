@@ -21,6 +21,12 @@ fi
 # shellcheck source=/dev/null
 source "${CONFIG_FILE}"
 
+if [ "${LIVE_VALIDATION:-no}" != "yes" ]; then
+  echo "ERROR: refusing to create billable GCP resources without LIVE_VALIDATION=yes" >&2
+  echo "Would have created Terraform infrastructure resources (VPC network, GKE cluster, node pools, storage, database, cache) in project '${PROJECT_ID:-unknown}' region '${REGION:-unknown}'." >&2
+  exit 1
+fi
+
 echo "=============================================================================="
 echo "Kimi K3 Sovereign Enterprise Inference - Phase 1 & 2: Terraform Deployment"
 echo "=============================================================================="

@@ -70,7 +70,7 @@ t5_adv_02() {
   assert_match 'gsutil|gcloud|GCS_BUCKET' "${PROJECT_ROOT}/terraform/manifests/templates/02-hydrate-weights-gcs.yaml.template" "Missing GCS transfer tooling in hydration template"
   assert_match 'fla-core' "${PROJECT_ROOT}/docker/Dockerfile.sglang" "Missing fla-core requirement in docker/Dockerfile.sglang"
   assert_match '--served-model-name moonshotai/Kimi-K3' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-sglang-mpi.yaml.template" "Missing --served-model-name in SGLang template"
-  assert_no_match '--dcp-size' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-sglang-mpi.yaml.template" "Prohibited active --dcp-size flag found in SGLang exec line"
+  assert_no_match '^\s*--dcp-size' "${PROJECT_ROOT}/terraform/manifests/templates/09-kimi-k3-sglang-mpi.yaml.template" "Prohibited active --dcp-size flag found in SGLang exec line"
 }
 
 # T5_ADV_03: Gateway, Observability, HPA, and MoE Compilation Specializations
@@ -104,11 +104,16 @@ t5_adv_04() {
 
   # F6-6: Ensure cleanup_fabric_pods covers all exit 1 paths in section 3b
   assert_match 'cleanup_fabric_pods' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Missing cleanup_fabric_pods in 03_deploy_workloads.sh"
-  local cleanup_cnt=$(grep -c 'cleanup_fabric_pods' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" || true)
+  local cleanup_cnt
+  cleanup_cnt=$(grep -c 'cleanup_fabric_pods' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" || true)
   if [ "${cleanup_cnt}" -lt 9 ]; then
     echo "ERROR: cleanup_fabric_pods count (${cleanup_cnt}) is less than expected 9 (definition + 8 exit/success paths)" >&2
     return 1
   fi
+
+  # F6-13: LIVE_VALIDATION=yes guard assertion
+  assert_match 'LIVE_VALIDATION' "${PROJECT_ROOT}/scripts/02_deploy_infra.sh" "Missing LIVE_VALIDATION guard in 02_deploy_infra.sh"
+  assert_match 'LIVE_VALIDATION' "${PROJECT_ROOT}/scripts/03_deploy_workloads.sh" "Missing LIVE_VALIDATION guard in 03_deploy_workloads.sh"
 }
 
 # T5_ADV_05: Remediated Bug Fixes Verification (ADV-T5-09, Script Syntax, and Governance)

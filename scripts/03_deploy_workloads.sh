@@ -99,6 +99,11 @@ export HF_TOKEN_BASE64
 export GATEWAY_MASTER_KEY="${GATEWAY_MASTER_KEY:-sk-kimi-k3-master-secret-key-change-me}"
 export DB_PASSWORD="${DB_PASSWORD:-kimi-k3-gateway-admin-secret}"
 if [ "${1:-}" != "--render-only" ] && [ "${1:-}" != "--stage-only" ]; then
+  if [ "${LIVE_VALIDATION:-no}" != "yes" ]; then
+    echo "ERROR: refusing to create billable GCP resources without LIVE_VALIDATION=yes" >&2
+    echo "Would have deployed workload manifests and inference engine StatefulSets to cluster '${CLUSTER_NAME:-unknown}' in project '${PROJECT_ID:-unknown}'." >&2
+    exit 1
+  fi
   if [ "${GATEWAY_MASTER_KEY}" = "sk-kimi-k3-master-secret-key-change-me" ]; then
     echo "ERROR: GATEWAY_MASTER_KEY must be set to a secure secret outside render-only/stage-only mode!" >&2
     echo "ERROR: Failed to obtain GATEWAY_MASTER_KEY (insecure default detected)" >&2
