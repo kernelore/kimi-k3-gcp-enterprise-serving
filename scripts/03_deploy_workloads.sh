@@ -47,6 +47,7 @@ validate_hf_token() {
 
 export MODEL_REPO_ID="${MODEL_REPO_ID:-moonshotai/Kimi-K3}"
 export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-moonshotai/Kimi-K3}"
+export FABRIC_GATE_TIMEOUT_SECONDS="${FABRIC_GATE_TIMEOUT_SECONDS:-900}"
 export TRTLLM_TP_SIZE="${TRTLLM_TP_SIZE:-8}"
 export TRTLLM_PP_SIZE="${TRTLLM_PP_SIZE:-2}"
 export TRTLLM_EP_SIZE="${TRTLLM_EP_SIZE:-8}"
@@ -278,10 +279,10 @@ else
   kubectl apply -f "${GENERATED_DIR}/00c-nccl-test-job.yaml"
   kubectl apply -f "${GENERATED_DIR}/00d-serving-nccl-parity-job.yaml"
 
-  echo "    Polling NCCL RoCEv2 rank-0 pod (nccl-roce-test-0) for machine marker (timeout: 300s)..."
+  echo "    Polling NCCL RoCEv2 rank-0 pod (nccl-roce-test-0) for machine marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   MARKER_LINE=""
   BUSBW_VAL=""
-  MAX_ATTEMPTS=60
+  MAX_ATTEMPTS=$(( FABRIC_GATE_TIMEOUT_SECONDS / 5 ))
   ATTEMPT=0
   while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
     LOG_OUTPUT=$(kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test 2>/dev/null || true)
@@ -294,7 +295,7 @@ else
   done
 
   if [ -z "${MARKER_LINE}" ]; then
-    echo "ERROR: NCCL RoCEv2 verification failed: marker absent from nccl-roce-test-0 at timeout (300s)!" >&2
+    echo "ERROR: NCCL RoCEv2 verification failed: marker absent from nccl-roce-test-0 at timeout (${FABRIC_GATE_TIMEOUT_SECONDS}s)!" >&2
     kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test --tail=50 >&2 || true
     exit 1
   fi
@@ -319,9 +320,9 @@ else
   fi
   echo "    [OK] NCCL RoCEv2 bus bandwidth meets >= 100 GB/s requirement (${BUSBW_VAL} GB/s)."
 
-  echo "    Polling NCCL parity check rank-0 pod (nccl-parity-check-0) for parity marker (timeout: 300s)..."
+  echo "    Polling NCCL parity check rank-0 pod (nccl-parity-check-0) for parity marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   PARITY_MARKER=""
-  MAX_ATTEMPTS=60
+  MAX_ATTEMPTS=$(( FABRIC_GATE_TIMEOUT_SECONDS / 5 ))
   ATTEMPT=0
   while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
     LOG_OUTPUT=$(kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check 2>/dev/null || true)
@@ -334,7 +335,7 @@ else
   done
 
   if [ -z "${PARITY_MARKER}" ]; then
-    echo "ERROR: NCCL parity check failed: marker absent from nccl-parity-check-0 at timeout (300s)!" >&2
+    echo "ERROR: NCCL parity check failed: marker absent from nccl-parity-check-0 at timeout (${FABRIC_GATE_TIMEOUT_SECONDS}s)!" >&2
     kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
     exit 1
   fi
