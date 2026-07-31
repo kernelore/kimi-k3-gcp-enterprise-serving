@@ -238,7 +238,7 @@ Feature / Metric              | SGLang (`sglang`)                               
 **Weight & Kernel Format**    | Native `KimiK3ForConditionalGeneration` / FlashInfer / FlashMLA | Direct PyTorch checkpoint loading (Experimental)
 **Parsers**                   | `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3` | Custom regex parser
 **Prefix Caching**            | RadixAttention (Optimal for multi-turn & tree search)  | Standard KV Cache block reuse
-**Memory Management**         | `--mem-fraction-static 0.90`                           | `--kv_cache_free_gpu_memory_fraction 0.90`
+**Memory Management**         | `--mem-fraction-static 0.85`                           | `--kv_cache_free_gpu_memory_fraction 0.90`
 **Ideal Workload Profile**    | Dynamic interactive sessions, structured JSON, reasoning prompts | Maximum raw throughput batch serving (experimental)
 
 #### Live Benchmark Performance Comparison
