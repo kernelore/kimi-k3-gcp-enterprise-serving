@@ -97,7 +97,7 @@ Designing for Kimi K3 requires rigorous memory and disk capacity engineering to 
 
 The static weight footprint for 2.8 Trillion parameters quantized to `MXFP4` with scaling factors is measured as:
 
-$$C_{\text{weights+scales}} = 1,453.7\,\text{GiB } (96\,\text{safetensors shards})$$
+$$C_{\text{weights+scales}} = 1,453.7\,\text{GiB } (96\,\text{safetensors shards})\,(= 1,560.9\,\text{GB}; \text{plan }\sim 1.56\,\text{TB})$$
 
 For both SGLang (TP=16, PP=1, EP=16) and TensorRT-LLM (TP=8, PP=2, EP=8), the volume holds weights only; TRT-LLM PyTorch backend loads checkpoints directly. To accommodate the static MXFP4 safetensors shards, the persistent Hyperdisk ML claim is explicitly sized at **`2,000 GB` (`2 TB`)**.
 
@@ -143,6 +143,9 @@ While **1x 2-Node Replica (DP=1, 16x B200 GPUs) serves as the turnkey MVP baseli
 > [!NOTE]
 > **Horizontal Autoscaling Absence:** Unlike reference stacks such as GLM, Kimi K3 serves as a single 2-node MPI replica across 16 B200s (`SERVING_REPLICAS=1`, `NODES_PER_REPLICA=2`, and `GPU_MAX_NODES=2`), leaving no spare GPU capacity in the cluster to scale into. Furthermore, dynamic pod scale-out events would require re-hydrating 1,453.7 GiB of model weights from GCS or local disk. Horizontal Pod Autoscaling (HPA) is therefore intentionally not implemented in this repository.
 
+> [!NOTE]
+> **Spot Provisioning Resilience:** Reclamation of ANY GPU in the 2-node TP16/EP16 group takes down the whole serving replica until a replacement joins; spot suits benchmarking, on-demand is recommended for production.
+
 ---
 
 ## 🔬 MLOps Considerations, Gateway Intelligence & CoT Guardrails
@@ -160,7 +163,7 @@ general_settings:
   drop_params: false
 ```
 
-Truncating or stripping thought blocks during multi-turn agentic execution causes catastrophic reasoning degradation and context misalignment. The gateway guarantees end-to-end transmission of raw reasoning tokens to client applications and BigQuery audit logs.
+Truncating or stripping thought blocks during multi-turn agentic execution causes catastrophic reasoning degradation and context misalignment. The gateway guarantees end-to-end transmission of raw reasoning tokens to client applications and BigQuery audit logs. Note that using the older `kimi_k2` parser value silently leaks chain-of-thought into `content`; this repo pins `kimi_k3`.
 
 ### 3. Clarification Guardrails against Action Overfitting (Roadmap / Unimplemented)
 
