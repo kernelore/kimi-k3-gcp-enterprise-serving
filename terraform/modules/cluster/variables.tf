@@ -63,7 +63,3 @@ variable "trajectory_bucket_name" {
   type        = string
 }
 
-variable "weights_cache_bucket_name" {
-  description = "Name of the GCS bucket for persistent weights cache"
-  type        = string
-}

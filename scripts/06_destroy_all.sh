@@ -76,12 +76,12 @@ if command -v gcloud >/dev/null 2>&1; then
 fi
 
 if command -v gcloud >/dev/null 2>&1; then
-  if [ "${PURGE_WEIGHTS_CACHE:-false}" = "true" ] && [ -n "${GCS_WEIGHTS_BUCKET:-}" ]; then
+  if [ "${PURGE_WEIGHTS_BACKUP:-false}" = "true" ] && [ "${FORCE_DESTROY:-false}" = "true" ] && [ -n "${GCS_WEIGHTS_BUCKET:-}" ]; then
     if [[ "${GCS_WEIGHTS_BUCKET}" != gs://* ]]; then
       GCS_WEIGHTS_BUCKET="gs://${GCS_WEIGHTS_BUCKET}"
     fi
-    echo "WARNING: PURGE_WEIGHTS_CACHE=true explicitly set. Deleting weight cache bucket ${GCS_WEIGHTS_BUCKET} before destroy..."
-    echo "         Next deployment will require a full HuggingFace re-download (~15-20 min)."
+    echo "WARNING: PURGE_WEIGHTS_BACKUP=true and FORCE_DESTROY=true explicitly set. Deleting weight backup bucket ${GCS_WEIGHTS_BUCKET} before destroy..."
+    echo "         Next deployment will require a full HuggingFace re-download (hours for 1.5 TB)."
     gcloud storage rm -r "${GCS_WEIGHTS_BUCKET}" --project="${PROJECT_ID}" --quiet 2>/dev/null || true
   fi
 fi

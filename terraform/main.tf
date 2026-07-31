@@ -40,20 +40,19 @@ module "network" {
 }
 
 module "cluster" {
-  source                    = "./modules/cluster"
-  project_id                = var.project_id
-  region                    = var.region
-  zone                      = var.zone
-  cluster_name              = var.cluster_name
-  network_name              = module.network.network_name
-  subnet_name               = module.network.primary_subnet_name
-  enable_private_endpoint   = var.enable_private_endpoint
-  master_authorized_cidrs   = var.master_authorized_cidrs
-  owner_label               = var.owner_label
-  ttl_label                 = var.ttl_label
-  env_label                 = var.env_label
-  trajectory_bucket_name    = module.storage.trajectory_bucket_name
-  weights_cache_bucket_name = module.storage.weights_cache_bucket_name
+  source                  = "./modules/cluster"
+  project_id              = var.project_id
+  region                  = var.region
+  zone                    = var.zone
+  cluster_name            = var.cluster_name
+  network_name            = module.network.network_name
+  subnet_name             = module.network.primary_subnet_name
+  enable_private_endpoint = var.enable_private_endpoint
+  master_authorized_cidrs = var.master_authorized_cidrs
+  owner_label             = var.owner_label
+  ttl_label               = var.ttl_label
+  env_label               = var.env_label
+  trajectory_bucket_name  = module.storage.trajectory_bucket_name
 }
 
 module "storage" {

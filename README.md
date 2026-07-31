@@ -258,7 +258,7 @@ Feature / Metric              | SGLang (`sglang`)                               
 
 ---
 
-## 📦 Hybrid 3-Tier Storage Co-Design & Weight Cache Lifecycle
+## 📦 Hybrid 3-Tier Storage Co-Design & Weight Backup Lifecycle
 
 To eliminate multi-hour weight downloads when scaling compute pods (the volume holds weights only; TRT-LLM PyTorch backend loads checkpoints directly without pre-compiled engine files), the architecture implements a hybrid 3-tier storage co-design:
 
@@ -278,26 +278,26 @@ To eliminate multi-hour weight downloads when scaling compute pods (the volume h
                                                   ^
                                                   | (High-Speed Backup Hydration @ *TBD — to be measured at first deployment*)
 +---------------------------------------------------------------------------------------------------+
-|                   Tier 3: Cloud Storage (GCS) Backup Cache Bucket                                 |
-|  - URI: `gs://<project>-kimi-k3-weights-backup/mxfp4` | Cost: ~$40/month (outside TF state)       |
+|                   Tier 3: Cloud Storage (GCS) Weight Backup Bucket                                |
+|  - URI: `gs://<project>-kimi-k3-weights-backup` | Cost: ~$40/month (outside TF state)             |
 |  - Content: Persistent backup of verified weight shards for rapid disaster recovery hydration (*TBD — to be measured at first deployment*) |
 +---------------------------------------------------------------------------------------------------+
 ```
 
-### Weight Cache Hydration Lifecycle
+### Weight Backup Hydration Lifecycle
 
-When deploying a fresh cluster or recovering from a disaster, downloading 1,453.7 GiB of weights from external model hubs can take hours. Using a pre-populated GCS weight cache bucket (`Tier 3`), the automated hydration job (`02-hydrate-weights-gcs.yaml.template`) transfers the entire 1,453.7 GiB weight footprint into the 2,000 GB Hyperdisk ML volume in ***TBD — to be measured at first deployment*** (hydration throughput scales with hyperdisk_ml_throughput_mibps (default 24,576 MiB/s; 6,144 MiB/s is a known-good fallback if regional quota is unavailable)).
+When deploying a fresh cluster or recovering from a disaster, downloading 1,453.7 GiB of weights from external model hubs can take hours. Using a pre-populated GCS weight backup bucket (`Tier 3`), the automated hydration job (`02-hydrate-weights-gcs.yaml.template`) transfers the entire 1,453.7 GiB weight footprint into the 2,000 GB Hyperdisk ML volume in ***TBD — to be measured at first deployment*** (hydration throughput scales with hyperdisk_ml_throughput_mibps (default 24,576 MiB/s; 6,144 MiB/s is a known-good fallback if regional quota is unavailable)).
 
 #### Operational Seeding & Hydration Commands
 
 ```bash
-# 1. Standard deploy leveraging an existing GCS weight cache bucket
-export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-kimi-k3-weights-cache/mxfp4"
+# 1. Standard deploy leveraging an existing GCS weight backup bucket
+export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-kimi-k3-weights-backup"
 ./scripts/03_deploy_workloads.sh
 
-# 2. Automatically populate / seed the GCS cache after an initial Hugging Face download
+# 2. Automatically populate / seed the GCS weight backup after an initial Hugging Face download
 export POPULATE_WEIGHTS_CACHE="true"
-export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-kimi-k3-weights-cache/mxfp4"
+export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-kimi-k3-weights-backup"
 ./scripts/03_deploy_workloads.sh
 
 # 3. Force re-staging of model weight shards (flips volume back to ReadWrite mode temporarily)
@@ -307,9 +307,9 @@ export FORCE_WEIGHT_JOB="true"
 
 #### Complete Teardown & State Bucket Retention
 
-By default, `./scripts/06_destroy_all.sh` and `terraform destroy` remove all Terraform-managed resources—including the GKE cluster, RoCEv2 network, Cloud SQL instance, Hyperdisk ML ReadOnlyMany (`ROX`) volume, and GCS weight cache bucket—to ensure zero ongoing cloud spend. For temporary overnight pauses that retain weights and disks, use the scheduled evening turndown CronJob or scale the serving StatefulSet to 0.
+By default, `./scripts/06_destroy_all.sh` and `terraform destroy` remove all Terraform-managed resources—including the GKE cluster, RoCEv2 network, Cloud SQL instance, and Hyperdisk ML ReadOnlyMany (`ROX`) volume—to ensure zero ongoing cloud spend. For temporary overnight pauses that retain weights and disks, use the scheduled evening turndown CronJob or scale the serving StatefulSet to 0.
 
-The only GCS bucket retained after `./scripts/06_destroy_all.sh` is the out-of-band Terraform remote state bucket (`gs://${PROJECT_ID}-kimi-k3-tfstate`), listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To explicitly delete the state bucket when no longer needed:
+There are two GCS buckets retained after `./scripts/06_destroy_all.sh`: the out-of-band Terraform remote state bucket (`gs://${PROJECT_ID}-kimi-k3-tfstate`) and the out-of-band weight backup bucket (`gs://${PROJECT_ID}-kimi-k3-weights-backup`), both listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To explicitly delete retained buckets when no longer needed:
 
 ```bash
 # Delete the out-of-band Terraform remote state bucket
@@ -557,11 +557,11 @@ workloads, release Persistent Volumes, and run `terraform destroy`:
     SDN propagation delay occurs.
 3.  Proactively cleans up the 2,000 GB Hyperdisk ML ReadOnlyMany (`ROX`) volume
     and local NVMe scratch arrays.
-4.  Supports `PURGE_WEIGHTS_CACHE=true` for explicit pre-destroy weight cache bucket purge (the bucket is in any case destroyed by `terraform destroy` since `force_destroy = true`).
+4.  Supports `PURGE_WEIGHTS_BACKUP=true` (when set alongside `FORCE_DESTROY=true`) for explicit pre-destroy weight backup bucket purge (out-of-band bucket is not destroyed by `terraform destroy`).
 
 ### Retained Storage & Bucket Purge Guide
 
-`./scripts/06_destroy_all.sh` executes `terraform destroy`, which deletes all Terraform-managed resources including the GCS weight cache bucket and Hyperdisk ML volume. The only bucket remaining is the out-of-band Terraform remote state bucket, which is listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To completely remove the state bucket:
+`./scripts/06_destroy_all.sh` executes `terraform destroy`, which deletes all Terraform-managed resources including the Hyperdisk ML volume. There are now **two** retained out-of-band buckets: the Terraform remote state bucket (`gs://${PROJECT_ID}-kimi-k3-tfstate`) and the weight backup bucket (`gs://${PROJECT_ID}-kimi-k3-weights-backup`), which are listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To completely remove retained storage:
 
 ```bash
 # 1. Purge and delete the Terraform remote state bucket
@@ -570,6 +570,6 @@ gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-tfstate"
 # 2. Purge and delete the Trajectory audit backup bucket
 gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-trajectories"
 
-# 3. (Optional) Delete custom GCS weight cache bucket if created
+# 3. (Optional) Delete out-of-band GCS weight backup bucket if created
 gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-weights-backup"
 ```

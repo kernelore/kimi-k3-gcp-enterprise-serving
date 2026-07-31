@@ -57,9 +57,9 @@ graph TD
 - **Action**: Execute `bash scripts/05_run_benchmarks.sh` across standard, prefill, saturation, and soak profiles, then execute `python3 benchmarks/generate_comparison.py`.
 - **Go/No-Go Gate**: Ensure TTFT, TPOT, and throughput targets are met and `README.md` comparison table updates cleanly without schema errors.
 
-### Step 7: Idempotent Teardown & Purge Variant (`06_destroy_all.sh`)
-- **Action**: Execute `bash scripts/06_destroy_all.sh` twice consecutively, and test with `PURGE_WEIGHTS_CACHE=true`.
-- **Go/No-Go Gate**: Second teardown execution must succeed cleanly (idempotency); `PURGE_WEIGHTS_CACHE=true` must remove GCS weight buckets without orphan locks.
+### Step 7: Idempotent Teardown (`06_destroy_all.sh`)
+- **Action**: Execute `bash scripts/06_destroy_all.sh` twice consecutively.
+- **Go/No-Go Gate**: Second teardown execution must succeed cleanly (idempotency) with zero errors.
 
 ### Step 8: Mandatory Zero-Orphan Sweep
 - **Action**: Execute the following GCP orphan detection commands post-teardown:
@@ -69,7 +69,7 @@ graph TD
   gcloud redis instances list --project="${PROJECT_ID}"
   gcloud storage ls --project="${PROJECT_ID}"
   ```
-- **Go/No-Go Gate**: Disks, SQL instances, and Redis instances must return empty lists; the storage bucket sweep must list only the documented retained bucket set (`TF_STATE_BUCKET` / retained weight cache buckets) and flag any unexpected or orphaned resources.
+- **Go/No-Go Gate**: Disks, SQL instances, and Redis instances must return empty lists; the storage bucket sweep must list only the expected-retained out-of-band buckets (`TF_STATE_BUCKET` and weight backup bucket `gs://${PROJECT_ID}-kimi-k3-weights-backup`) and flag any unexpected or orphaned resources.
 
 ---
 
@@ -77,7 +77,7 @@ graph TD
 
 In the event of any Go/No-Go gate failure during Steps 1–6:
 1. **Immediate Halt**: Terminate running deployment scripts.
-2. **Automated Teardown**: Execute `bash scripts/06_destroy_all.sh` with `PURGE_WEIGHTS_CACHE=true`.
+2. **Automated Teardown**: Execute `bash scripts/06_destroy_all.sh` (do **NOT** purge the weight backup bucket; re-staging takes hours and the backup is required for re-deployment).
 3. **Manual Override (if Terraform state locked)**:
    - Release lock: `terraform -chdir=terraform force-unlock <LOCK_ID>`.
    - Delete residual resources via CLI:

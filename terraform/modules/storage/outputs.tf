@@ -8,10 +8,6 @@ output "trajectory_bucket_name" {
   description = "Name of the trajectory storage bucket"
 }
 
-output "weights_cache_bucket_name" {
-  value       = google_storage_bucket.weights_cache.name
-  description = "Name of the weights cache storage bucket"
-}
 
 output "hyperdisk_ml_rox_id" {
   value       = "projects/${var.project_id}/zones/${var.zone}/disks/${google_compute_disk.staging_disk.name}"

@@ -133,11 +133,11 @@ t5_adv_05() {
   done
 }
 
-# T5_ADV_06: Weights Cache Consistency Verification (F11)
+# T5_ADV_06: Weights Backup Consistency Verification (P7-1)
 t5_adv_06() {
-  assert_match 'force_destroy\s*=\s*true' "${PROJECT_ROOT}/terraform/modules/storage/main.tf" "Missing force_destroy = true in storage main.tf"
-  assert_match 'PURGE_WEIGHTS_CACHE' "${PROJECT_ROOT}/README.md" "Missing PURGE_WEIGHTS_CACHE documentation in README.md"
-  assert_no_match 'retained.*weight.*cache|weight.*cache.*retained' "${PROJECT_ROOT}/README.md" "README improperly claims weight cache bucket is retained"
+  assert_match 'PURGE_WEIGHTS_BACKUP' "${PROJECT_ROOT}/README.md" "Missing PURGE_WEIGHTS_BACKUP documentation in README.md"
+  assert_no_match 'resource\s+"google_storage_bucket"\s+"[^"]*weights' "${PROJECT_ROOT}/terraform/modules/storage/main.tf" "terraform/modules/storage/main.tf declares a google_storage_bucket for weights"
+  assert_match 'PURGE_WEIGHTS_BACKUP.*true.*FORCE_DESTROY.*true|FORCE_DESTROY.*true.*PURGE_WEIGHTS_BACKUP.*true' "${PROJECT_ROOT}/scripts/06_destroy_all.sh" "scripts/06_destroy_all.sh must require both PURGE_WEIGHTS_BACKUP=true and FORCE_DESTROY=true to delete weights backup bucket"
 }
 
 run_tier_5_tests() {
