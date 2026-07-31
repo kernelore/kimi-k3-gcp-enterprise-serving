@@ -146,7 +146,15 @@ spec:
           value: "${SGLANG_PP_LAYER_PARTITION}"
         - name: SGLANG_EP_SIZE
           value: "${SGLANG_EP_SIZE}"
-        - name: SGLANG_PORT
+        # NOTE: this env var MUST NOT be named SGLANG_PORT. SGLANG_PORT is a
+        # reserved SGLang setting (srt/environ.py); when set, get_open_port()
+        # returns it instead of an ephemeral port, so the rank-0 scheduler binds
+        # the API port for its cross-node MessageQueue XPUB socket during model
+        # init and uvicorn then fails with EADDRINUSE on 0.0.0.0:8000, exiting 3
+        # in _wait_and_warmup. The generous startupProbe masks this as a ~8 min
+        # crash loop. The --port flag below is substituted at render time, so
+        # this variable is informational only.
+        - name: SGLANG_API_PORT
           value: "${SGLANG_PORT}"
         - name: SGLANG_MEM_FRACTION_STATIC
           value: "${SGLANG_MEM_FRACTION_STATIC}"
