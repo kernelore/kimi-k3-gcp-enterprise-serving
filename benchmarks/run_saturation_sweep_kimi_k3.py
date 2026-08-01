@@ -70,6 +70,14 @@ ISL_OSL_GRID = [
 # SKIPPED lines and the "status" field in the results JSON.
 MAX_INFLIGHT_PROMPT_TOKENS = 2_000_000
 
+# Per-request context ceiling: the engine validates prompt + completion against its
+# --context-length and rejects the whole request with HTTP 400 when the sum exceeds it.
+# The DAY-1 grid's 131072/2048 row asks for 133,120 tokens against a 131,072-token
+# window, so both of its runnable cells would have returned nothing but 400s and
+# published a row of zeroes. Cells that cannot fit are skipped with a recorded reason
+# instead, the same way the in-flight ceiling is handled.
+MAX_CONTEXT_TOKENS = 131_072
+
 SYNTHETIC_BASE_1K = (
     "In large-scale distributed artificial intelligence deployments on"
     " sovereign cloud infrastructure, NVIDIA Blackwell B200 HGX 2-node spot"
@@ -500,6 +508,16 @@ def parse_args():
       help="Maximum simultaneous in-flight prompt tokens before skipping cell",
   )
   parser.add_argument(
+      "--max-context-tokens",
+      dest="max_context_tokens",
+      default=MAX_CONTEXT_TOKENS,
+      type=int,
+      help=(
+          "Engine context window. Cells whose ISL+OSL exceeds it are skipped,"
+          " because the engine rejects such requests outright with HTTP 400"
+      ),
+  )
+  parser.add_argument(
       "--metrics-endpoint",
       default="",
       help="Optional Prometheus /metrics URL of the serving engine leader",
@@ -526,6 +544,7 @@ def main():
   suite_start_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
   sweep_levels = args.concurrency_levels
   max_inflight = args.max_inflight_prompt_tokens
+  max_context = args.max_context_tokens
 
   if not args.metrics_endpoint or not args.metrics_names:
     print(
@@ -542,6 +561,24 @@ def main():
 
   for isl, osl in ISL_OSL_GRID:
     for c in sweep_levels:
+      if isl + osl > max_context:
+        reason = (
+            f"ISL+OSL={isl + osl:,} tokens exceeds the engine context window"
+            f" MAX_CONTEXT_TOKENS={max_context:,}; the engine rejects such"
+            " requests with HTTP 400 before any tokens are generated"
+        )
+        print(f"SKIPPED cell ISL={isl} OSL={osl} c={c} -> {reason}")
+        sweep_results.append({
+            "isl_target": isl,
+            "osl": osl,
+            "concurrency": c,
+            "prompt_tokens_observed": 0,
+            "status": "skipped",
+            "reason": reason,
+            "peak_metrics": None,
+        })
+        continue
+
       inflight_tokens = c * isl
       if inflight_tokens > max_inflight:
         reason = (
@@ -621,6 +658,7 @@ def main():
       "ISL_OSL_GRID": ISL_OSL_GRID,
       "sweep_levels": sweep_levels,
       "MAX_INFLIGHT_PROMPT_TOKENS": max_inflight,
+      "MAX_CONTEXT_TOKENS": max_context,
       "BASE_TOKENS_APPROX": BASE_TOKENS_APPROX,
       "suite_start_ts": suite_start_ts,
       "suite_end_ts": suite_end_ts,

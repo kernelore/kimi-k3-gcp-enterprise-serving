@@ -318,10 +318,17 @@ if [ "${IN_CLUSTER}" = "true" ]; then
     exit 1
   fi
 
-  TIMEOUT="1200s"
-  if [ "${MODE}" = "soak" ]; then
-    TIMEOUT="3600s"
-  fi
+  # Keep these in step with activeDeadlineSeconds in the Job template. The saturation sweep
+  # runs 13 grid cells -- the c=1 cells alone issue 8 strictly sequential requests of up to
+  # 2048 output tokens on top of a 128k-token prefill -- and comfortably outruns the 1200s
+  # that used to apply to every mode except soak. When `kubectl wait` gave up, this script
+  # exited non-zero and the next invocation deleted the still-running Job, so the sweep could
+  # never complete no matter how long it was left alone.
+  case "${MODE}" in
+    soak)       TIMEOUT="3600s" ;;
+    saturation) TIMEOUT="10800s" ;;
+    *)          TIMEOUT="1200s" ;;
+  esac
   echo "    Waiting for in-cluster benchmark Job to complete (timeout: ${TIMEOUT})..."
   if ! kubectl wait --for=condition=complete job/kimi-k3-incluster-benchmark -n llm-serving --timeout="${TIMEOUT}"; then
     echo "ERROR: In-cluster benchmark Job failed or timed out!" >&2
