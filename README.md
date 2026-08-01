@@ -41,7 +41,7 @@ RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 +-----------------------------------------------------------------------------------------------------------------+
 |                      Tier 1: Enterprise AI Gateway Layer (LiteLLM + Cloud SQL + Redis)                          |
 |  - Virtual API Key Authentication (Internal Load Balancer Port 4000)                                            |
-|  - Token-Bucket Rate Limiting (TPM / RPM) & Exact-Match Prompt Caching on Cloud Memorystore Redis (*TBD — to be measured at first deployment*)      |
+|  - Token-Bucket Rate Limiting (TPM / RPM) & Exact-Match Prompt Caching on Redis (measured 0.40 ms p50 GET)      |
 |  - Asynchronous Telemetry & Trajectory Audit Sink streaming to BigQuery (`kimi_k3_enterprise_audit`)            |
 |  - Upstream distribution across N active serving replicas via Kubernetes ClusterIP Service                      |
 +--------------------------------------------------------+--------------------------------------------------------+
@@ -78,7 +78,7 @@ RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 | **Google Kubernetes Engine (GKE)** | `module.cluster` | Private nodes with public, IAM-gated control-plane endpoint (or fully private with `enable_private_endpoint = true`) orchestrating dual-engine (SGLang / TRT-LLM) pods, Workload Identity Federation, and node pool autoscaling. |
 | **Compute Engine A4 VMs** | `module.node_pool_spot` | `a4-highgpu-8g` Blackwell instances equipped with 8x NVIDIA B200 GPUs (1,440 GB HBM3e, 180 GB/GPU) and 32x local NVMe SSDs (32 × 375 GiB = 12,000 GiB ≈ 11.7 TiB) per node, operating in 2-node pairs over RoCEv2. |
 | **Hyperdisk ML (`ROX`)** | `module.storage` | 2,000 GB (2 TB) high-throughput block volume flipped to `ReadOnlyMany` mode for shared, zero-cold-start model weight mounting. |
-| **Cloud Memorystore for Redis** | `module.cache` | In-memory tier for exact-match prompt caching (single-digit-ms in-VPC, *TBD — to be measured at first deployment* verified via port-forward) and gateway token-bucket rate limiting (RPM/TPM). Note: exact-match prompt caching applies at the gateway level; inside the serving engine, RadixAttention prefix caching reuse benefits only the 24 MLA attention layers, while KDA linear layers are not prefix-shareable. |
+| **Cloud Memorystore for Redis** | `module.cache` | In-memory tier for exact-match prompt caching (measured in-VPC from the gateway pod against Redis 6.2.14: `PING` 0.31 ms p50 / 0.67 ms p99, 512 B `GET` 0.40 ms p50 / 0.82 ms p99, 512 B `SET` 0.37 ms p50 / 0.74 ms p99 — sub-millisecond, not the single-digit-ms this previously estimated) and gateway token-bucket rate limiting (RPM/TPM). Note: exact-match prompt caching applies at the gateway level; inside the serving engine, RadixAttention prefix caching reuse benefits only the 24 MLA attention layers, while KDA linear layers are not prefix-shareable. |
 | **Cloud SQL for PostgreSQL** | `module.database` | Private database accessed via Cloud SQL Auth Proxy storing virtual API keys, user budgets, and gateway routing configurations. |
 | **BigQuery** | `module.audit` | Serverless audit dataset (`kimi_k3_enterprise_audit`) for asynchronous logging of conversation trajectories and token telemetry. |
 | **Cloud Storage (GCS)** | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Remote Terraform state versioning and high-speed weight hydration backup bucket (measured hydration: 1,453.7 GiB in 11 min 18 s, 2.1 GiB/s average). |
@@ -211,7 +211,7 @@ significantly:
     -   **Wrong-Machine Flags Are Rejected**: `--mamba-full-memory-ratio` is not a cookbook flag; the value previously carried here came from `AI-Hypercomputer/gpu-recipes` `a4x/multi-host-serving/sglang`, a **4-node A4X/GB200 NVL72** recipe. A4X is Grace-Blackwell on an NVL72 fabric and A4 is B200 HGX over RoCEv2 — different machines, non-transferable tuning. The render check now treats that flag as forbidden.
     -   **Parallelism Profiles (`SGLANG_PARALLEL_PROFILE`)**: Supports `tp16` (default `--tp-size 16`, confining all parallelism to TP/EP=16 across 16 GPUs) and `tp8pp2` (fallback `--tp-size 8 --pp-size 2` when inter-node RoCEv2 interconnect proves throughput-bound, confining TP all-reduce collectives to NVLink within each node and transferring pipeline activations over RoCE; the profile also drops EP to 8 for the same reason).
         - *When to flip*: Flip to `tp8pp2` if inter-node all-reduce over RoCEv2 is measured as the primary latency bottleneck at first deployment.
-        - *Uneven Layer Split Caveat*: Kimi-K3 has `num_hidden_layers = 93` (an odd number), so PP=2 automatic split is uneven by construction. Furthermore, full-attention (MLA) layers occur at every 4th layer plus the last (`text_config.linear_attn_config.full_attn_layers`), causing the two pipeline stages to receive unequal MLA counts and unequal KV-cache memory. Environment variable `SGLANG_PP_LAYER_PARTITION` exists to override the automatic split, and the correct partition is `TBD — to be measured at first deployment`.
+        - *Uneven Layer Split Caveat*: Kimi-K3 has `num_hidden_layers = 93` (an odd number), so PP=2 automatic split is uneven by construction. Furthermore, full-attention (MLA) layers occur at every 4th layer plus the last (`text_config.linear_attn_config.full_attn_layers`), causing the two pipeline stages to receive unequal MLA counts and unequal KV-cache memory. Environment variable `SGLANG_PP_LAYER_PARTITION` exists to override the automatic split, and the correct partition remains unmeasured. This is not an oversight pending the next deploy: the deployment benchmarked here runs `TP=16, PP=1`, which has no pipeline split to tune, so no run in this repository can produce the number. Determining it requires standing up the `PP=2` profile and sweeping partitions against a fixed workload — left as future work rather than guessed at here.
 
 2.  **NVIDIA TensorRT-LLM (Experimental Option | `INFERENCE_ENGINE="trtllm"`)**:
 
@@ -592,7 +592,7 @@ Render Kubernetes manifest templates, format local NVMe SSDs into RAID 0 scratch
 
 ### Step 6: Verify Cluster Health, Gateway Virtual Keys & BigQuery Audits
 
-Execute the automated 5-point verification suite to certify node health, virtual API key generation, token-bucket rate limiting, Redis exact-match prompt caching (_TBD — to be measured at first deployment_), and BigQuery trajectory audit streaming:
+Execute the automated 5-point verification suite to certify node health, virtual API key generation, token-bucket rate limiting, Redis exact-match prompt caching (measured 0.40 ms p50 / 0.82 ms p99 round-trip), and BigQuery trajectory audit streaming:
 
 ```bash
 ./scripts/04_verify_cluster.sh
