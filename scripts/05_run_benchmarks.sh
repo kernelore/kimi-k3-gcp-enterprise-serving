@@ -189,14 +189,17 @@ echo "    Target Benchmark Endpoint: ${TARGET_URL}"
 
 ENGINE="${INFERENCE_ENGINE:-sglang}"
 ENGINE_VERSION="unknown"
-if [ "${IN_CLUSTER}" != "true" ]; then
-  SERVING_POD=$(kubectl get pod -n llm-serving -l app=kimi-k3-serving -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-  if [ -n "${SERVING_POD}" ]; then
-    if [ "${ENGINE}" = "sglang" ]; then
-      ENGINE_VERSION=$(kubectl exec -n llm-serving "${SERVING_POD}" -c sglang-mpi-node -- python3 -c "import sglang; print(getattr(sglang, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
-    else
-      ENGINE_VERSION=$(kubectl exec -n llm-serving "${SERVING_POD}" -c trtllm-mpi-node -- python3 -c "import tensorrt_llm; print(getattr(tensorrt_llm, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
-    fi
+# Probe the engine version in every mode. This used to be skipped whenever --in-cluster was
+# set, which left engine_version at the literal string "unknown" on exactly those runs -- and
+# benchmarks/generate_comparison.py rejects "unknown" at the provenance gate as a placeholder.
+# The probe is a host-side `kubectl exec` and has nothing to do with where the benchmark
+# traffic originates, so gating it on IN_CLUSTER only ever discarded valid provenance.
+SERVING_POD=$(kubectl get pod -n llm-serving -l app=kimi-k3-serving -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+if [ -n "${SERVING_POD}" ]; then
+  if [ "${ENGINE}" = "sglang" ]; then
+    ENGINE_VERSION=$(kubectl exec -n llm-serving "${SERVING_POD}" -c sglang-mpi-node -- python3 -c "import sglang; print(getattr(sglang, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
+  else
+    ENGINE_VERSION=$(kubectl exec -n llm-serving "${SERVING_POD}" -c trtllm-mpi-node -- python3 -c "import tensorrt_llm; print(getattr(tensorrt_llm, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
   fi
 fi
 if [ -z "${ENGINE_VERSION}" ]; then
@@ -276,9 +279,17 @@ if [ "${IN_CLUSTER}" = "true" ]; then
   export OWNER_LABEL="${OWNER_LABEL:-opensource-user}"
   export GATEWAY_MASTER_KEY="${GATEWAY_MASTER_KEY:-sk-kimi-k3-master-secret-key-change-me}"
   
+  # Stamp the same provenance block the host-side runs pass via --metadata. Without this the
+  # Job leaves the flag at its "{}" default, every in-cluster result lands with an empty
+  # metadata object, and benchmarks/generate_comparison.py rejects the run at the provenance
+  # gate -- so the fallback this script recommends when the port-forward tunnel drops could
+  # never actually produce the README comparison table.
+  BENCHMARK_METADATA_JSON="$(get_metadata_json)"
+  export BENCHMARK_METADATA_JSON
+
   if [ -f "${TEMPLATE_DIR}/08-in-cluster-benchmark-job.yaml.template" ]; then
     # shellcheck disable=SC2016
-    safe_envsubst '${ENV_LABEL} ${OWNER_LABEL} ${SERVING_MODEL_NAME}' < "${TEMPLATE_DIR}/08-in-cluster-benchmark-job.yaml.template" > "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
+    safe_envsubst '${ENV_LABEL} ${OWNER_LABEL} ${SERVING_MODEL_NAME} ${BENCHMARK_METADATA_JSON}' < "${TEMPLATE_DIR}/08-in-cluster-benchmark-job.yaml.template" > "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
     if [ "${MODE}" != "soak" ]; then
       echo "    Configuring in-cluster job for mode '${MODE}' (${BENCH_SCRIPT})..."
       sed -i "s/soak_benchmark_kimi_k3\.py/${BENCH_SCRIPT}/g" "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
@@ -332,6 +343,14 @@ if [ "${IN_CLUSTER}" = "true" ]; then
       echo "ERROR: Benchmark result file ${RESULT_FILE} is not valid JSON!" >&2
       exit 1
     fi
+
+    # Publish under the canonical suite name as well. generate_comparison.py globs for
+    # "<suite>_results.json" and is blind to the "incluster_" prefix, so an in-cluster run
+    # used to leave the results directory looking empty to the comparison generator no matter
+    # how many suites had actually been executed.
+    CANONICAL_RESULT_FILE="${RESULTS_DIR}/${MODE}_results.json"
+    cp -f "${RESULT_FILE}" "${CANONICAL_RESULT_FILE}"
+    echo "    Published canonical result: ${CANONICAL_RESULT_FILE}"
   fi
   echo "    [OK] In-cluster benchmark job execution finished and results retrieved."
   exit 0

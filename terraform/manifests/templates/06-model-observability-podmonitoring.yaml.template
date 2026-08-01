@@ -7,7 +7,7 @@ metadata:
     app: kimi-k3-serving
     app.kubernetes.io/name: ${INFERENCE_SERVER_LABEL}
     app.kubernetes.io/part-of: google-cloud-managed-prometheus
-    ai.gke.io/model: "${SERVING_MODEL_NAME}"
+    ai.gke.io/model: "${SERVING_MODEL_LABEL}"
     ai.gke.io/inference-server: "${INFERENCE_SERVER_LABEL}"
     env: ${ENV_LABEL}
     owner: ${OWNER_LABEL}

@@ -25,7 +25,7 @@ metadata:
   namespace: llm-serving
   labels:
     app: kimi-k3-gateway
-    ai.gke.io/model: "${SERVING_MODEL_NAME}"
+    ai.gke.io/model: "${SERVING_MODEL_LABEL}"
     env: ${ENV_LABEL}
     owner: ${OWNER_LABEL}
 spec:
@@ -42,13 +42,18 @@ spec:
     metadata:
       labels:
         app: kimi-k3-gateway
-        ai.gke.io/model: "${SERVING_MODEL_NAME}"
+        ai.gke.io/model: "${SERVING_MODEL_LABEL}"
         env: ${ENV_LABEL}
         owner: ${OWNER_LABEL}
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "4000"
         prometheus.io/path: "/metrics"
+        # Fingerprint of the rendered 04-enterprise-gateway-config.yaml. A ConfigMap update
+        # alone does not restart pods, so without this a GATEWAY_MASTER_KEY rotation would
+        # leave the old key live in the running gateway. Changing the config changes this
+        # annotation, which changes the pod spec, which triggers a rolling update.
+        kimi-k3.gke.io/gateway-config-checksum: "${GATEWAY_CONFIG_CHECKSUM}"
     spec:
       serviceAccountName: kimi-k3-gateway-sa
       terminationGracePeriodSeconds: 60

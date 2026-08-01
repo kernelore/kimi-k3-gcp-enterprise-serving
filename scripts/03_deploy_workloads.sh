@@ -47,6 +47,20 @@ validate_hf_token() {
 
 export MODEL_REPO_ID="${MODEL_REPO_ID:-moonshotai/Kimi-K3}"
 export SERVING_MODEL_NAME="${SERVING_MODEL_NAME:-moonshotai/Kimi-K3}"
+
+# Kubernetes label VALUES may only contain [A-Za-z0-9._-] and must start and end with an
+# alphanumeric, so the HuggingFace-style repo id in SERVING_MODEL_NAME ("moonshotai/Kimi-K3")
+# is a legal label KEY prefix but an illegal label VALUE -- every apply of the gateway
+# Deployment and the PodMonitoring was rejected outright by the API server. Derive a
+# sanitised variant for the ai.gke.io/model label and keep SERVING_MODEL_NAME itself intact,
+# because the gateway config and the engine both need the real repo id.
+SERVING_MODEL_LABEL=$(printf '%s' "${SERVING_MODEL_NAME}" \
+  | tr '[:upper:]' '[:lower:]' \
+  | sed -e 's/[^a-z0-9._-]/-/g' -e 's/^[^a-z0-9]*//' -e 's/[^a-z0-9]*$//' \
+  | cut -c1-63 \
+  | sed -e 's/[^a-z0-9]*$//')
+export SERVING_MODEL_LABEL="${SERVING_MODEL_LABEL:-kimi-k3}"
+
 export FABRIC_GATE_TIMEOUT_SECONDS="${FABRIC_GATE_TIMEOUT_SECONDS:-900}"
 export TRTLLM_TP_SIZE="${TRTLLM_TP_SIZE:-8}"
 export TRTLLM_PP_SIZE="${TRTLLM_PP_SIZE:-2}"
@@ -255,7 +269,7 @@ export INFERENCE_ENGINE INFERENCE_SERVER_LABEL SERVING_IMAGE
 # 1. Render manifest templates (excluding HF_TOKEN from substitution to prevent plaintext baking)
 echo "--> 1. Rendering manifest templates from ${TEMPLATE_DIR} to ${GENERATED_DIR}..."
 # shellcheck disable=SC2016
-BASE_ALLOWED_VARS='${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${SERVING_MODEL_NAME} ${TRTLLM_TP_SIZE} ${TRTLLM_PP_SIZE} ${TRTLLM_EP_SIZE} ${TRTLLM_MAX_SEQ_LEN} ${SGLANG_PARALLEL_PROFILE} ${SGLANG_TP_SIZE} ${SGLANG_PP_SIZE} ${SGLANG_PP_LAYER_PARTITION} ${SGLANG_EP_SIZE} ${SGLANG_PORT} ${SGLANG_MEM_FRACTION_STATIC} ${SGLANG_SCHEDULE_POLICY} ${SGLANG_QUANTIZATION} ${SGLANG_ENABLE_TORCH_COMPILE} ${SGLANG_PREFILL_ATTENTION_BACKEND} ${SGLANG_DECODE_ATTENTION_BACKEND} ${SGLANG_LINEAR_ATTN_PREFILL_BACKEND} ${SGLANG_MOE_RUNNER_BACKEND} ${SGLANG_KV_CACHE_DTYPE} ${SGLANG_CONTEXT_LENGTH} ${SGLANG_REASONING_PARSER} ${SGLANG_TOOL_CALL_PARSER} ${EXPECTED_MODEL_ARCHITECTURE} ${MIN_WEIGHTS_GIB} ${LEADER_ADDR} ${HYPERDISK_ML_SIZE_GB} ${GCS_WEIGHTS_BUCKET} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${TRTLLM_VIP} ${GPU_MAX_NODES} ${SERVING_REPLICAS} ${NODES_PER_REPLICA} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${SERVING_IMAGE}'
+BASE_ALLOWED_VARS='${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${SERVING_MODEL_NAME} ${SERVING_MODEL_LABEL} ${TRTLLM_TP_SIZE} ${TRTLLM_PP_SIZE} ${TRTLLM_EP_SIZE} ${TRTLLM_MAX_SEQ_LEN} ${SGLANG_PARALLEL_PROFILE} ${SGLANG_TP_SIZE} ${SGLANG_PP_SIZE} ${SGLANG_PP_LAYER_PARTITION} ${SGLANG_EP_SIZE} ${SGLANG_PORT} ${SGLANG_MEM_FRACTION_STATIC} ${SGLANG_SCHEDULE_POLICY} ${SGLANG_QUANTIZATION} ${SGLANG_ENABLE_TORCH_COMPILE} ${SGLANG_PREFILL_ATTENTION_BACKEND} ${SGLANG_DECODE_ATTENTION_BACKEND} ${SGLANG_LINEAR_ATTN_PREFILL_BACKEND} ${SGLANG_MOE_RUNNER_BACKEND} ${SGLANG_KV_CACHE_DTYPE} ${SGLANG_CONTEXT_LENGTH} ${SGLANG_REASONING_PARSER} ${SGLANG_TOOL_CALL_PARSER} ${EXPECTED_MODEL_ARCHITECTURE} ${MIN_WEIGHTS_GIB} ${LEADER_ADDR} ${HYPERDISK_ML_SIZE_GB} ${GCS_WEIGHTS_BUCKET} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${TRTLLM_VIP} ${GPU_MAX_NODES} ${SERVING_REPLICAS} ${NODES_PER_REPLICA} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${SERVING_IMAGE}'
 for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
   if [ -f "${template_file}" ]; then
     basename=$(basename "${template_file}" .template)
@@ -263,10 +277,20 @@ for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
     echo "    Rendering ${basename}..."
     allowed_vars="${BASE_ALLOWED_VARS}"
     if [ "${basename}" = "04-enterprise-gateway-config.yaml" ] || [ "${basename}" = "05-enterprise-gateway-deployment.yaml" ]; then
-      allowed_vars="${BASE_ALLOWED_VARS} \${GATEWAY_MASTER_KEY}"
+      allowed_vars="${BASE_ALLOWED_VARS} \${GATEWAY_MASTER_KEY} \${GATEWAY_CONFIG_CHECKSUM}"
     fi
     # shellcheck disable=SC2016
     safe_envsubst "${allowed_vars}" < "${template_file}" > "${target_file}"
+
+    # Fingerprint the rendered gateway config so the Deployment below can carry it as a pod
+    # annotation. Without this, `kubectl apply` updates the ConfigMap but the running pods keep
+    # serving with the config they booted from -- so rotating GATEWAY_MASTER_KEY appeared to
+    # succeed while the old key stayed live and every client using the new one got 401s.
+    # The glob is lexicographic, so 04- is always rendered before 05- consumes this.
+    if [ "${basename}" = "04-enterprise-gateway-config.yaml" ]; then
+      GATEWAY_CONFIG_CHECKSUM=$(sha256sum "${target_file}" | cut -c1-16)
+      export GATEWAY_CONFIG_CHECKSUM
+    fi
   fi
 done
 echo "    [OK] All manifest templates rendered cleanly."
@@ -317,12 +341,34 @@ cleanup_fabric_pods() {
   kubectl delete statefulset nccl-roce-test nccl-parity-check -n llm-serving --ignore-not-found=true >/dev/null 2>&1 || true
 }
 
+# Block until no pod matching the given label selector is left in the namespace. The fabric
+# gates cannot overlap (see the sequencing note below), so the second gate must not be applied
+# until the first one's pods have actually released their RDMA interfaces -- a deleted
+# StatefulSet returns immediately while its pods are still Terminating.
+wait_for_fabric_pods_gone() {
+  local selector="$1"
+  local deadline=$(( $(date +%s) + 180 ))
+  while [ "$(date +%s)" -lt "${deadline}" ]; do
+    if [ "$(kubectl get pods -n llm-serving -l "${selector}" --no-headers 2>/dev/null | wc -l)" -eq 0 ]; then
+      return 0
+    fi
+    sleep 3
+  done
+  echo "    WARNING: pods matching '${selector}' still present after 180s; continuing anyway." >&2
+  return 0
+}
+
 if [ "${SKIP_FABRIC_CHECK:-false}" = "true" ]; then
   echo "WARNING: SKIP_FABRIC_CHECK=true set. Bypassing RoCEv2 network fabric and NCCL bus bandwidth verification!" >&2
 else
   echo "--> 3b. Verifying RoCEv2 RDMA network fabric and NCCL bus bandwidth (floor >= 100 GB/s)..."
+  # The two fabric gates MUST run one after the other, never together. Each gate pod requests
+  # all eight RDMA interfaces (networking.gke.io.networks/rdma-0..7), and a node advertises
+  # exactly one of each -- so a node can host exactly one gate pod, whatever its GPU count.
+  # Applying both 2-replica StatefulSets up front on the documented 2-node topology therefore
+  # deadlocks permanently: two pods run, the other two stay Pending forever, and both gates
+  # time out. That is why the RoCE bus-bandwidth number was never successfully captured.
   kubectl apply -f "${GENERATED_DIR}/00c-nccl-test-job.yaml"
-  kubectl apply -f "${GENERATED_DIR}/00d-serving-nccl-parity-job.yaml"
 
   echo "    Polling NCCL RoCEv2 rank-0 pod (nccl-roce-test-0) for machine marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   MARKER_LINE=""
@@ -372,6 +418,13 @@ else
   fi
   echo "    [OK] NCCL RoCEv2 bus bandwidth meets >= 100 GB/s requirement (${BUSBW_VAL} GB/s)."
 
+  # First gate passed: tear it down and wait for its RDMA interfaces to be released before
+  # the parity gate can be scheduled onto the same nodes.
+  echo "    Releasing RoCEv2 gate pods before starting the serving-image parity gate..."
+  kubectl delete statefulset nccl-roce-test -n llm-serving --ignore-not-found=true >/dev/null 2>&1 || true
+  wait_for_fabric_pods_gone "app=nccl-roce-test"
+  kubectl apply -f "${GENERATED_DIR}/00d-serving-nccl-parity-job.yaml"
+
   echo "    Polling NCCL parity check rank-0 pod (nccl-parity-check-0) for parity marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   PARITY_MARKER=""
   FAIL_SEEN=""
@@ -418,8 +471,33 @@ if [ -z "${SERVING_ACTIVE}" ]; then SERVING_ACTIVE="0"; fi
 SKIP_STAGING_EXEC="false"
 if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" != "1" ] && [ "${SERVING_ACTIVE}" != "1" ] && [ "${SERVING_ACTIVE}" != "2" ]; then
   CURRENT_ACCESS_MODE=""
+  DISK_PROBE_RESOLVED="false"
+  DISK_PROBE_OUT=""
   if command -v gcloud >/dev/null 2>&1; then
-    CURRENT_ACCESS_MODE=$(gcloud compute disks describe kimi-k3-weights-rox --zone="${ZONE}" --project="${PROJECT_ID}" --format='value(accessMode)' --quiet 2>/dev/null | head -n 1 || true)
+    if DISK_PROBE_OUT=$(gcloud compute disks describe kimi-k3-weights-rox --zone="${ZONE}" --project="${PROJECT_ID}" --format='value(accessMode)' --quiet 2>&1); then
+      DISK_PROBE_RESOLVED="true"
+      CURRENT_ACCESS_MODE=$(printf '%s\n' "${DISK_PROBE_OUT}" | head -n 1 | tr -d '[:space:]')
+    elif printf '%s' "${DISK_PROBE_OUT}" | grep -E -qi 'was not found|notFound|does not exist'; then
+      # Disk genuinely absent: this is first-time setup and staging is the correct path.
+      DISK_PROBE_RESOLVED="true"
+    fi
+  fi
+
+  # Fail closed. If the access mode could not be resolved -- no gcloud on PATH, an expired
+  # credential, a wrong ZONE/PROJECT_ID in config.env, a transient API error -- the old code
+  # left CURRENT_ACCESS_MODE empty and fell straight through to the staging branch below,
+  # which deletes pvc-kimi-k3-weights-rox and pv-kimi-k3-weights-rox and then re-downloads
+  # 1.45 TiB from scratch. An unreadable disk is not the same thing as an unstaged disk, and
+  # guessing wrong destroys a hydrated checkpoint. Refuse to guess.
+  if [ "${DISK_PROBE_RESOLVED}" != "true" ]; then
+    echo "ERROR: could not determine the access mode of disk kimi-k3-weights-rox in zone '${ZONE}' (project '${PROJECT_ID}')." >&2
+    echo "       Refusing to continue: the weight-staging path below deletes the ROX PVC/PV and re-stages 1.45 TiB." >&2
+    echo "       Verify gcloud auth, ZONE and PROJECT_ID in scripts/config.env, then re-run." >&2
+    echo "       If the disk really is absent and you intend a fresh staging pass, set SKIP_WEIGHT_JOB=false and confirm the disk name." >&2
+    if [ -n "${DISK_PROBE_OUT}" ]; then
+      echo "       gcloud reported: $(printf '%s' "${DISK_PROBE_OUT}" | head -n 3 | tr '\n' ' ')" >&2
+    fi
+    exit 1
   fi
 
   if [ "${CURRENT_ACCESS_MODE}" = "READ_ONLY_MANY" ]; then

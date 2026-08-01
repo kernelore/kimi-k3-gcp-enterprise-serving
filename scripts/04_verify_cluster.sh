@@ -29,6 +29,13 @@ else
   ENGINE_CONTAINER="trtllm-mpi-node"
 fi
 
+# Gateway probe budget. Kimi K3 is a 2.8T reasoning model: an unbounded completion
+# generates until EOS and routinely exceeds a 30s client cap, which used to make Tests
+# 2, 3 and 4 fail for a reason that had nothing to do with the gateway. Bound the
+# generation AND give the client enough headroom for a cold first token.
+export GATEWAY_CURL_MAX_TIME="${GATEWAY_CURL_MAX_TIME:-120}"
+export GATEWAY_TEST_MAX_TOKENS="${GATEWAY_TEST_MAX_TOKENS:-32}"
+
 PF_PIDS=()
 cleanup_port_forwards() {
   for pid in ${PF_PIDS[@]+"${PF_PIDS[@]}"}; do
@@ -127,9 +134,9 @@ if [ -n "${GATEWAY_POD}" ]; then
         for arg in "${args[@]}"; do
           new_args+=("${arg//http:\/\/${GATEWAY_VIP}:4000/http:\/\/localhost:4000}")
         done
-        curl --max-time 30 "${new_args[@]}"
+        curl --max-time "${GATEWAY_CURL_MAX_TIME}" "${new_args[@]}"
       elif [ -n "${GATEWAY_VIP}" ] && curl -s --connect-timeout 2 "http://${GATEWAY_VIP}:4000/health/liveliness" >/dev/null 2>&1; then
-        curl --max-time 30 "${args[@]}"
+        curl --max-time "${GATEWAY_CURL_MAX_TIME}" "${args[@]}"
       else
         local py_script="import urllib.request, sys, json
 args = sys.argv[1:]
@@ -157,7 +164,7 @@ if not url: sys.exit(0)
 req_method = method if method != 'GET' else ('POST' if data else 'GET')
 req = urllib.request.Request(url, data=data, headers=headers, method=req_method)
 try:
-    with urllib.request.urlopen(req, timeout=30) as res:
+    with urllib.request.urlopen(req, timeout=${GATEWAY_CURL_MAX_TIME}) as res:
         if header_file:
             with open(header_file, 'w') as hf:
                 for k, v in res.headers.items():
@@ -191,7 +198,7 @@ except Exception as e:
     echo "    [Test 1/5] Running 401 Unauthorized Auth Test (No API Key)..."
     HTTP_CODE=$(run_gateway_curl -s -o /dev/null -w "%{http_code}" http://"${GATEWAY_VIP}":4000/v1/chat/completions \
       -H "Content-Type: application/json" \
-      -d '{"model": "'"${SERVING_MODEL_NAME}"'", "messages": [{"role": "user", "content": "test auth"}]}' || echo "000")
+      -d '{"model": "'"${SERVING_MODEL_NAME}"'", "max_tokens": '"${GATEWAY_TEST_MAX_TOKENS}"', "messages": [{"role": "user", "content": "test auth"}]}' || echo "000")
     if [ "${HTTP_CODE}" = "401" ]; then
       echo "      [PASS] Returned HTTP 401 Unauthorized as expected."
     else
@@ -212,7 +219,7 @@ except Exception as e:
       HTTP_CODE=$(run_gateway_curl -s -o /dev/null -w "%{http_code}" http://"${GATEWAY_VIP}":4000/v1/chat/completions \
         -H "Authorization: Bearer ${DEV_KEY}" \
         -H "Content-Type: application/json" \
-        -d '{"model": "'"${SERVING_MODEL_NAME}"'", "messages": [{"role": "user", "content": "Hello Sovereign Gateway"}]}' || echo "000")
+        -d '{"model": "'"${SERVING_MODEL_NAME}"'", "max_tokens": '"${GATEWAY_TEST_MAX_TOKENS}"', "messages": [{"role": "user", "content": "Hello Sovereign Gateway"}]}' || echo "000")
       if [ "${HTTP_CODE}" = "200" ]; then
         echo "      [PASS] Virtual key authentication returned HTTP 200 OK successfully."
       else
@@ -231,11 +238,11 @@ except Exception as e:
       run_gateway_curl -s -o /dev/null http://"${GATEWAY_VIP}":4000/v1/chat/completions \
         -H "Authorization: Bearer ${QUOTA_KEY}" \
         -H "Content-Type: application/json" \
-        -d '{"model": "'"${SERVING_MODEL_NAME}"'", "messages": [{"role": "user", "content": "Consume initial budget budget budget"}]}' || true
+        -d '{"model": "'"${SERVING_MODEL_NAME}"'", "max_tokens": '"${GATEWAY_TEST_MAX_TOKENS}"', "messages": [{"role": "user", "content": "Consume initial budget budget budget"}]}' || true
       QUOTA_CODE=$(run_gateway_curl -s -o /dev/null -w "%{http_code}" http://"${GATEWAY_VIP}":4000/v1/chat/completions \
         -H "Authorization: Bearer ${QUOTA_KEY}" \
         -H "Content-Type: application/json" \
-        -d '{"model": "'"${SERVING_MODEL_NAME}"'", "messages": [{"role": "user", "content": "Second budget request"}]}' || echo "000")
+        -d '{"model": "'"${SERVING_MODEL_NAME}"'", "max_tokens": '"${GATEWAY_TEST_MAX_TOKENS}"', "messages": [{"role": "user", "content": "Second budget request"}]}' || echo "000")
       if [ "${QUOTA_CODE}" = "429" ] || [ "${QUOTA_CODE}" = "400" ]; then
         echo "      [PASS] Rate/budget quota deduction enforced (HTTP ${QUOTA_CODE})."
       else
@@ -247,7 +254,7 @@ except Exception as e:
 
     # Test 4: Redis Cache Hit Test (Deterministic temperature=0 query with retry)
     echo "    [Test 4/5] Running Redis Cache Hit Test (Deterministic exact match)..."
-    CACHE_PROMPT='{"model": "'"${SERVING_MODEL_NAME}"'", "temperature": 0.0, "messages": [{"role": "user", "content": "Sovereign AI deterministic caching test query for Kimi K3"}]}'
+    CACHE_PROMPT='{"model": "'"${SERVING_MODEL_NAME}"'", "temperature": 0.0, "max_tokens": '"${GATEWAY_TEST_MAX_TOKENS}"', "messages": [{"role": "user", "content": "Sovereign AI deterministic caching test query for Kimi K3"}]}'
     AUTH_HEADER_KEY="${DEV_KEY:-${MASTER_KEY}}"
 
     # Send priming request
@@ -269,7 +276,11 @@ except Exception as e:
       END_TIME=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || date +%s)
       ELAPSED_MS=$((END_TIME - START_TIME))
       CACHE_STATUS=$(grep -i -E "x-litellm-cache|x-litellm-response-duration-ms" "${CACHE_HEADER_FILE}" | tr -d '\r\n' | paste -sd " | " - || true)
-      SERVER_DURATION_MS=$(grep -i "^x-litellm-response-duration-ms:" "${CACHE_HEADER_FILE}" | awk -F: '{print $2}' | tr -d ' \r\n' || echo "9999")
+      SERVER_DURATION_MS=$(grep -i "^x-litellm-response-duration-ms:" "${CACHE_HEADER_FILE}" | awk -F: '{print $2}' | tr -d ' \r\n' || true)
+      # grep failing is swallowed by the pipeline (awk still exits 0), so the `|| echo` that
+      # used to be here never fired and an absent header left this empty -- float('') then
+      # raised inside the heuristic below. Normalise to a sentinel that simply won't match.
+      SERVER_DURATION_MS="${SERVER_DURATION_MS:-9999}"
       rm -f "${CACHE_HEADER_FILE}"
 
       if echo "${CACHE_STATUS}" | grep -i -E "HIT|True" >/dev/null; then

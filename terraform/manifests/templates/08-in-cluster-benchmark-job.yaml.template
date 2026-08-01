@@ -51,6 +51,7 @@ spec:
             --endpoint="http://kimi-k3-gateway-svc:4000/v1/completions" \
             --api-key="${GATEWAY_MASTER_KEY}" \
             --model="${SERVING_MODEL_NAME}" \
+            --metadata='${BENCHMARK_METADATA_JSON}' \
             --output="/tmp/results/incluster_soak_results.json"
           echo "=== JSON_RESULT_START ==="
           cat /tmp/results/incluster_soak_results.json || true

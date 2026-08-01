@@ -238,6 +238,21 @@ networking configurations:
     `IPC_LOCK` capability and mount a dedicated 512 GiB memory-backed `/dev/shm`
     volume (`emptyDir: { medium: "Memory", sizeLimit: "512Gi" }`) for zero-copy
     intra-node IPC.
+-   **Measured NCCL Bus Bandwidth — `286.763 GB/s`**: `03_deploy_workloads.sh`
+    refuses to deploy the serving engine until an `all_reduce_perf` sweep across
+    the full 2-node / 16-GPU topology clears a `100 GB/s` floor. On
+    `a4-highgpu-8g` spot nodes in `europe-north1-b` the gate recorded
+    **286.763 GB/s** bus bandwidth, after which the serving-image parity gate
+    re-ran the same collective inside the actual runtime container and reported
+    `NCCL_PARITY_RESULT pass` — confirming the fabric result is a property of the
+    cluster and not of the purpose-built test image.
+    -   *Gate sequencing*: the two fabric gates run strictly one after the other.
+        Each gate pod claims all eight `networking.gke.io.networks/rdma-0..7`
+        interfaces and a node advertises exactly one of each, so a node hosts at
+        most one gate pod irrespective of its GPU request. Applying both
+        2-replica StatefulSets concurrently deadlocks permanently on the
+        documented 2-node topology — two pods run and two stay `Pending` until
+        both gates time out.
 
 #### Engine Feature & Architecture Comparison Table
 
@@ -385,9 +400,22 @@ To achieve 55%+ compute cost savings, serving compute pools utilize Google Cloud
 * **Priority P1 (Graceful Serving Workloads):** Serving pods run on the B200 spot pool with Kubernetes `SIGTERM` handling and `preStop` drain hooks. When GCP issues a 30-second spot preemption notice, the pod traps `SIGTERM`, executes the `preStop` drain hook to deregister from the LiteLLM gateway, finishes inflight requests, and terminates cleanly.
 * **Priority P2 (Batch Benchmarks Only):** Off-peak massive benchmark suites run at lowest priority, yielding resources instantly to P1 serving pods during quota contention. Reclamation of any GPU in the 2-node TP16/EP16 group takes down the whole serving replica until a replacement joins; spot suits benchmarking, on-demand is recommended for production.
 
-### 3. Warm Pod ROX Recovery (*TBD — to be measured at first deployment*)
+### 3. Warm Pod ROX Recovery (measured: 17 min 03 s)
 
-When a preempted B200 spot node is replaced by the GKE Cluster Autoscaler, traditional architectures suffer multi-hour cold starts downloading weights. Because Kimi K3's weights are mounted via ReadOnlyMany (`ROX`) Hyperdisk ML (the volume holds weights only; TRT-LLM PyTorch backend loads checkpoints directly without pre-compiled engine files), new pods bypass network downloads entirely. Once physical nodes pass CUDA initialization, the 2-node serving replica reaches `Ready` state in ***TBD — to be measured at first deployment***.
+When a preempted B200 spot node is replaced by the GKE Cluster Autoscaler, traditional architectures suffer multi-hour cold starts downloading weights. Because Kimi K3's weights are mounted via ReadOnlyMany (`ROX`) Hyperdisk ML (the volume holds weights only; TRT-LLM PyTorch backend loads checkpoints directly without pre-compiled engine files), new pods bypass network downloads entirely. Once physical nodes pass CUDA initialization, the 2-node serving replica reaches `Ready` state in ***17 min 03 s***.
+
+Measured on a 2-node `a4-highgpu-8g` spot replica in `europe-north1-b` against an already-hydrated ROX volume, SGLang `tp16` profile:
+
+| Milestone | Timestamp (UTC) | Elapsed |
+| :--- | :--- | :--- |
+| Node pool scale-up requested (0 → 2 nodes) | 23:13:22 | — |
+| Both B200 nodes registered `Ready` with kubelet | 23:25:57 | 12 min 35 s |
+| `kimi-k3-serving-0` pod created | 23:36:27 | — |
+| Pod scheduled and containers initialized | 23:36:51 | 24 s |
+| SGLang reports *"The server is fired up and ready to roll!"* | 23:53:21 | 16 min 54 s |
+| Pod condition `Ready=True` | 23:53:30 | **17 min 03 s** |
+
+The 17-minute figure is checkpoint load plus distributed initialization only — no weight transfer occurs, which is precisely what the ROX design buys. Note that node provisioning (12 min 35 s) and pod warm-up (17 min 03 s) are *sequential* on a cold cluster but fully overlapped on a spot replacement, since the ROX volume stays attached to the surviving node. The `startupProbe` budget (`periodSeconds: 30 × failureThreshold: 120`) allows 60 minutes, leaving substantial headroom over the measured value.
 
 ### 4. Self-Healing Teardown Loop & Database Guardrails (Issues 6 & 7 Guards)
 
