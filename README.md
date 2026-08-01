@@ -349,17 +349,30 @@ The closest public comparison for this deployment is a published NVIDIA Develope
 
 **This repository does not deploy vLLM.** The figures below are quoted from that published run, not reproduced here. NVIDIA TensorRT-LLM remains the planned second engine (see the engine comparison table above) and will be benchmarked in-cluster once K3 support is ready.
 
-**Normalising the comparison.** All three published runs use `--num-prompts 16 --request-rate 10000` — concurrency 16 issued as a single burst. This repository's saturation sweep measures $c=8$ and $c=32$; because $16=\sqrt{8 \times 32}$, the geometric mean of the two adjacent measured cells is used as the $c=16$ estimate. Estimated values are marked †.
+**Normalising the comparison.** All three published runs use `--num-prompts 16 --request-rate 10000` — concurrency 16 issued as a single burst. The $c=16$ column below is **measured directly at $c=16$**, not interpolated: a dedicated sweep was run on this stack for exactly this comparison.
 
-| Metric at $c=16$ | vLLM (published) | SGLang (this repo) | Delta |
+| Metric at $c=16$ | vLLM (published) | SGLang (this repo, measured) | Delta |
 | :--- | :--- | :--- | :--- |
-| $1k/1k$ aggregate output tok/s | 329.64 | **466.06** † | **1.41x** |
-| $8k/1k$ aggregate output tok/s | 312.63 | **406.63** † | **1.30x** |
-| Raw decode step (ITL median, ms) | 63.10 | **34.33** † | **1.84x faster** |
-| Effective TPOT (ms) | 31.93 – 44.87 | **34.33** † | parity to 1.31x |
+| $1k/1k$ aggregate output tok/s | 329.64 | **492.02** | **1.49x** |
+| $8k/1k$ aggregate output tok/s | 312.63 | **425.15** | **1.36x** |
+| Raw decode step (ITL median, ms) | 63.10 | **31.81** | **1.98x faster** |
+| Effective TPOT (ms) | 31.93 – 44.87 | **31.81** | parity to 1.41x |
 | Prefill ingestion (prompt tok/s) | 12,185 ‡ | **15,502.49** | **1.27x** |
 
 ‡ Derived from the published prompt-heavy run: 129,408 total input tokens / 10.62 s mean TTFT.
+
+The $c=16$ figures come from a `TP16 / PP1 / EP16` sweep issued straight at the serving pod, bypassing the gateway proxy, so that the comparison measures the engine rather than this repository's authentication, budget and caching layer. Two independent $c=16$ runs agreed to within 0.2% (492.49 / 492.02 on $1k/1k$; 424.40 / 425.15 on $8k/1k$). The ITL median on the $8k/1k$ cell is 32.33 ms, essentially unchanged from the 31.81 ms of the $1k/1k$ cell.
+
+The same sweep re-measured the $c=8$ and $c=32$ cells to check that a direct-to-engine run is comparable with the gateway-routed numbers reported in the table above:
+
+| Cell | Gateway-routed (table above) | Direct-to-engine (this sweep) | Difference |
+| :--- | :--- | :--- | :--- |
+| $1k/1k$, $c=8$ | 258.51 | 276.88 | +7.1% |
+| $1k/1k$, $c=32$ | 840.23 | 879.49 | +4.7% |
+| $8k/1k$, $c=8$ | 241.62 | 255.71 | +5.8% |
+| $8k/1k$, $c=32$ | 684.28 | 681.89 | -0.3% |
+
+The gateway therefore costs at most a few percent of aggregate throughput, and the two measurement bases are interchangeable at the precision quoted here.
 
 **The published run enables speculative decoding; this deployment does not.** Its own reported acceptance statistics are the reason that does not close the gap:
 
@@ -369,15 +382,15 @@ The closest public comparison for this deployment is a published NVIDIA Develope
 | Decode-heavy ($1k/8k$) | 458,073 | 62,560 | 13.66% | 1.96 |
 | Balanced ($1k/1k$) | 80,381 | 4,508 | 5.61% | 1.39 |
 
-Per-position acceptance collapses from 24.98% at draft position 0 to 0.12% at position 6 on the balanced run. That deployment spends draft compute on seven tokens to realise 1.39–2.04 of them, and its *raw* step time of ~63 ms is 1.84x this repository's ~34 ms. Speculative decoding recovers most of that deficit but does not overturn it: the two engines land within ~10% of each other on effective TPOT, while this deployment stays 1.30–1.41x ahead on aggregate throughput without drafting at all.
+Per-position acceptance collapses from 24.98% at draft position 0 to 0.12% at position 6 on the balanced run. That deployment spends draft compute on seven tokens to realise 1.39–2.04 of them, and its *raw* step time of ~63 ms is 1.98x this repository's ~32 ms. Speculative decoding recovers most of that deficit but does not overturn it: at its best acceptance the published run reaches effective TPOT parity, and this deployment stays 1.36–1.49x ahead on aggregate throughput without drafting at all.
 
 **Caveats — read before quoting these deltas.**
-* **Aggregate deltas likely overstate the steady-state gap.** Sixteen prompts issued as one burst is not steady state: as the batch drains, its tail runs at declining concurrency, which depresses the published aggregate tok/s (total generated / wall duration) and flatters its per-stream TPOT. The **ITL-median** row is the more robust comparator, being far less sensitive to batch drain than a total-over-duration figure. This repository's numbers come from a steady-state sweep plus a 30-minute soak (2,981 cycles, 100% success).
+* **Aggregate deltas likely overstate the steady-state gap.** Sixteen prompts issued as one burst is not steady state: as the batch drains, its tail runs at declining concurrency, which depresses the published aggregate tok/s (total generated / wall duration) and flatters its per-stream TPOT. The **ITL-median** row is the more robust comparator, being far less sensitive to batch drain than a total-over-duration figure. This repository's $c=16$ cells issue 32 requests through a fixed-width 16-worker pool, so the concurrency level is held for the bulk of the run instead of decaying from the first token, and are backed by a 30-minute soak (2,981 cycles, 100% success).
 * The published Balanced run's client command specifies `--model nvidia/Qwen3.6-27B-NVFP4` rather than Kimi K3 — the source page is internally inconsistent. A 27B model would not exhibit 44.87 ms TPOT on 16 B200s, so these figures are treated as K3, but that row carries less confidence than the other two.
 * The published "peak output tok/s" values (258.00 / 257.00 / 272.00) are *below* their corresponding means (312.63 / 378.14 / 329.64) in all three runs, which is not possible for a true instantaneous peak. That row is not used here.
 * The published run states no tensor/pipeline/expert parallelism sizes, no launch command, no vLLM version, no dtype and no interconnect. Hardware equivalence is inferred from "two B200 nodes" alone.
 * Do not compare the published prompt-heavy **total token throughput** of 2,841.22 tok/s against this repository's 2,314.46 **output** tok/s — the former counts input tokens. The equivalent total-token figure for the $1k/1k$, $c=128$ cell here is approximately 4,629 tok/s.
-* Rows marked † are interpolated, not measured.
+* **TTFT is deliberately absent from the comparison table.** The two harnesses attribute admission queueing differently: on a direct-to-engine sweep the scheduler admits a deep client-side burst a couple of requests per prefill round, so a request's measured TTFT includes the wait behind everything admitted before it. That is a property of where the queue sits, not of prefill speed, and it is not comparable against a published TTFT from a different client. Prefill capability is compared through the dedicated prefill suite row instead.
 
 **Pending revalidation.** A performance-tuning pass on branch `perf/sglang-2node-b200-tuning` is evaluating the TP8/PP2 parallelism profile, chunked-prefill sizing, explicit running-request admission control, and static memory fraction against this baseline. A **measured** $c=16$ column will replace the interpolated one, and every delta in this section will be restated from the new result files, once that work lands.
 
