@@ -37,8 +37,6 @@ RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 
 ![Kimi K3 serving architecture on GKE Blackwell](assets/architecture.png)
 
-<sub>Editable vector source: [`assets/architecture.svg`](assets/architecture.svg).</sub>
-
 Reading the diagram in one paragraph: a private ILB fronts the **Tier 1**
 LiteLLM gateway on port 4000, which independently talks to Memorystore Redis
 (exact-match prompt cache), Cloud SQL (virtual keys and budgets), BigQuery
