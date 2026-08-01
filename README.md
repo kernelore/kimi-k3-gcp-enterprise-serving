@@ -412,24 +412,31 @@ queueing and TTFT. It is not the harness's `tpot_ms` field; see the caveat below
   sweep averaged **6.29 - 6.41 of 8** drafted tokens at the measured batch sizes
   (`#running-req` 8, 16 and 32; peaks reached 7.0 - 7.8).
 
-  Re-running the $1k/1k$, $c=16$ shape against the same live engine with **16
-  distinct non-repetitive prompts** — coherent English, no passage repeated
-  within or across requests — collapses the gain:
+  Re-running the same shapes against the same live engine with **distinct
+  non-repetitive prompts** — coherent English, ~1,523 tokens each, no passage
+  repeated within or across requests — collapses the gain:
 
-  | $1k/1k$, $c=16$ on the DSPARK engine | Repeated-passage prompt (Table 4) | Non-repetitive prompts |
-  | :--- | ---: | ---: |
-  | Aggregate output tok/s | 1661.36 | **656.60** |
-  | Effective TPOT | 9.63 ms | **24.37 ms** |
-  | Accepted tokens per verify step | 6.29 - 6.41 | **2.28** |
-  | Mean prompt tokens | 917.5 | 1,523.0 |
+  | DSPARK engine, $1k/1k$ | Accepted tok/step, repeated | Accepted tok/step, non-repetitive | tok/s, repeated | tok/s, non-repetitive |
+  | :--- | ---: | ---: | ---: | ---: |
+  | $c=8$ | 6.41 | **2.20** | 1058.34 | 401.99 |
+  | $c=16$ | 6.40 | **2.28** | 1661.36 | 656.60 |
+  | $c=32$ | 6.29 | **2.24** | 1859.54 | 1028.57 |
 
-  Identical 16,384 generated tokens in both cases. Acceptance falls by roughly
-  2.8x and throughput by 2.53x purely because the text became harder to predict.
-  **Plan capacity from the right-hand column, not from Table 4**, unless the
-  workload genuinely is repetitive. The residual 656.60 vs the default profile's
-  492.02 is indicative only — it was not possible to re-run the non-speculative
-  baseline on this prompt set before the spot pair was torn down, and these
-  prompts are 46% longer, so the two are not a controlled pair.
+  Acceptance is the mechanism and it is stable: **~2.2 - 2.3 accepted tokens per
+  verify step on non-repetitive text against 6.3 - 6.4 on a repeated passage**,
+  a 2.8x collapse that holds across all three concurrencies (derived as generated
+  tokens over the `sglang:spec_verify_calls_total` delta). Effective TPOT at
+  $c=16$ moves from 9.63 ms to 24.37 ms.
+
+  **Plan capacity from the non-repetitive columns**, not from Table 4, unless the
+  workload genuinely is repetitive. Two honest limits on that right-hand
+  throughput column, both of which make it conservative rather than flattering:
+  it issues exactly $c$ requests as a single burst, so it pays more batch-drain
+  penalty than Table 4's $2c$-requests-through-a-$c$-wide-pool design, and its
+  prompts are 66% longer. The acceptance columns are immune to both effects. The
+  residual 656.60 against the default profile's 492.02 is therefore indicative
+  only — the non-speculative baseline could not be re-run on this prompt set
+  before the spot pair was torn down, so the two are not a controlled pair.
 * **The gain narrows as the batch saturates** (3.82x at $c=8$ down to 2.11x at
   $c=32$ on $1k/1k$) because a full batch already amortises weight loading across
   requests, leaving speculation less headroom to recover.

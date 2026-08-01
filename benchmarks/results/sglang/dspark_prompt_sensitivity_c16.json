@@ -3,28 +3,63 @@
   "profile": "TP16/PP1/EP16 + DSPARK (block size 8)",
   "purpose": "Isolate the effect of prompt predictability on speculative-decoding gains, holding engine, hardware, concurrency and generated-token count constant.",
   "hardware": "2 x a4-highgpu-8g (16 x NVIDIA B200 HGX), RoCEv2, direct container port 8000",
-  "shape": {"concurrency": 16, "max_tokens": 1024, "total_output_tokens": 16384},
+  "shape": {
+    "concurrencies": [
+      8,
+      16,
+      32
+    ],
+    "max_tokens": 1024,
+    "note": "Probe issues exactly c requests as one burst; the Table 4 sweep issues 2c through a c-wide pool, so the probe pays more batch drain. Acceptance is unaffected by drain."
+  },
   "arms": [
     {
       "name": "repeated_passage_prompt",
-      "note": "Standard run_saturation_sweep_kimi_k3.py prompt: one synthetic passage repeated round(ISL/BASE_TOKENS_APPROX) times.",
       "prompt_tokens_mean": 917.625,
-      "aggregate_tok_s": 1661.36,
-      "per_user_tok_s": 103.83,
-      "effective_tpot_ms": 9.63,
-      "accepted_tokens_per_verify_step": "6.29-6.41 (engine log, #running-req 16)"
+      "by_concurrency": {
+        "8": {
+          "aggregate_tok_s": 1058.34,
+          "accepted_tok_per_step": 6.41
+        },
+        "16": {
+          "aggregate_tok_s": 1661.36,
+          "accepted_tok_per_step": 6.4,
+          "effective_tpot_ms": 9.63
+        },
+        "32": {
+          "aggregate_tok_s": 1859.54,
+          "accepted_tok_per_step": 6.29
+        }
+      },
+      "acceptance_source": "engine decode-batch log lines, mean over the sweep window by #running-req"
     },
     {
       "name": "non_repetitive_prompts",
-      "note": "16 distinct prompts, coherent English, no passage repeated within or across requests.",
       "prompt_tokens_mean": 1523.0,
-      "aggregate_tok_s": 656.60,
-      "per_user_tok_s": 41.04,
-      "effective_tpot_ms": 24.37,
-      "accepted_tokens_per_verify_step": 2.28,
-      "derivation": "16384 generated tokens / 7182 sglang:spec_verify_calls_total delta"
+      "by_concurrency": {
+        "8": {
+          "aggregate_tok_s": 401.99,
+          "accepted_tok_per_step": 2.2,
+          "verify_calls": 3716,
+          "output_tokens": 8192
+        },
+        "16": {
+          "aggregate_tok_s": 656.6,
+          "accepted_tok_per_step": 2.28,
+          "verify_calls": 7182,
+          "output_tokens": 16384,
+          "effective_tpot_ms": 24.37
+        },
+        "32": {
+          "aggregate_tok_s": 1028.57,
+          "accepted_tok_per_step": 2.24,
+          "verify_calls": 14653,
+          "output_tokens": 32768
+        }
+      },
+      "acceptance_source": "output tokens / sglang:spec_verify_calls_total delta"
     }
   ],
-  "finding": "Acceptance falls ~2.8x and aggregate throughput 2.53x when the prompt stops being a repeated passage. The Table 4 speedups are a ceiling for repetitive or highly structured traffic.",
+  "finding": "Accepted tokens per verify step falls from 6.29-6.41 to 2.20-2.28 (~2.8x) when prompts stop being a repeated passage, stable across c=8/16/32. Table 4's speedups are a ceiling for repetitive or highly structured traffic.",
   "caveat": "The non-speculative baseline could not be re-run on this prompt set before teardown, and these prompts are 46% longer, so 656.60 vs the 492.02 default-profile figure is indicative, not a controlled comparison."
 }
