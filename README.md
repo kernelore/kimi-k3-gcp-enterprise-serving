@@ -216,7 +216,14 @@ significantly:
     -   **Wrong-Machine Flags Are Rejected**: `--mamba-full-memory-ratio` is not a cookbook flag; the value previously carried here came from `AI-Hypercomputer/gpu-recipes` `a4x/multi-host-serving/sglang`, a **4-node A4X/GB200 NVL72** recipe. A4X is Grace-Blackwell on an NVL72 fabric and A4 is B200 HGX over RoCEv2 — different machines, non-transferable tuning. The render check now treats that flag as forbidden.
     -   **Parallelism Profiles (`SGLANG_PARALLEL_PROFILE`)**: Supports `tp16` (default `--tp-size 16`, confining all parallelism to TP/EP=16 across 16 GPUs) and `tp8pp2` (fallback `--tp-size 8 --pp-size 2` when inter-node RoCEv2 interconnect proves throughput-bound, confining TP all-reduce collectives to NVLink within each node and transferring pipeline activations over RoCE; the profile also drops EP to 8 for the same reason).
         - *When to flip*: Flip to `tp8pp2` if inter-node all-reduce over RoCEv2 is measured as the primary latency bottleneck at first deployment.
-        - *Uneven Layer Split Caveat*: Kimi-K3 has `num_hidden_layers = 93` (an odd number), so PP=2 automatic split is uneven by construction. Furthermore, full-attention (MLA) layers occur at every 4th layer plus the last (`text_config.linear_attn_config.full_attn_layers`), causing the two pipeline stages to receive unequal MLA counts and unequal KV-cache memory. Environment variable `SGLANG_PP_LAYER_PARTITION` exists to override the automatic split, and the correct partition remains unmeasured. This is not an oversight pending the next deploy: the deployment benchmarked here runs `TP=16, PP=1`, which has no pipeline split to tune, so no run in this repository can produce the number. Determining it requires standing up the `PP=2` profile and sweeping partitions against a fixed workload — left as future work rather than guessed at here.
+        - *Uneven Layer Split Caveat*: Kimi-K3 has `num_hidden_layers = 93` (an odd number), so PP=2 automatic split is uneven by construction. Furthermore, full-attention (MLA) layers occur at every 4th layer plus the last (`text_config.linear_attn_config.full_attn_layers`), causing the two pipeline stages to receive unequal MLA counts and unequal KV-cache memory. Environment variable `SGLANG_PP_LAYER_PARTITION` exists to override the automatic split, and the correct partition remains unmeasured. Determining the optimum requires sweeping partitions against a fixed workload — left as future work rather than guessed at here.
+        - *Custom All-Reduce Must Be Disabled Under PP=2 (`SGLANG_DISABLE_CUSTOM_ALL_REDUCE`)*: On `tp16` the TP group spans both nodes, so SGLang disables its custom all-reduce automatically and every collective goes through NCCL. On `tp8pp2` the TP group fits inside one node, which re-enables the custom all-reduce path — and that path fails on this deployment during CUDA graph capture with `Capture cuda graph failed: invalid argument` raised from `custom_all_reduce.cuh:508`, inside `register_graph_buffers` → `get_graph_buffer_ipc_meta`. The failure is in CUDA IPC handle exchange for the graph buffers, not memory pressure: it reproduced identically at `--mem-fraction-static` 0.85 and 0.80, and `/dev/shm` is a 512 GiB tmpfs, so neither is the constraint. Setting `SGLANG_DISABLE_CUSTOM_ALL_REDUCE=true` appends `--disable-custom-all-reduce`, falling back to NCCL for the intra-node all-reduce while **keeping CUDA graphs enabled** — deliberately not `--disable-cuda-graph`, which would trade a working collective for a much larger decode regression. With that single flag the `tp8pp2` profile captures all 18 decode graphs in 212 s and serves.
+
+    -   **DSPARK Speculative Decoding (`SGLANG_SPECULATIVE_ALGORITHM`, optional)**: Kimi-K3 ships with a purpose-built speculative decoding algorithm, **DSPARK**, described in Google Cloud's [day-0 support announcement](https://discuss.google.dev/t/announcing-day-0-support-for-kimi-k3-on-google-cloud/385392). It pairs the full model with a small draft checkpoint ([`RadixArk/Kimi-K3-DSpark`](https://huggingface.co/RadixArk/Kimi-K3-DSpark), 4.19 GiB in a single `model.safetensors` shard) that proposes a block of tokens per step for the target model to verify in one batched forward pass, converting several sequential decode steps into one. It is **opt-in and off by default**: leaving `SGLANG_SPECULATIVE_ALGORITHM` empty renders the launch command byte-identical to the non-speculative one.
+        - *Enabling it*: set `SGLANG_SPECULATIVE_ALGORITHM="DSPARK"`. The template then appends `--speculative-algorithm DSPARK --speculative-draft-model-path ${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH}` plus, when set, `--speculative-dspark-block-size ${SGLANG_SPECULATIVE_DSPARK_BLOCK_SIZE}` (default `7`, the announcement's value) and `--enable-linear-replayssm-spec`. The last flag is K3-specific: the 69 KDA linear-attention layers carry recurrent state, and verifying a rejected draft block requires replaying that state rather than simply discarding KV entries.
+        - *Topology*: this repository runs DSPARK on its existing **2 x A4 (16 x B200) TP=16** topology. The announcement's own walkthrough targets A4X / GB200 NVL72; that is a different machine on a different fabric and this repo does not adopt its tuning, exactly as it already refuses `--mamba-full-memory-ratio` for the same reason. The draft model is small enough that it adds no parallelism decision — it is replicated, not sharded.
+        - *Draft Checkpoint Staging*: the draft is served from the same ROX Hyperdisk ML volume as the base weights, so the serving pods need no second mount and no GCS FUSE sidecar. Setting `DSPARK_DRAFT_DIR_NAME` makes `02-hydrate-weights-gcs` stage `${GCS_WEIGHTS_BUCKET}/${DSPARK_DRAFT_DIR_NAME}` alongside `Kimi-K3` on the same pass. The draft repository ships **without** a `generation_config.json` and SGLang will not load it without one, so the hydration job copies the base model's file into the draft directory rather than leaving that to an operator's memory.
+        - *Fail-Closed Gates*: three checks refuse to start a silently-degraded engine. The hydration job aborts if the GCS draft prefix is absent or empty, and its `DSPARK DRAFT GATE` asserts at least one safetensors shard plus a `config.json` before reporting shard count and size. The serving container then re-checks, at launch, that the draft directory exists and contains `generation_config.json`, exiting non-zero with a remediation line instead of falling back to non-speculative decoding without saying so.
 
 2.  **NVIDIA TensorRT-LLM (Experimental Option | `INFERENCE_ENGINE="trtllm"`)**:
 
@@ -336,6 +343,122 @@ All benchmarks were executed on the live GKE serving cluster with identical hard
 
 <!-- ENGINE_COMPARISON_END -->
 
+### Branch Performance Profiles: TP8/PP2 and DSPARK Speculative Decoding
+
+This branch adds two serving profiles on top of the `TP16 / PP1 / EP16` default
+measured above. Both were benchmarked on the **same two `a4-highgpu-8g` nodes
+(16x B200)**, the same weights mounted from the same read-only Hyperdisk ML
+volume, the same direct container port 8000 path, and the same
+`benchmarks/run_saturation_sweep_kimi_k3.py` harness. No nodes were added and no
+A4X hardware was used.
+
+* **`TP8 / PP2 / EP8`** — pipeline parallelism across the two nodes instead of a
+  16-way tensor group, requiring `SGLANG_DISABLE_CUSTOM_ALL_REDUCE=true` (see
+  the tuning notes above).
+* **`TP16 / PP1 / EP16 + DSPARK`** — speculative decoding with the
+  `RadixArk/Kimi-K3-DSpark` draft model, block size 8. Layered on the **default
+  topology**, not on TP8/PP2; the two profiles were not combined.
+
+#### Table 4: Aggregate Output Throughput by Profile (Direct Port 8000, tok/s)
+
+| Grid Cell (ISL/OSL, $c$) | TP16 (default) | TP8/PP2 | TP16 + DSPARK | DSPARK vs default | DSPARK vs TP8/PP2 |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| $1k/1k$, $c=8$ | 276.88 | 306.05 | **1058.34** | **3.82x** | 3.46x |
+| $1k/1k$, $c=16$ | 492.02 | 527.34 | **1661.36** | **3.38x** | 3.15x |
+| $1k/1k$, $c=32$ | 879.49 | 931.21 | **1859.54** | **2.11x** | 2.00x |
+| $8k/1k$, $c=8$ | 255.71 | 287.43 | **778.21** | **3.04x** | 2.71x |
+| $8k/1k$, $c=16$ | 425.15 | 500.38 | **1014.10** | **2.39x** | 2.03x |
+| $8k/1k$, $c=32$ | 681.89 | 829.69 | **1366.15** | **2.00x** | 1.65x |
+| $32k/2k$, $c=8$ | 224.27 | 265.83 | **593.19** | **2.64x** | 2.23x |
+
+DSPARK is faster than both alternatives on every cell measured. TP8/PP2 is a
+smaller but consistent 1.06x-1.22x gain over the default, widening as ISL grows.
+All 21 cells completed with a **0.00% error rate** and identical request counts,
+identical generated-token totals (16,384 / 32,768 / 65,536) and 100% success, so
+the columns are matched workloads rather than differently-sized runs.
+
+#### Table 5: Per-Stream Latency by Profile
+
+| Grid Cell (ISL/OSL, $c$) | Effective TPOT, TP16 | Effective TPOT, TP8/PP2 | Effective TPOT, DSPARK | TTFT P50, TP16 | TTFT P50, DSPARK |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| $1k/1k$, $c=8$ | 28.89 ms | 26.14 ms | **7.56 ms** | 18.91 s | **0.73 s** |
+| $1k/1k$, $c=16$ | 32.52 ms | 30.34 ms | **9.63 ms** | 21.98 s | **0.95 s** |
+| $1k/1k$, $c=32$ | 36.38 ms | 34.36 ms | **17.21 ms** | 18.59 s | **1.52 s** |
+| $8k/1k$, $c=8$ | 31.29 ms | 27.83 ms | **10.28 ms** | 15.12 s | **2.02 s** |
+| $8k/1k$, $c=16$ | 37.63 ms | 31.98 ms | **15.78 ms** | 21.21 s | **1.93 s** |
+| $8k/1k$, $c=32$ | 46.93 ms | 38.57 ms | **23.42 ms** | 28.57 s | **3.42 s** |
+| $32k/2k$, $c=8$ | 35.67 ms | 30.09 ms | **13.49 ms** | 23.66 s | **6.37 s** |
+
+Effective TPOT here is derived as $1000 / \text{per\_user\_tok\_s}$ — the
+wall-clock time a single stream spends per generated token, inclusive of its own
+queueing and TTFT. It is not the harness's `tpot_ms` field; see the caveat below.
+
+#### Reading These Numbers Honestly
+
+* **Do not use the `tpot_ms` field from a speculative-decoding result file.** The
+  harness timestamps each SSE chunk and treats consecutive chunk arrivals as
+  consecutive tokens. Under speculative decoding a single chunk carries every
+  token accepted in one verify step, so that field measures **per-step**, not
+  per-token, latency and *rises* as speculation gets more effective. Measured
+  directly against the running DSPARK engine: 512 completion tokens arrived in
+  196 chunks (2.61 tokens per chunk), and the inter-chunk P50 of 29.02 ms was
+  **2.45x** the true 11.84 ms/token. Tables 4 and 5 avoid the field entirely —
+  both derive from `usage.completion_tokens` and wall-clock duration.
+* **These speedups are an upper bound, because the benchmark prompt is unusually
+  easy to predict — and the penalty has been measured, not estimated.** The
+  harness builds every prompt by repeating one fixed synthetic passage
+  `round(ISL / BASE_TOKENS_APPROX)` times, and a draft model is exceptionally
+  good at continuing text it has already seen verbatim. Acceptance during the
+  sweep averaged **6.29 - 6.41 of 8** drafted tokens at the measured batch sizes
+  (`#running-req` 8, 16 and 32; peaks reached 7.0 - 7.8).
+
+  Re-running the same shapes against the same live engine with **distinct
+  non-repetitive prompts** — coherent English, ~1,523 tokens each, no passage
+  repeated within or across requests — collapses the gain:
+
+  | DSPARK engine, $1k/1k$ | Accepted tok/step, repeated | Accepted tok/step, non-repetitive | tok/s, repeated | tok/s, non-repetitive |
+  | :--- | ---: | ---: | ---: | ---: |
+  | $c=8$ | 6.41 | **2.20** | 1058.34 | 401.99 |
+  | $c=16$ | 6.40 | **2.28** | 1661.36 | 656.60 |
+  | $c=32$ | 6.29 | **2.24** | 1859.54 | 1028.57 |
+
+  Acceptance is the mechanism and it is stable: **~2.2 - 2.3 accepted tokens per
+  verify step on non-repetitive text against 6.3 - 6.4 on a repeated passage**,
+  a 2.8x collapse that holds across all three concurrencies (derived as generated
+  tokens over the `sglang:spec_verify_calls_total` delta). Effective TPOT at
+  $c=16$ moves from 9.63 ms to 24.37 ms.
+
+  **Plan capacity from the non-repetitive columns**, not from Table 4, unless the
+  workload genuinely is repetitive. Two honest limits on that right-hand
+  throughput column, both of which make it conservative rather than flattering:
+  it issues exactly $c$ requests as a single burst, so it pays more batch-drain
+  penalty than Table 4's $2c$-requests-through-a-$c$-wide-pool design, and its
+  prompts are 66% longer. The acceptance columns are immune to both effects. The
+  residual 656.60 against the default profile's 492.02 is therefore indicative
+  only — the non-speculative baseline could not be re-run on this prompt set
+  before the spot pair was torn down, so the two are not a controlled pair.
+* **The gain narrows as the batch saturates** (3.82x at $c=8$ down to 2.11x at
+  $c=32$ on $1k/1k$) because a full batch already amortises weight loading across
+  requests, leaving speculation less headroom to recover.
+* **TTFT is not cross-profile comparable in absolute terms.** These cells issue
+  their requests as a burst, so TTFT includes admission queueing. The default
+  profile's 15-29 s figures are dominated by that queue, not by prefill.
+* **The $1k/1k$ TP8/PP2 row is a warm re-run.** The first cell of a sweep against
+  a freshly started engine is heavily depressed by lazy initialisation — the cold
+  reading for $1k/1k$, $c=8$ was 109.29 tok/s against 306.05 warm. Every figure in
+  Table 4 comes from a warmed engine.
+* **A constant 123-token prompt offset** separates the default-profile run
+  (1,040.6 measured prompt tokens at the $1k$ cell) from the DSPARK run (917.5);
+  it is identical at $1k$, $8k$ and $32k$, so it is chat-template overhead rather
+  than a workload difference. Bounding it at the worst-affected cell: 16 requests
+  x 123 tokens = 1,970 extra prefill tokens, which at this stack's measured
+  15,502 prompt tok/s prefill rate is 0.13 s of a 66.60 s run (0.2%), and under
+  1.5% even at a deliberately pessimistic 2,000 tok/s. It cannot account for a
+  2.00x-3.82x gap.
+* **$32k/2k$ at $c=16$ and $c=32$ was not run** on the branch profiles. GPU time
+  on the spot pair ran out; those two cells are absent, not omitted for being
+  unfavourable.
+
 <!-- EXTERNAL_COMPARISON_START -->
 <!-- Third-party citation block. The legacy-model-string guards (tests/test_cases_t1.sh
      t1_f1_05, tests/adv_test_serving_remediation.sh Check 1) exempt the text between
@@ -351,17 +474,32 @@ The closest public comparison for this deployment is a published NVIDIA Develope
 
 **Normalising the comparison.** All three published runs use `--num-prompts 16 --request-rate 10000` — concurrency 16 issued as a single burst. The $c=16$ column below is **measured directly at $c=16$**, not interpolated: a dedicated sweep was run on this stack for exactly this comparison.
 
-| Metric at $c=16$ | vLLM (published) | SGLang (this repo, measured) | Delta |
-| :--- | :--- | :--- | :--- |
-| $1k/1k$ aggregate output tok/s | 329.64 | **492.02** | **1.49x** |
-| $8k/1k$ aggregate output tok/s | 312.63 | **425.15** | **1.36x** |
-| Raw decode step (ITL median, ms) | 63.10 | **31.81** | **1.98x faster** |
-| Effective TPOT (ms) | 31.93 – 44.87 | **31.81** | parity to 1.41x |
-| Prefill ingestion (prompt tok/s) | 12,185 ‡ | **15,502.49** | **1.27x** |
+| Metric at $c=16$ | vLLM (published) | SGLang TP16 (measured) | Delta | SGLang TP16 + DSPARK (measured) | Delta |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| $1k/1k$ aggregate output tok/s | 329.64 | **492.02** | **1.49x** | 1661.36 § | 5.04x § |
+| $8k/1k$ aggregate output tok/s | 312.63 | **425.15** | **1.36x** | 1014.10 § | 3.24x § |
+| Raw decode step (ITL median, ms) | 63.10 | **31.81** | **1.98x faster** | not comparable † | — |
+| Effective TPOT (ms) | 31.93 – 44.87 | **31.81** | parity to 1.41x | 9.63 § | 3.32x – 4.66x faster § |
+| Prefill ingestion (prompt tok/s) | 12,185 ‡ | **15,502.49** | **1.27x** | not re-measured | — |
+
+§ The DSPARK deltas are **not** claimed as a like-for-like win over the published
+vLLM run, and are deliberately left unbolded. Speculative decoding is highly
+sensitive to how predictable the generated text is, and this harness's prompts
+are a repeated synthetic passage — an unusually favourable case (see the
+acceptance-rate caveat above). The published run's prompt distribution is
+unknown, and it does not state whether speculative decoding was enabled. The
+`TP16` column is the sound comparator; the DSPARK column shows what this
+hardware does with speculation on a repetitive workload.
+
+† Under speculative decoding one streamed chunk carries every token accepted in a
+verify step, so a chunk-derived inter-token median measures per-step latency and
+is not comparable to a non-speculative one. The DSPARK effective-TPOT figure is
+derived from generated tokens over wall-clock duration instead. See "Reading
+These Numbers Honestly" above.
 
 ‡ Derived from the published prompt-heavy run: 129,408 total input tokens / 10.62 s mean TTFT.
 
-The $c=16$ figures come from a `TP16 / PP1 / EP16` sweep issued straight at the serving pod, bypassing the gateway proxy, so that the comparison measures the engine rather than this repository's authentication, budget and caching layer. Two independent $c=16$ runs agreed to within 0.2% (492.49 / 492.02 on $1k/1k$; 424.40 / 425.15 on $8k/1k$). The ITL median on the $8k/1k$ cell is 32.33 ms, essentially unchanged from the 31.81 ms of the $1k/1k$ cell.
+The $c=16$ figures come from a `TP16 / PP1 / EP16` sweep issued straight at the serving pod, bypassing the gateway proxy, so that the comparison measures the engine rather than this repository's authentication, budget and caching layer. Two independent $c=16$ runs agreed to within 0.2% (492.49 / 492.02 on $1k/1k$; 424.40 / 425.15 on $8k/1k$). The ITL median on the $8k/1k$ cell is 32.33 ms, essentially unchanged from the 31.81 ms of the $1k/1k$ cell. The DSPARK column is the same sweep re-run on the same two nodes with speculative decoding enabled and nothing else changed; it is a branch profile, opt-in via `SGLANG_SPECULATIVE_ALGORITHM`, not the default this repository deploys.
 
 The same sweep re-measured the $c=8$ and $c=32$ cells to check that a direct-to-engine run is comparable with the gateway-routed numbers reported in the table above:
 

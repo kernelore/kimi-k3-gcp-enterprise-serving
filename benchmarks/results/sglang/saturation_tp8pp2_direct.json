@@ -1,0 +1,296 @@
+{
+  "engine": "sglang",
+  "metadata": {
+    "engine": "sglang",
+    "version": "0.5.16",
+    "tp": 8,
+    "pp": 2,
+    "ep": 8,
+    "nodes": 2,
+    "gpus": 16,
+    "profile": "tp8pp2",
+    "disable_custom_all_reduce": true
+  },
+  "token_count_source": "openai_usage",
+  "grid": {
+    "ISL_OSL_GRID": [
+      [
+        1024,
+        1024
+      ],
+      [
+        8192,
+        1024
+      ],
+      [
+        32768,
+        2048
+      ],
+      [
+        131072,
+        2048
+      ]
+    ],
+    "sweep_levels": [
+      8,
+      16,
+      32
+    ],
+    "MAX_INFLIGHT_PROMPT_TOKENS": 265000,
+    "MAX_CONTEXT_TOKENS": 131072,
+    "BASE_TOKENS_APPROX": 889,
+    "suite_start_ts": "2026-08-01T13:48:42Z",
+    "suite_end_ts": "2026-08-01T13:59:19Z",
+    "suite_duration_s": 637.2732
+  },
+  "sweep_results": [
+    {
+      "isl_target": 1024,
+      "osl": 1024,
+      "concurrency": 8,
+      "prompt_tokens_observed": 917.0625,
+      "status": "ok",
+      "requests": 16,
+      "successful": 16,
+      "error_rate_pct": 0.0,
+      "total_tokens": 16384,
+      "token_count_source": "openai_usage",
+      "total_duration_sec": 149.91492581367493,
+      "aggregate_tok_s": 109.28865095369633,
+      "per_gpu_tok_s": 6.830540684606021,
+      "per_user_tok_s": 13.661081369212042,
+      "ttft_ms": {
+        "mean": 45851.44957900047,
+        "p50": 53102.18811035156,
+        "p90": 96190.15002250671,
+        "p99": 96192.14510917664
+      },
+      "tpot_ms": {
+        "mean": 28.44573888028239,
+        "p50": 25.678634643554688,
+        "p90": 27.398347854614258,
+        "p99": 58.50553512573242
+      },
+      "peak_metrics": null
+    },
+    {
+      "isl_target": 1024,
+      "osl": 1024,
+      "concurrency": 16,
+      "prompt_tokens_observed": 917.40625,
+      "status": "ok",
+      "requests": 32,
+      "successful": 32,
+      "error_rate_pct": 0.0,
+      "total_tokens": 32768,
+      "token_count_source": "openai_usage",
+      "total_duration_sec": 66.088214635849,
+      "aggregate_tok_s": 495.82213985585975,
+      "per_gpu_tok_s": 30.988883740991234,
+      "per_user_tok_s": 30.988883740991234,
+      "ttft_ms": {
+        "mean": 2399.653375148773,
+        "p50": 2167.5479412078857,
+        "p90": 4130.000591278076,
+        "p99": 4131.746292114258
+      },
+      "tpot_ms": {
+        "mean": 29.94703675528309,
+        "p50": 29.848814010620117,
+        "p90": 31.569719314575195,
+        "p99": 52.79111862182617
+      },
+      "peak_metrics": null
+    },
+    {
+      "isl_target": 1024,
+      "osl": 1024,
+      "concurrency": 32,
+      "prompt_tokens_observed": 917.609375,
+      "status": "ok",
+      "requests": 64,
+      "successful": 64,
+      "error_rate_pct": 0.0,
+      "total_tokens": 65536,
+      "token_count_source": "openai_usage",
+      "total_duration_sec": 82.41860580444336,
+      "aggregate_tok_s": 795.1602597537122,
+      "per_gpu_tok_s": 49.697516234607015,
+      "per_user_tok_s": 24.848758117303507,
+      "ttft_ms": {
+        "mean": 5436.775345355272,
+        "p50": 1231.961965560913,
+        "p90": 13650.952100753784,
+        "p99": 13653.856039047241
+      },
+      "tpot_ms": {
+        "mean": 34.954285655145185,
+        "p50": 32.9890251159668,
+        "p90": 34.77334976196289,
+        "p99": 56.99467658996582
+      },
+      "peak_metrics": null
+    },
+    {
+      "isl_target": 8192,
+      "osl": 1024,
+      "concurrency": 8,
+      "prompt_tokens_observed": 8021.5,
+      "status": "ok",
+      "requests": 16,
+      "successful": 16,
+      "error_rate_pct": 0.0,
+      "total_tokens": 16384,
+      "token_count_source": "openai_usage",
+      "total_duration_sec": 57.001991987228394,
+      "aggregate_tok_s": 287.4285516841398,
+      "per_gpu_tok_s": 17.964284480258737,
+      "per_user_tok_s": 35.928568960517474,
+      "ttft_ms": {
+        "mean": 1465.7038152217865,
+        "p50": 1633.547067642212,
+        "p90": 2046.091079711914,
+        "p99": 2251.3368129730225
+      },
+      "tpot_ms": {
+        "mean": 26.421262415623037,
+        "p50": 25.754690170288086,
+        "p90": 27.407407760620117,
+        "p99": 61.14530563354492
+      },
+      "peak_metrics": null
+    },
+    {
+      "isl_target": 8192,
+      "osl": 1024,
+      "concurrency": 16,
+      "prompt_tokens_observed": 8021.25,
+      "status": "ok",
+      "requests": 32,
+      "successful": 32,
+      "error_rate_pct": 0.0,
+      "total_tokens": 32768,
+      "token_count_source": "openai_usage",
+      "total_duration_sec": 65.48559427261353,
+      "aggregate_tok_s": 500.38486118929177,
+      "per_gpu_tok_s": 31.274053824330736,
+      "per_user_tok_s": 31.274053824330736,
+      "ttft_ms": {
+        "mean": 2133.9726746082306,
+        "p50": 2149.5602130889893,
+        "p90": 3301.2006282806396,
+        "p99": 3491.135835647583
+      },
+      "tpot_ms": {
+        "mean": 29.91417823823666,
+        "p50": 28.530359268188477,
+        "p90": 30.187606811523438,
+        "p99": 57.01875686645508
+      },
+      "peak_metrics": null
+    },
+    {
+      "isl_target": 8192,
+      "osl": 1024,
+      "concurrency": 32,
+      "prompt_tokens_observed": 8021.71875,
+      "status": "ok",
+      "requests": 64,
+      "successful": 64,
+      "error_rate_pct": 0.0,
+      "total_tokens": 65536,
+      "token_count_source": "openai_usage",
+      "total_duration_sec": 78.9882664680481,
+      "aggregate_tok_s": 829.6928509819907,
+      "per_gpu_tok_s": 51.855803186374416,
+      "per_user_tok_s": 25.927901593187208,
+      "ttft_ms": {
+        "mean": 3697.9804039001465,
+        "p50": 3714.529037475586,
+        "p90": 6025.054931640625,
+        "p99": 6564.580917358398
+      },
+      "tpot_ms": {
+        "mean": 34.97615059289648,
+        "p50": 32.20033645629883,
+        "p90": 34.07716751098633,
+        "p99": 64.67318534851074
+      },
+      "peak_metrics": null
+    },
+    {
+      "isl_target": 32768,
+      "osl": 2048,
+      "concurrency": 8,
+      "prompt_tokens_observed": 32885.125,
+      "status": "ok",
+      "requests": 16,
+      "successful": 16,
+      "error_rate_pct": 0.0,
+      "total_tokens": 32768,
+      "token_count_source": "openai_usage",
+      "total_duration_sec": 123.26586699485779,
+      "aggregate_tok_s": 265.83190301470046,
+      "per_gpu_tok_s": 16.61449393841878,
+      "per_user_tok_s": 33.22898787683756,
+      "ttft_ms": {
+        "mean": 4671.701520681381,
+        "p50": 5049.449443817139,
+        "p90": 7251.631736755371,
+        "p99": 7479.396820068359
+      },
+      "tpot_ms": {
+        "mean": 27.823270320834098,
+        "p50": 26.505470275878906,
+        "p90": 27.978897094726562,
+        "p99": 49.50118064880371
+      },
+      "peak_metrics": null
+    },
+    {
+      "isl_target": 32768,
+      "osl": 2048,
+      "concurrency": 16,
+      "prompt_tokens_observed": 0,
+      "status": "skipped",
+      "reason": "524,288 in-flight prompt tokens exceeds MAX_INFLIGHT_PROMPT_TOKENS=265,000",
+      "peak_metrics": null
+    },
+    {
+      "isl_target": 32768,
+      "osl": 2048,
+      "concurrency": 32,
+      "prompt_tokens_observed": 0,
+      "status": "skipped",
+      "reason": "1,048,576 in-flight prompt tokens exceeds MAX_INFLIGHT_PROMPT_TOKENS=265,000",
+      "peak_metrics": null
+    },
+    {
+      "isl_target": 131072,
+      "osl": 2048,
+      "concurrency": 8,
+      "prompt_tokens_observed": 0,
+      "status": "skipped",
+      "reason": "ISL+OSL=133,120 tokens exceeds the engine context window MAX_CONTEXT_TOKENS=131,072; the engine rejects such requests with HTTP 400 before any tokens are generated",
+      "peak_metrics": null
+    },
+    {
+      "isl_target": 131072,
+      "osl": 2048,
+      "concurrency": 16,
+      "prompt_tokens_observed": 0,
+      "status": "skipped",
+      "reason": "ISL+OSL=133,120 tokens exceeds the engine context window MAX_CONTEXT_TOKENS=131,072; the engine rejects such requests with HTTP 400 before any tokens are generated",
+      "peak_metrics": null
+    },
+    {
+      "isl_target": 131072,
+      "osl": 2048,
+      "concurrency": 32,
+      "prompt_tokens_observed": 0,
+      "status": "skipped",
+      "reason": "ISL+OSL=133,120 tokens exceeds the engine context window MAX_CONTEXT_TOKENS=131,072; the engine rejects such requests with HTTP 400 before any tokens are generated",
+      "peak_metrics": null
+    }
+  ]
+}
