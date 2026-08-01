@@ -114,6 +114,11 @@ Total serving VRAM across a distributed replica pool is derived step-by-step fro
 > [!IMPORTANT]
 > Every figure in this section is a **paper derivation, not a measurement.** It also treats the KV pool as uniform, which Kimi K3 is not: only the 24 MLA layers consume per-token KV, while the 69 KDA layers hold a fixed-size recurrent state per *sequence*, sized by the engine's own default recurrent-state ratio (this deployment pins no override). Real capacity is bounded by both pools at once and must be read from the engine's own reported budget at deployment, not from this arithmetic.
 
+> [!NOTE]
+> **What the engine actually reported.** Taking the paragraph above at its word, the running deployment was asked. `/get_server_info` returned **`max_total_num_tokens = 927,808`** — the admission budget the scheduler enforces, spanning both pools at once, which is the number to plan against rather than the 887 GB derived above.
+>
+> That budget is reachable. During the saturation sweep the engine logged `KV cache pool is full. Retract requests.` in exactly two cells — **8k ISL @ c=128** (8 events) and **32k ISL @ c=32** (2 events), the two heaviest cells that ran to completion. It recovered by retracting and requeueing rather than erroring, so those runs are valid, but their throughput includes the cost of the retraction. The `32k @ c=128` and all `128k` cells were skipped by the harness before reaching this point and are marked `SKIPPED` in Table 2. Read the two flagged cells as measurements of a pool at its limit, not of one with headroom.
+
 ### 3. Concurrent 128k Context Session Capacity
 
 For an active context window of 128,000 tokens (128k), assuming FP8 KV cache quantization with Kimi Delta Attention compression. **Note that FP8 KV is not the shipped default** — `SGLANG_KV_CACHE_DTYPE` is empty, matching the cookbook's B200 cell, so these figures apply only if you opt in by setting it to `fp8_e4m3`:
