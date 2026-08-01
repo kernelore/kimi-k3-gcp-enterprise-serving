@@ -12,6 +12,8 @@ import argparse
 from datetime import datetime, timezone
 import json
 import os
+import secrets
+import string
 import sys
 import time
 import urllib.request
@@ -85,10 +87,20 @@ def measure_prefill(
       "stream": True,
       "stream_options": {"include_usage": True},
   }
+  # Prepend a unique nonce so the very first prompt tokens differ on every invocation.
+  # This suite reports a single TTFT as the headline prefill number, and a static prompt
+  # would be served straight out of the engine's radix cache on any re-run -- or on a run
+  # that follows another suite sharing this prefix -- turning a prefill measurement into a
+  # cache-hit measurement. The nonce makes the "0% prefix-cache hits" claim in
+  # benchmarks/generate_comparison.py true by construction rather than by coincidence.
+  nonce = "".join(
+      secrets.choice(string.ascii_letters + string.digits) for _ in range(16)
+  )
+  prompt = f"[Prefill Nonce={nonce}] {SYNTHETIC_8K}"
   if "/chat/completions" in endpoint:
-    payload["messages"] = [{"role": "user", "content": SYNTHETIC_8K}]
+    payload["messages"] = [{"role": "user", "content": prompt}]
   else:
-    payload["prompt"] = SYNTHETIC_8K
+    payload["prompt"] = prompt
   req_body = json.dumps(payload).encode("utf-8")
   headers = {
       "Content-Type": "application/json",

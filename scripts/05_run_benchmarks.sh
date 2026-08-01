@@ -287,9 +287,24 @@ if [ "${IN_CLUSTER}" = "true" ]; then
   BENCHMARK_METADATA_JSON="$(get_metadata_json)"
   export BENCHMARK_METADATA_JSON
 
+  # Honour --target in the in-cluster path too. The Job used to hardcode the gateway VIP, so
+  # `--target serving` silently benchmarked the gateway instead of the engine -- and the
+  # methodology note benchmarks/generate_comparison.py writes into the README states that the
+  # Saturation Sweep and Prefill Ingestion suites measure the engine directly on port 8000.
+  # In-cluster traffic resolves the ClusterIP by service name, so no port-forward is involved.
+  if [ "${TARGET}" = "gateway" ]; then
+    BENCHMARK_ENDPOINT="http://kimi-k3-gateway-svc:4000/v1/completions"
+  else
+    BENCHMARK_ENDPOINT="http://kimi-k3-serving-svc:8000/v1/completions"
+  fi
+  export BENCHMARK_ENDPOINT
+  # Every harness defaults --engine to "trtllm". Left unset, an SGLang run wrote
+  # "engine": "trtllm" into results/sglang/*.json, contradicting its own metadata block.
+  export BENCHMARK_ENGINE="${ENGINE}"
+
   if [ -f "${TEMPLATE_DIR}/08-in-cluster-benchmark-job.yaml.template" ]; then
     # shellcheck disable=SC2016
-    safe_envsubst '${ENV_LABEL} ${OWNER_LABEL} ${SERVING_MODEL_NAME} ${BENCHMARK_METADATA_JSON}' < "${TEMPLATE_DIR}/08-in-cluster-benchmark-job.yaml.template" > "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
+    safe_envsubst '${ENV_LABEL} ${OWNER_LABEL} ${SERVING_MODEL_NAME} ${BENCHMARK_METADATA_JSON} ${BENCHMARK_ENDPOINT} ${BENCHMARK_ENGINE}' < "${TEMPLATE_DIR}/08-in-cluster-benchmark-job.yaml.template" > "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
     if [ "${MODE}" != "soak" ]; then
       echo "    Configuring in-cluster job for mode '${MODE}' (${BENCH_SCRIPT})..."
       sed -i "s/soak_benchmark_kimi_k3\.py/${BENCH_SCRIPT}/g" "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"

@@ -10,7 +10,14 @@ metadata:
 spec:
   backoffLimit: 2
   ttlSecondsAfterFinished: 3600
-  activeDeadlineSeconds: 3600
+  # The binding case is the saturation sweep, not the soak test this template was first
+  # written for. Its DAY-1 grid is 4 ISL/OSL pairs x 4 concurrency levels, of which 13 cells
+  # run (the 3 above MAX_INFLIGHT_PROMPT_TOKENS are reported as skipped); the c=1 cells alone
+  # execute 8 sequential requests of up to 2048 output tokens each on top of a 128k-token
+  # prefill. At the measured ~34 ms TPOT that single suite comfortably exceeds one hour, so
+  # the old 3600s deadline would have killed the Job mid-sweep and destroyed the run --
+  # silently, because the partial results never reach the output file.
+  activeDeadlineSeconds: 10800
   template:
     metadata:
       labels:
@@ -32,12 +39,17 @@ spec:
               key: GATEWAY_MASTER_KEY
         - name: SERVING_MODEL_NAME
           value: "${SERVING_MODEL_NAME}"
+        # The saturation sweep drives up to 128 concurrent SSE streams from a Python
+        # ThreadPoolExecutor in this pod, and every first-token timestamp -- the TTFT the
+        # suite reports -- is taken client-side. Starving the load generator makes the
+        # server look slower than it is, so give it most of an np-system node (7910m
+        # allocatable) rather than the 2/4 CPU that was adequate for the 18-stream soak.
         resources:
           requests:
-            cpu: "2"
+            cpu: "4"
             memory: "4Gi"
           limits:
-            cpu: "4"
+            cpu: "7"
             memory: "8Gi"
         command: ["/bin/bash", "-c"]
         args:
@@ -48,9 +60,10 @@ spec:
           echo "======================================================================"
           mkdir -p /tmp/results
           python3 /workspace/benchmarks/soak_benchmark_kimi_k3.py \
-            --endpoint="http://kimi-k3-gateway-svc:4000/v1/completions" \
+            --endpoint="${BENCHMARK_ENDPOINT}" \
             --api-key="${GATEWAY_MASTER_KEY}" \
             --model="${SERVING_MODEL_NAME}" \
+            --engine="${BENCHMARK_ENGINE}" \
             --metadata='${BENCHMARK_METADATA_JSON}' \
             --output="/tmp/results/incluster_soak_results.json"
           echo "=== JSON_RESULT_START ==="
