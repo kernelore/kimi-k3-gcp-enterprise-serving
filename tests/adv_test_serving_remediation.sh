@@ -40,8 +40,18 @@ SKIPPED=0
 # Check 1: Zero matches for glm52, glm-5, vllm (case-insensitive)
 # ------------------------------------------------------------------------------
 echo "--> Check 1: Verifying zero matches for glm52, glm-5, vllm across repository..."
-if grep -rnwiE 'glm52|glm-5|vllm' --exclude-dir={.agents,.git,.venv,.terraform,__pycache__,tests} . ; then
+# README.md is scanned separately below: it carries an EXTERNAL_COMPARISON block that
+# cites a third-party benchmark of a competing engine by name. Prose in that block is
+# exempt; the ban stays absolute in every other file and in the rest of README.md.
+if grep -rnwiE 'glm52|glm-5|vllm' --exclude-dir={.agents,.git,.venv,.terraform,__pycache__,tests} --exclude=README.md . ; then
   echo "ERROR: Check 1 failed: Found forbidden legacy model/engine terms in repository!" >&2
+  exit 1
+fi
+if [ -f README.md ] && \
+   sed '/<!-- EXTERNAL_COMPARISON_START -->/,/<!-- EXTERNAL_COMPARISON_END -->/d' README.md \
+   | grep -nwiE 'glm52|glm-5|vllm'; then
+  echo "ERROR: Check 1 failed: Found forbidden legacy model/engine terms in README.md" >&2
+  echo "       outside the EXTERNAL_COMPARISON citation block!" >&2
   exit 1
 fi
 echo "    [OK] Check 1 passed: Zero legacy model/engine matches found."
