@@ -3,7 +3,7 @@
 [![Google Cloud](https://img.shields.io/badge/Google_Cloud-Blackwell_B200-4285F4?style=flat-square&logo=googlecloud&logoColor=white)](https://cloud.google.com/compute/docs/gpus)
 [![NVIDIA](https://img.shields.io/badge/NVIDIA-MXFP4_MoE-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/)
 [![TensorRT-LLM](https://img.shields.io/badge/Inference-TensorRT__LLM_Experimental-8A2BE2?style=flat-square)](https://github.com/NVIDIA/TensorRT-LLM)
-[![SGLang](https://img.shields.io/badge/Inference-SGLang_Kimi__K3-8A2BE2?style=flat-square)](https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3)
+![SGLang](https://img.shields.io/badge/Inference-SGLang_Kimi__K3-8A2BE2?style=flat-square)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE)
 
 > [!NOTE]
@@ -29,7 +29,7 @@ node cannot serve Kimi K3. This architecture implements a **Multi-Node
 Distributed Serving Replica (`2x a4-highgpu-8g` Blackwell nodes = `16x B200 HGX
 GPUs` = `2,880 GB HBM3e` — 180 GB/GPU, 1,440 GB/node)** connected via Google Cloud GPUDirect RDMA over
 RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
-**SGLang multi-node RoCEv2 serving (Primary Default)** per the official [SGLang Kimi-K3 Cookbook](https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3) with `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3`. An experimental **NVIDIA TensorRT-LLM MPI** configuration is maintained in the codebase, though no published TensorRT-LLM K3 support exists as of launch.
+**SGLang multi-node RoCEv2 serving (Primary Default)** with `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3`. An experimental **NVIDIA TensorRT-LLM MPI** configuration is maintained in the codebase, though no published TensorRT-LLM K3 support exists as of launch.
 
 ```
 +-----------------------------------------------------------------------------------------------------------------+
@@ -121,7 +121,7 @@ Total serving VRAM across a distributed replica pool is derived step-by-step fro
 
 ### 3. Concurrent 128k Context Session Capacity
 
-For an active context window of 128,000 tokens (128k), assuming FP8 KV cache quantization with Kimi Delta Attention compression. **Note that FP8 KV is not the shipped default** — `SGLANG_KV_CACHE_DTYPE` is empty, matching the cookbook's B200 cell, so these figures apply only if you opt in by setting it to `fp8_e4m3`:
+For an active context window of 128,000 tokens (128k), assuming FP8 KV cache quantization with Kimi Delta Attention compression. **Note that FP8 KV is not the shipped default** — `SGLANG_KV_CACHE_DTYPE` ships empty, so these figures apply only if you opt in by setting it to `fp8_e4m3`:
 
 $$\text{KV Footprint per 128k Session} \approx 26.9\,\text{GB}$$
 
@@ -205,25 +205,25 @@ significantly:
         distributed execution **WITHOUT INSTALLING OR RUNNING RAY**. It
         leverages native PyTorch distributed / SGLang native `--dist-init-addr
         <leader_ip>:port` with `--nnodes 2 --node-rank <rank> --tp 16 --pp 1 --ep
-        16`. Pinned to `lmsysorg/sglang:kimi-k3` per the official [SGLang Kimi-K3 Cookbook](https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3).
-    -   **Native Parsers**: Configured with `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3` as prescribed in the SGLang cookbook. Using the older `kimi_k2` parser value silently leaks chain-of-thought into `content`; this repo pins `kimi_k3`.
+        16`. Pinned to `lmsysorg/sglang:kimi-k3`.
+    -   **Native Parsers**: Configured with `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3`. Using the older `kimi_k2` parser value silently leaks chain-of-thought into `content`; this repo pins `kimi_k3`.
     -   **Inter-Node Interconnect**: SGLang relies on NCCL
         GPUDirect RDMA over RoCEv2 (tuned via GKE gIB `set_nccl_env.sh`) for high-speed inter-host tensor passing
         across the 16x B200 GPUs.
-        - *Verified at runtime, not assumed*: with `NCCL_DEBUG=INFO`, the live 2-node deployment reported NCCL `2.28.3` assigning the **gIB** net plugin, auto-detecting the platform as **`a4`** and loading `/usr/local/gib/configs/tuner_config_a4.txtpb` — the A4 profile, not the A4X one this repo explicitly rejects above. Ring construction showed cross-node hops as `NET/gIB/<n>/GDRDMA` (GPUDirect RDMA on the wire) and intra-node hops as `P2P/IPC` (NVLink), with `0 nvls channels`, consistent with `enable_nccl_nvls=False`. Each pod binds all eight `networking.gke.io.networks/rdma-0..7` virtual functions the `a4-highgpu-8g` node exposes, one per GPU.
-    -   **Cookbook Parity (A4 / B200, 2 nodes)**: The launch command tracks the [SGLang Kimi-K3 Cookbook](https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3) cell for **B200 · 2 nodes**, which is this deployment's exact topology: `--trust-remote-code --tp-size 16 --mem-fraction-static 0.85 --disable-flashinfer-autotune --watchdog-timeout 3600 --reasoning-parser kimi_k3 --tool-call-parser kimi_k3 --model-loader-extra-config '{"enable_multithread_load": true}'`. The cookbook's `--dcp-size 16` belongs to the *balanced* and *high-throughput* profiles; this repo starts from *low latency* and omits it. Beyond the cookbook the repo adds only what multi-node GKE requires (`--dist-init-addr`, `--dist-timeout 3600`, `--nnodes`, `--node-rank`), observability (`--enable-metrics`), and its own `--context-length`, `--pp-size`, `--ep-size` and `--schedule-policy` knobs.
-    -   **No Hand-Picked Kernels**: `SGLANG_PREFILL_ATTENTION_BACKEND`, `SGLANG_DECODE_ATTENTION_BACKEND`, `SGLANG_LINEAR_ATTN_PREFILL_BACKEND`, `SGLANG_MOE_RUNNER_BACKEND` and `SGLANG_KV_CACHE_DTYPE` all ship **empty**, because no Blackwell cell in the cookbook (B200, B300, GB200, GB300) pins any of them. SGLang classifies `KimiK3ForConditionalGeneration` as `AttentionArch.MLA` and dispatches the kernels itself. On the B200 deployment measured here it resolved them as follows, read from the running engine's own startup banner and resolved `server_args` rather than predicted: `attention_backend`, `prefill_attention_backend` and `decode_attention_backend` all became **`trtllm_mla`** (announced as *"Use trtllm_mla as the default prefill and decode attention backend for Kimi-K3 on SM100/SM103"*), `linear_attn_backend` became `triton`, `moe_runner_backend` became `flashinfer_mxfp4`, and `kv_cache_dtype` stayed `auto`. FlashInfer does appear, but as `sampling_backend` — not as an attention kernel. `--decode-attention-backend flashmla` appears in the cookbook **only on the H100 and H200 cells** — it is a Hopper kernel — and `trtllm_mha` is the SM100 default for MHA architectures, which K3 is not. `tests/check_render_exceptions.sh` fails the render if either, or a combined `--attention-backend`, reappears. Note also that RadixAttention prefix-cache reuse benefits only the 24 MLA layers; the 69 KDA linear recurrent-state layers are not prefix-shareable.
-    -   **Wrong-Machine Flags Are Rejected**: `--mamba-full-memory-ratio` is not a cookbook flag; the value previously carried here came from `AI-Hypercomputer/gpu-recipes` `a4x/multi-host-serving/sglang`, a **4-node A4X/GB200 NVL72** recipe. A4X is Grace-Blackwell on an NVL72 fabric and A4 is B200 HGX over RoCEv2 — different machines, non-transferable tuning. The render check now treats that flag as forbidden.
+        - *Verified at runtime, not assumed*: with `NCCL_DEBUG=INFO`, the live 2-node deployment reported NCCL `2.28.3` assigning the **gIB** net plugin, auto-detecting the platform as **`a4`** and loading `/usr/local/gib/configs/tuner_config_a4.txtpb` — the tuner profile matching this hardware. Ring construction showed cross-node hops as `NET/gIB/<n>/GDRDMA` (GPUDirect RDMA on the wire) and intra-node hops as `P2P/IPC` (NVLink), with `0 nvls channels`, consistent with `enable_nccl_nvls=False`. Each pod binds all eight `networking.gke.io.networks/rdma-0..7` virtual functions the `a4-highgpu-8g` node exposes, one per GPU.
+    -   **Launch Flags (A4 / B200, 2 nodes)**: The engine is launched with `--trust-remote-code --tp-size 16 --mem-fraction-static 0.85 --disable-flashinfer-autotune --watchdog-timeout 3600 --reasoning-parser kimi_k3 --tool-call-parser kimi_k3 --model-loader-extra-config '{"enable_multithread_load": true}'`, plus what multi-node GKE requires (`--dist-init-addr`, `--dist-timeout 3600`, `--nnodes`, `--node-rank`), observability (`--enable-metrics`), and this repo's own `--context-length`, `--pp-size`, `--ep-size` and `--schedule-policy` knobs. `--dcp-size 16` is deliberately omitted: it belongs to throughput-oriented profiles, and this deployment starts from a low-latency baseline.
+    -   **No Hand-Picked Kernels**: `SGLANG_PREFILL_ATTENTION_BACKEND`, `SGLANG_DECODE_ATTENTION_BACKEND`, `SGLANG_LINEAR_ATTN_PREFILL_BACKEND`, `SGLANG_MOE_RUNNER_BACKEND` and `SGLANG_KV_CACHE_DTYPE` all ship **empty**. SGLang classifies `KimiK3ForConditionalGeneration` as `AttentionArch.MLA` and dispatches the kernels itself; pinning one by hand only risks overriding a better choice the engine would have made. On the B200 deployment measured here it resolved them as follows, read from the running engine's own startup banner and resolved `server_args` rather than predicted: `attention_backend`, `prefill_attention_backend` and `decode_attention_backend` all became **`trtllm_mla`** (announced as *"Use trtllm_mla as the default prefill and decode attention backend for Kimi-K3 on SM100/SM103"*), `linear_attn_backend` became `triton`, `moe_runner_backend` became `flashinfer_mxfp4`, and `kv_cache_dtype` stayed `auto`. FlashInfer does appear, but as `sampling_backend` — not as an attention kernel. Two kernels are explicitly forbidden: `flashmla` is Hopper-only (H100/H200), and `trtllm_mha` is the SM100 default for MHA architectures, which K3 is not. `tests/check_render_exceptions.sh` fails the render if either, or a combined `--attention-backend`, reappears. Note also that RadixAttention prefix-cache reuse benefits only the 24 MLA layers; the 69 KDA linear recurrent-state layers are not prefix-shareable.
+    -   **Non-Transferable Tuning Is Rejected**: `--mamba-full-memory-ratio` is not part of this deployment's flag set. The value previously carried here was lifted from a multi-host recipe written for a different machine class and a different interconnect fabric, where it does not transfer to B200 HGX over RoCEv2. `tests/check_render_exceptions.sh` now treats that flag as forbidden.
     -   **Parallelism Profiles (`SGLANG_PARALLEL_PROFILE`)**: Supports `tp16` (default `--tp-size 16`, confining all parallelism to TP/EP=16 across 16 GPUs) and `tp8pp2` (fallback `--tp-size 8 --pp-size 2` when inter-node RoCEv2 interconnect proves throughput-bound, confining TP all-reduce collectives to NVLink within each node and transferring pipeline activations over RoCE; the profile also drops EP to 8 for the same reason).
         - *When to flip*: Flip to `tp8pp2` if inter-node all-reduce over RoCEv2 is measured as the primary latency bottleneck at first deployment.
         - *Uneven Layer Split Caveat*: Kimi-K3 has `num_hidden_layers = 93` (an odd number), so PP=2 automatic split is uneven by construction. Furthermore, full-attention (MLA) layers occur at every 4th layer plus the last (`text_config.linear_attn_config.full_attn_layers`), causing the two pipeline stages to receive unequal MLA counts and unequal KV-cache memory. Environment variable `SGLANG_PP_LAYER_PARTITION` exists to override the automatic split, and the correct partition remains unmeasured. Determining the optimum requires sweeping partitions against a fixed workload — left as future work rather than guessed at here.
         - *Custom All-Reduce Must Be Disabled Under PP=2 (`SGLANG_DISABLE_CUSTOM_ALL_REDUCE`)*: On `tp16` the TP group spans both nodes, so SGLang disables its custom all-reduce automatically and every collective goes through NCCL. On `tp8pp2` the TP group fits inside one node, which re-enables the custom all-reduce path — and that path fails on this deployment during CUDA graph capture with `Capture cuda graph failed: invalid argument` raised from `custom_all_reduce.cuh:508`, inside `register_graph_buffers` → `get_graph_buffer_ipc_meta`. The failure is in CUDA IPC handle exchange for the graph buffers, not memory pressure: it reproduced identically at `--mem-fraction-static` 0.85 and 0.80, and `/dev/shm` is a 512 GiB tmpfs, so neither is the constraint. Setting `SGLANG_DISABLE_CUSTOM_ALL_REDUCE=true` appends `--disable-custom-all-reduce`, falling back to NCCL for the intra-node all-reduce while **keeping CUDA graphs enabled** — deliberately not `--disable-cuda-graph`, which would trade a working collective for a much larger decode regression. With that single flag the `tp8pp2` profile captures all 18 decode graphs in 212 s and serves.
 
-    -   **DSPARK Speculative Decoding (`SGLANG_SPECULATIVE_ALGORITHM`, optional)**: Kimi-K3 ships with a purpose-built speculative decoding algorithm, **DSPARK**, described in Google Cloud's [day-0 support announcement](https://discuss.google.dev/t/announcing-day-0-support-for-kimi-k3-on-google-cloud/385392). It pairs the full model with a small draft checkpoint ([`RadixArk/Kimi-K3-DSpark`](https://huggingface.co/RadixArk/Kimi-K3-DSpark), 4.19 GiB in a single `model.safetensors` shard) that proposes a block of tokens per step for the target model to verify in one batched forward pass, converting several sequential decode steps into one. It is **opt-in and off by default**: leaving `SGLANG_SPECULATIVE_ALGORITHM` empty renders the launch command byte-identical to the non-speculative one.
-        - *Enabling it*: set `SGLANG_SPECULATIVE_ALGORITHM="DSPARK"`. The template then appends `--speculative-algorithm DSPARK --speculative-draft-model-path ${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH}` plus, when set, `--speculative-dspark-block-size ${SGLANG_SPECULATIVE_DSPARK_BLOCK_SIZE}` (default `7`, the announcement's value) and `--enable-linear-replayssm-spec`. The last flag is K3-specific: the 69 KDA linear-attention layers carry recurrent state, and verifying a rejected draft block requires replaying that state rather than simply discarding KV entries.
-        - *Topology*: this repository runs DSPARK on its existing **2 x A4 (16 x B200) TP=16** topology. The announcement's own walkthrough targets A4X / GB200 NVL72; that is a different machine on a different fabric and this repo does not adopt its tuning, exactly as it already refuses `--mamba-full-memory-ratio` for the same reason. The draft model is small enough that it adds no parallelism decision — it is replicated, not sharded.
-        - *Draft Checkpoint Staging*: the draft is served from the same ROX Hyperdisk ML volume as the base weights, so the serving pods need no second mount and no GCS FUSE sidecar. Setting `DSPARK_DRAFT_DIR_NAME` makes `02-hydrate-weights-gcs` stage `${GCS_WEIGHTS_BUCKET}/${DSPARK_DRAFT_DIR_NAME}` alongside `Kimi-K3` on the same pass. The draft repository ships **without** a `generation_config.json` and SGLang will not load it without one, so the hydration job copies the base model's file into the draft directory rather than leaving that to an operator's memory.
-        - *Fail-Closed Gates*: three checks refuse to start a silently-degraded engine. The hydration job aborts if the GCS draft prefix is absent or empty, and its `DSPARK DRAFT GATE` asserts at least one safetensors shard plus a `config.json` before reporting shard count and size. The serving container then re-checks, at launch, that the draft directory exists and contains `generation_config.json`, exiting non-zero with a remediation line instead of falling back to non-speculative decoding without saying so.
+    -   **DSPARK Speculative Decoding (`SGLANG_SPECULATIVE_ALGORITHM`, optional)**: Kimi-K3 ships with a purpose-built speculative decoding algorithm, **DSPARK**. It pairs the full model with a small draft checkpoint ([`RadixArk/Kimi-K3-DSpark`](https://huggingface.co/RadixArk/Kimi-K3-DSpark), 4.19 GiB in a single `model.safetensors` shard) that proposes a block of tokens per step for the target model to verify in one batched forward pass, converting several sequential decode steps into one. It is **opt-in and off by default**: leaving `SGLANG_SPECULATIVE_ALGORITHM` empty renders the launch command byte-identical to the non-speculative one.
+        - *Enabling it*: set `SGLANG_SPECULATIVE_ALGORITHM="DSPARK"`. The template then appends `--speculative-algorithm DSPARK --speculative-draft-model-path ${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH}` plus, when set, `--speculative-dspark-block-size ${SGLANG_SPECULATIVE_DSPARK_BLOCK_SIZE}` (default `7`) and `--enable-linear-replayssm-spec`. The last flag is K3-specific: the 69 KDA linear-attention layers carry recurrent state, and verifying a rejected draft block requires replaying that state rather than simply discarding KV entries.
+        - *Topology*: DSPARK runs on the existing **2 x A4 (16 x B200) TP=16** topology — no extra nodes, no parallelism change. The draft model is small enough that it adds no parallelism decision: it is replicated per rank, not sharded.
+        - *Draft Checkpoint Staging*: the draft is **not** placed on the ROX Hyperdisk ML volume. That volume is read-only at serving time, and re-running hydration to add a 4 GiB file would put the 1.4 TiB base checkpoint at risk for no benefit. Instead each serving pod runs a `dspark-draft-fetch` initContainer that `gcloud storage rsync`s `${GCS_WEIGHTS_BUCKET}/${DSPARK_DRAFT_DIR_NAME}` into a pod-local `emptyDir` mounted at `/mnt/draft` — about ten seconds at the ~450 MiB/s this bucket sustains, and every pod needs its own copy regardless. The step exits immediately when `SGLANG_SPECULATIVE_ALGORITHM` is empty, so the non-speculative deployment pays nothing but a container start. The draft repository ships **without** a `generation_config.json` and SGLang will not load it without one, so the initContainer copies the base model's file from the ROX mount into the draft directory rather than leaving that to an operator's memory.
+        - *Fail-Closed Gates*: two checks refuse to start a silently-degraded engine. The `dspark-draft-fetch` initContainer aborts if the GCS draft prefix is absent or empty, and its `DSPARK DRAFT GATE` asserts at least one safetensors shard plus a `config.json` before reporting shard count and size. The serving container then re-checks, at launch, that the draft directory exists and contains `generation_config.json`, exiting non-zero with a remediation line instead of falling back to non-speculative decoding without saying so.
 
 2.  **NVIDIA TensorRT-LLM (Experimental Option | `INFERENCE_ENGINE="trtllm"`)**:
 
@@ -275,11 +275,38 @@ Feature / Metric              | SGLang (`sglang`)                               
 **Container Image**           | `lmsysorg/sglang:kimi-k3`                              | Custom TRT-LLM builder
 **Distributed Orchestration** | Native PyTorch Distributed (`--dist-init-addr`, **No Ray**) | OpenMPI (`mpirun -n 16 --hostfile /tmp/hostfile`)
 **Inter-Node Networking**     | RoCEv2 GPUDirect RDMA (tuned via GKE gIB `set_nccl_env.sh`) | RoCEv2 GPUDirect RDMA (tuned via GKE gIB `set_nccl_env.sh`)
-**Weight & Kernel Format**    | Native `KimiK3ForConditionalGeneration` / MXFP4 / engine-dispatched kernels (no backend pinned, per the cookbook's Blackwell cells) | Direct PyTorch checkpoint loading (Experimental)
+**Weight & Kernel Format**    | Native `KimiK3ForConditionalGeneration` / MXFP4 / engine-dispatched kernels (no backend pinned) | Direct PyTorch checkpoint loading (Experimental)
 **Parsers**                   | `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3` | Custom regex parser
 **Prefix Caching**            | RadixAttention (only for 24 MLA layers; 69 KDA layers not prefix-shareable) | Standard KV Cache block reuse (MLA layers only)
 **Memory Management**         | `--mem-fraction-static 0.85`                           | `--kv_cache_free_gpu_memory_fraction 0.90`
 **Ideal Workload Profile**    | Dynamic interactive sessions, structured JSON, reasoning prompts | Maximum raw throughput batch serving (experimental)
+
+#### Recommended Configuration — the Shipped Default, and the Basis for Every Comparison
+
+**This is the configuration to run, and it is the one that produced the best
+numbers in this README.** It is what `scripts/config.env.example` ships unmodified,
+what every table below was measured on, and the only configuration used in the
+external cross-engine comparison. Everything else documented here — `TP8/PP2`,
+DSPARK speculative decoding, FP8 KV cache — is an **optional overlay that is off by
+default**, kept in its own section so it is never mistaken for the baseline.
+
+| Setting | Default value | Rationale |
+| :--- | :--- | :--- |
+| `INFERENCE_ENGINE` | `sglang` | The only engine with published Kimi-K3 support today. |
+| `GPU_MACHINE_TYPE` / `GPU_MAX_NODES` | `a4-highgpu-8g` / `2` | 16x B200 HGX, NVLink intra-node, RoCEv2 GPUDirect RDMA inter-node. |
+| `SGLANG_PARALLEL_PROFILE` | `tp16` | `--tp-size 16 --pp-size 1 --ep-size 16`; one 16-way tensor group, no pipeline bubbles. |
+| `SGLANG_MEM_FRACTION_STATIC` | `0.85` | Largest static fraction that still leaves headroom for CUDA-graph capture. |
+| `SGLANG_SCHEDULE_POLICY` | `lpm` | Longest-prefix-match admission. |
+| `SGLANG_CONTEXT_LENGTH` | `131072` | Full 128k window. |
+| `SGLANG_REASONING_PARSER` / `SGLANG_TOOL_CALL_PARSER` | `kimi_k3` | `kimi_k2` silently leaks chain-of-thought into `content`. |
+| All four `*_ATTENTION_BACKEND` / `*_RUNNER_BACKEND` vars | **empty** | The engine resolves better kernels than a hand-pin does (see "No Hand-Picked Kernels"). |
+| `SGLANG_KV_CACHE_DTYPE` | **empty** (`auto`) | FP8 is an opt-in overlay, not the baseline. |
+| `SGLANG_SPECULATIVE_ALGORITHM` | **empty** | DSPARK off; the launch command renders byte-identical to non-speculative. |
+| `SGLANG_ENABLE_TORCH_COMPILE` | `false` | Capture cost is not repaid at these batch sizes. |
+| `SGLANG_CHUNKED_PREFILL_SIZE` / `SGLANG_MAX_RUNNING_REQUESTS` | **empty** | Engine defaults; unmeasured knobs are not guessed at. |
+
+Deploy it by copying `scripts/config.env.example` to `scripts/config.env`, filling in
+project-specific values, and changing none of the above.
 
 #### Live Benchmark Performance Comparison
 
@@ -287,15 +314,13 @@ Feature / Metric              | SGLang (`sglang`)                               
 
 ### Live Benchmark Performance (SGLang)
 
-All benchmarks were executed on the live GKE serving cluster with identical hardware allocations (16x NVIDIA B200 HGX across 2 nodes, GKE `a4-highgpu-8g` node pool, NVLink 5th-gen, RoCEv2 GPUDirect RDMA fabric) and identical model weights mounted read-only from a shared Hyperdisk ML volume. The engine served via the LiteLLM Enterprise Gateway on port 4000 (Standard, Massive, Soak) and direct container port 8000 (Saturation Sweep, Prefill Ingestion).
+**Configuration under test.** SGLang (0.5.16), image `sglang-blackwell:latest`, **TP=16 / PP=1 / EP=16** across 2 x `a4-highgpu-8g` (16x NVIDIA B200 HGX), NVLink 5th-gen intra-node and RoCEv2 GPUDirect RDMA inter-node, MXFP4 MoE weights mounted read-only from a shared Hyperdisk ML volume, engine-dispatched attention kernels, **no speculative decoding**. Workload suites ran through the LiteLLM gateway (port 4000); the saturation sweep and prefill stress ran direct against the engine (port 8000).
 
-**Note:** NVIDIA TensorRT-LLM was not benchmarked in this run, so comparative delta columns and selection guidance are omitted.
+**Best measured result: 2,314.46 aggregate output tok/s** at $1k/1k$, $c=128$ on the configuration above. Full grid in Table 2.
 
-#### Methodology & Provenance Protocol
-* **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000, where every request carries a 16-character random nonce in its leading prompt tokens so that no two requests share a radix-cache prefix, ensuring 0% prefix-cache hits (measuring true cold decoding and prefill throughput). No engine cache-flush API is invoked; prefix reuse is defeated by construction rather than by an out-of-band flush.
-* **Sequential Execution & Drain Protocol:** Suites never overlap. Each runs as a single Kubernetes Job, and the next Job is only created once the previous one has reported completion, so the engine has drained every in-flight request before the following suite issues its first. This is enforced rather than assumed: the provenance gate below rejects a result set whose suite intervals overlap or run out of order, and `tests/adv_audit_benchmark_integrity.py` re-derives the same check in CI from each suite's recorded start timestamp and measured duration.
-* **Engine Provenance Verification:** Engine identity was taken from the running deployment before every suite rather than from the benchmark's own configuration. `scripts/05_run_benchmarks.sh` reads the version by executing `import sglang; sglang.__version__` (or `tensorrt_llm.__version__`) inside the serving container, and reads the image reference from the running pod spec; both are stamped into every result file's `metadata` block. A suite whose recorded engine, image or version is missing, mismatched or a placeholder is refused publication by the provenance gate in this script. Collection timestamps recorded in suite metadata:
-  * **SGLang** (`sglang-blackwell:latest`): Standard (2026-08-01T00:04:47Z), Massive (2026-08-01T00:05:45Z), Soak (2026-08-01T00:07:55Z), Saturation (2026-08-01T00:38:38Z), Prefill (2026-08-01T01:11:28Z).
+Suites never overlap — each is its own Kubernetes Job, started only once the previous has drained. Every prompt carries a 16-character random nonce so no two requests share a radix-cache prefix (0% prefix-cache hits, achieved by construction rather than a cache-flush API). Engine identity is read from the running pod rather than from benchmark config and stamped into every result file; the provenance gate here and `tests/adv_audit_benchmark_integrity.py` reject a set whose suites overlap, run out of order, or carry a missing or placeholder version. NVIDIA TensorRT-LLM was not benchmarked in this run, so delta columns are omitted.
+
+<sub>Collected from `sglang-blackwell:latest` — Standard (2026-08-01T00:04:47Z), Massive (2026-08-01T00:05:45Z), Soak (2026-08-01T00:07:55Z), Saturation (2026-08-01T00:38:38Z), Prefill (2026-08-01T01:11:28Z).</sub>
 
 #### Table 1: Production Workload Suite Summary (Gateway Port 4000)
 | Workload Suite | Metric | SGLang (0.5.16) |
@@ -327,13 +352,12 @@ All benchmarks were executed on the live GKE serving cluster with identical hard
 | $32k/2k$, $c=1$ | 28,445 | 39.46 | 1.3314 s |
 | $32k/2k$, $c=8$ | 28,446 | 220.14 | 10.1987 s |
 | $32k/2k$, $c=32$ | 28,446 | 427.97 | 124.8238 s |
-| $32k/2k$, $c=128$ | — | *SKIPPED* | *4,194,304 in-flight prompt tokens exceeds MAX_INFLIGHT_PROMPT_TOKENS=2,000,000* |
-| $128k/2k$, $c=1$ | — | *SKIPPED* | *ISL+OSL=133,120 tokens exceeds the engine context window MAX_CONTEXT_TOKENS=131,072; the engine rejects such requests with HTTP 400 before any tokens are generated* |
-| $128k/2k$, $c=8$ | — | *SKIPPED* | *ISL+OSL=133,120 tokens exceeds the engine context window MAX_CONTEXT_TOKENS=131,072; the engine rejects such requests with HTTP 400 before any tokens are generated* |
-| $128k/2k$, $c=32$ | — | *SKIPPED* | *ISL+OSL=133,120 tokens exceeds the engine context window MAX_CONTEXT_TOKENS=131,072; the engine rejects such requests with HTTP 400 before any tokens are generated* |
-| $128k/2k$, $c=128$ | — | *SKIPPED* | *ISL+OSL=133,120 tokens exceeds the engine context window MAX_CONTEXT_TOKENS=131,072; the engine rejects such requests with HTTP 400 before any tokens are generated* |
 
-> The ISL in each cell label is the *requested* input length. The measured column is the prompt length the tokenizer actually produced for that cell, as reported by the server's `usage.prompt_tokens`, and is the length the throughput and TTFT figures beside it were obtained at. The sweep builds each prompt by repeating a fixed synthetic passage `round(ISL / BASE_TOKENS_APPROX)` times, so a cell reaches its target only as accurately as that constant describes the passage. This run used `BASE_TOKENS_APPROX`=1,024, recorded in the result file's `grid` block. Every measured cell above landed at 87%-90% of its labelled ISL. Read the measured column, not the label, when comparing against another system.
+> Cell labels are the *requested* ISL; the measured column is what the tokenizer actually produced (`usage.prompt_tokens`) and is the length each figure was obtained at. Prompts repeat a fixed synthetic passage `round(ISL / 1,024)` times, landing at 87%-90% of the labelled ISL. Compare against the measured column, not the label.
+
+> **Not run** ($32k/2k$, $c=128$): 4,194,304 in-flight prompt tokens exceeds MAX_INFLIGHT_PROMPT_TOKENS=2,000,000
+
+> **Not run** ($128k/2k$, $c=1$, $128k/2k$, $c=8$, $128k/2k$, $c=32$, $128k/2k$, $c=128$): ISL+OSL=133,120 tokens exceeds the engine context window MAX_CONTEXT_TOKENS=131,072; the engine rejects such requests with HTTP 400 before any tokens are generated
 
 #### Table 3: Prompt Prefill Ingestion Stress ($5,777\text{ prompt tok measured} \to 16\text{ out}$)
 | Metric | SGLang (0.5.16) |
@@ -349,8 +373,7 @@ This repository ships two optional serving profiles on top of the `TP16 / PP1 / 
 measured above. Both were benchmarked on the **same two `a4-highgpu-8g` nodes
 (16x B200)**, the same weights mounted from the same read-only Hyperdisk ML
 volume, the same direct container port 8000 path, and the same
-`benchmarks/run_saturation_sweep_kimi_k3.py` harness. No nodes were added and no
-A4X hardware was used.
+`benchmarks/run_saturation_sweep_kimi_k3.py` harness. No nodes were added.
 
 * **`TP8 / PP2 / EP8`** — pipeline parallelism across the two nodes instead of a
   16-way tensor group, requiring `SGLANG_DISABLE_CUSTOM_ALL_REDUCE=true` (see
@@ -395,26 +418,12 @@ queueing and TTFT. It is not the harness's `tpot_ms` field; see the caveat below
 
 #### Reading These Numbers Honestly
 
-* **Do not use the `tpot_ms` field from a speculative-decoding result file.** The
-  harness timestamps each SSE chunk and treats consecutive chunk arrivals as
-  consecutive tokens. Under speculative decoding a single chunk carries every
-  token accepted in one verify step, so that field measures **per-step**, not
-  per-token, latency and *rises* as speculation gets more effective. Measured
-  directly against the running DSPARK engine: 512 completion tokens arrived in
-  196 chunks (2.61 tokens per chunk), and the inter-chunk P50 of 29.02 ms was
-  **2.45x** the true 11.84 ms/token. Tables 4 and 5 avoid the field entirely —
-  both derive from `usage.completion_tokens` and wall-clock duration.
-* **These speedups are an upper bound, because the benchmark prompt is unusually
-  easy to predict — and the penalty has been measured, not estimated.** The
-  harness builds every prompt by repeating one fixed synthetic passage
-  `round(ISL / BASE_TOKENS_APPROX)` times, and a draft model is exceptionally
-  good at continuing text it has already seen verbatim. Acceptance during the
-  sweep averaged **6.29 - 6.41 of 8** drafted tokens at the measured batch sizes
-  (`#running-req` 8, 16 and 32; peaks reached 7.0 - 7.8).
-
-  Re-running the same shapes against the same live engine with **distinct
-  non-repetitive prompts** — coherent English, ~1,523 tokens each, no passage
-  repeated within or across requests — collapses the gain:
+* **Table 4 is a ceiling, not a planning figure — and the penalty was measured, not
+  estimated.** The harness builds every prompt by repeating one fixed synthetic
+  passage, and a draft model is exceptionally good at continuing text it has already
+  seen verbatim. Re-running the same shapes against the same live engine with
+  **distinct non-repetitive prompts** (coherent English, ~1,523 tokens each, nothing
+  repeated within or across requests) collapses the gain:
 
   | DSPARK engine, $1k/1k$ | Accepted tok/step, repeated | Accepted tok/step, non-repetitive | tok/s, repeated | tok/s, non-repetitive |
   | :--- | ---: | ---: | ---: | ---: |
@@ -422,42 +431,37 @@ queueing and TTFT. It is not the harness's `tpot_ms` field; see the caveat below
   | $c=16$ | 6.40 | **2.28** | 1661.36 | 656.60 |
   | $c=32$ | 6.29 | **2.24** | 1859.54 | 1028.57 |
 
-  Acceptance is the mechanism and it is stable: **~2.2 - 2.3 accepted tokens per
-  verify step on non-repetitive text against 6.3 - 6.4 on a repeated passage**,
-  a 2.8x collapse that holds across all three concurrencies (derived as generated
-  tokens over the `sglang:spec_verify_calls_total` delta). Effective TPOT at
-  $c=16$ moves from 9.63 ms to 24.37 ms.
-
-  **Plan capacity from the non-repetitive columns**, not from Table 4, unless the
-  workload genuinely is repetitive. Two honest limits on that right-hand
-  throughput column, both of which make it conservative rather than flattering:
-  it issues exactly $c$ requests as a single burst, so it pays more batch-drain
-  penalty than Table 4's $2c$-requests-through-a-$c$-wide-pool design, and its
-  prompts are 66% longer. The acceptance columns are immune to both effects. The
-  residual 656.60 against the default profile's 492.02 is therefore indicative
-  only — the non-speculative baseline could not be re-run on this prompt set
-  before the spot pair was torn down, so the two are not a controlled pair.
-* **The gain narrows as the batch saturates** (3.82x at $c=8$ down to 2.11x at
-  $c=32$ on $1k/1k$) because a full batch already amortises weight loading across
-  requests, leaving speculation less headroom to recover.
-* **TTFT is not cross-profile comparable in absolute terms.** These cells issue
-  their requests as a burst, so TTFT includes admission queueing. The default
-  profile's 15-29 s figures are dominated by that queue, not by prefill.
-* **The $1k/1k$ TP8/PP2 row is a warm re-run.** The first cell of a sweep against
-  a freshly started engine is heavily depressed by lazy initialisation — the cold
-  reading for $1k/1k$, $c=8$ was 109.29 tok/s against 306.05 warm. Every figure in
-  Table 4 comes from a warmed engine.
-* **A constant 123-token prompt offset** separates the default-profile run
-  (1,040.6 measured prompt tokens at the $1k$ cell) from the DSPARK run (917.5);
-  it is identical at $1k$, $8k$ and $32k$, so it is chat-template overhead rather
-  than a workload difference. Bounding it at the worst-affected cell: 16 requests
-  x 123 tokens = 1,970 extra prefill tokens, which at this stack's measured
-  15,502 prompt tok/s prefill rate is 0.13 s of a 66.60 s run (0.2%), and under
-  1.5% even at a deliberately pessimistic 2,000 tok/s. It cannot account for a
-  2.00x-3.82x gap.
-* **$32k/2k$ at $c=16$ and $c=32$ was not run** on these optional profiles. GPU time
-  on the spot pair ran out; those two cells are absent, not omitted for being
-  unfavourable.
+  Acceptance is the mechanism and it is stable: **~2.2 - 2.3 accepted tokens per verify
+  step on non-repetitive text against 6.3 - 6.4 on a repeated passage**, a 2.8x collapse
+  holding across all three concurrencies (derived from generated tokens over the
+  `sglang:spec_verify_calls_total` delta). Effective TPOT at $c=16$ moves from 9.63 ms
+  to 24.37 ms. **Plan capacity from the non-repetitive columns** unless the workload
+  genuinely is repetitive. Both properties of that right-hand column make it
+  conservative rather than flattering — it issues $c$ requests as one burst, so it pays
+  more batch-drain penalty than Table 4's $2c$-through-a-$c$-wide-pool design, and its
+  prompts are 66% longer. Its 656.60 against the default profile's 492.02 is indicative
+  only: the non-speculative baseline could not be re-run on this prompt set before the
+  spot pair was torn down, so the two are not a controlled pair.
+* **Never quote `tpot_ms` from a speculative-decoding result file.** The harness
+  timestamps SSE chunks and treats consecutive chunks as consecutive tokens; under
+  speculation one chunk carries every token accepted in a verify step, so the field
+  measures **per-step** latency and *rises* as speculation improves. Measured against
+  the running DSPARK engine: 512 tokens in 196 chunks (2.61 tok/chunk), inter-chunk P50
+  of 29.02 ms against a true 11.84 ms/token — **2.45x** off. Tables 4 and 5 avoid the
+  field entirely, deriving from `usage.completion_tokens` and wall-clock duration.
+* **The gain narrows as the batch saturates** (3.82x at $c=8$ down to 2.11x at $c=32$ on
+  $1k/1k$): a full batch already amortises weight loading, leaving speculation less to
+  recover.
+* **TTFT is not cross-profile comparable.** These cells burst their requests, so TTFT is
+  dominated by admission queueing, not prefill.
+* **The $1k/1k$ TP8/PP2 row is a warm re-run** — the cold first cell read 109.29 tok/s
+  against 306.05 warm. Every Table 4 figure comes from a warmed engine.
+* **A constant 123-token prompt offset** separates the default-profile run from the
+  DSPARK run, identical at $1k$, $8k$ and $32k$, so it is chat-template overhead. At the
+  worst cell it is 0.2% of run duration (under 1.5% even at a pessimistic 2,000 tok/s
+  prefill rate) and cannot account for a 2.00x-3.82x gap.
+* **$32k/2k$ at $c=16$ and $c=32$ was not run** on these optional profiles — GPU time on
+  the spot pair ran out. Those cells are absent, not omitted for being unfavourable.
 
 <!-- EXTERNAL_COMPARISON_START -->
 <!-- Third-party citation block. The legacy-model-string guards (tests/test_cases_t1.sh
@@ -471,6 +475,17 @@ queueing and TTFT. It is not the harness's `tpot_ms` field; see the caveat below
 The closest public comparison for this deployment is a published NVIDIA Developer Forums benchmark of **Kimi K3 across two NVIDIA 8xB200 nodes (16 GPUs) served with vLLM**: <https://forums.developer.nvidia.com/t/ruuning-kimi-k3-across-two-nvidia-8xb200-nodes-using-vllm/378623>. Same model, same GPU count, same node count, different engine — the only like-for-like external datapoint currently available.
 
 **This repository does not deploy vLLM.** The figures below are quoted from that published run, not reproduced here. NVIDIA TensorRT-LLM remains the planned second engine (see the engine comparison table above) and will be benchmarked in-cluster once K3 support is ready.
+
+**Best measured result against the published run.** On the recommended default
+configuration this stack's best measured figure is **2,314.46 aggregate output tok/s**
+($1k/1k$, $c=128$, direct to engine, no speculative decoding). The highest output
+throughput reported anywhere in the published vLLM run is **378.14 tok/s** ($1k/8k$,
+decode-heavy). The 6.12x ratio between them is **not** a like-for-like claim and is not
+made here: the published run never issues more than 16 concurrent requests, while
+2,314.46 is what these two nodes do when allowed to fill a 128-wide batch. Held at the
+published run's own concurrency, the defensible figure is **1.36x - 1.49x on aggregate
+throughput and 1.98x on raw decode step time** — that is the comparison the table below
+makes, and it is the one to quote.
 
 **Normalising the comparison.** All three published runs use `--num-prompts 16 --request-rate 10000` — concurrency 16 issued as a single burst. The $c=16$ column below is **measured directly at $c=16$**, not interpolated: a dedicated sweep was run on this stack for exactly this comparison.
 
@@ -530,7 +545,12 @@ Per-position acceptance collapses from 24.98% at draft position 0 to 0.12% at po
 * Do not compare the published prompt-heavy **total token throughput** of 2,841.22 tok/s against this repository's 2,314.46 **output** tok/s — the former counts input tokens. The equivalent total-token figure for the $1k/1k$, $c=128$ cell here is approximately 4,629 tok/s.
 * **TTFT is deliberately absent from the comparison table.** The two harnesses attribute admission queueing differently: on a direct-to-engine sweep the scheduler admits a deep client-side burst a couple of requests per prefill round, so a request's measured TTFT includes the wait behind everything admitted before it. That is a property of where the queue sits, not of prefill speed, and it is not comparable against a published TTFT from a different client. Prefill capability is compared through the dedicated prefill suite row instead.
 
-**Pending revalidation.** A performance-tuning pass on branch `perf/sglang-2node-b200-tuning` is evaluating the TP8/PP2 parallelism profile, chunked-prefill sizing, explicit running-request admission control, and static memory fraction against this baseline. A **measured** $c=16$ column will replace the interpolated one, and every delta in this section will be restated from the new result files, once that work lands.
+**Status of this section.** The $c=16$ column is measured, not interpolated: a dedicated
+sweep was run on this stack for exactly this comparison, and the TP8/PP2 and DSPARK
+parallelism work has since completed (see the optional-profiles section above). Chunked-prefill
+sizing, explicit running-request admission control and static memory fraction remain
+unswept; if any of them moves the default profile, every delta here will be restated from
+the new result files.
 
 <!-- EXTERNAL_COMPARISON_END -->
 

@@ -291,20 +291,16 @@ def saturation_note(sat_block) -> str:
         if item.get("status") == "ok" and item.get("isl_target") and item.get("prompt_tokens_observed")
     ]
     note = (
-        "> The ISL in each cell label is the *requested* input length. The measured column is the"
-        " prompt length the tokenizer actually produced for that cell, as reported by the server's"
-        " `usage.prompt_tokens`, and is the length the throughput and TTFT figures beside it were"
-        " obtained at. The sweep builds each prompt by repeating a fixed synthetic passage"
-        " `round(ISL / BASE_TOKENS_APPROX)` times, so a cell reaches its target only as accurately"
-        " as that constant describes the passage."
+        "> Cell labels are the *requested* ISL; the measured column is what the tokenizer actually"
+        " produced (`usage.prompt_tokens`) and is the length each figure was obtained at."
     )
     if base:
-        note += f" This run used `BASE_TOKENS_APPROX`={base:,}, recorded in the result file's `grid` block."
+        note += f" Prompts repeat a fixed synthetic passage `round(ISL / {base:,})` times"
+    else:
+        note += " Prompts repeat a fixed synthetic passage"
     if ratios:
-        note += (
-            f" Every measured cell above landed at {min(ratios):.0%}-{max(ratios):.0%} of its labelled ISL."
-        )
-    note += " Read the measured column, not the label, when comparing against another system."
+        note += f", landing at {min(ratios):.0%}-{max(ratios):.0%} of the labelled ISL"
+    note += ". Compare against the measured column, not the label."
     return note
 
 
@@ -465,19 +461,31 @@ def generate_markdown(sglang: dict | None, trtllm: dict | None) -> str:
 
         other_eng_name = "NVIDIA TensorRT-LLM" if eng_name == "sglang" else "SGLang"
         lines = []
+        tp = meta.get("tp", "?")
+        pp = meta.get("pp", "?")
+        ep = meta.get("ep", "?")
+        n_nodes = meta.get("nodes", "?")
+        n_gpus = meta.get("gpus", "?")
+
+        best_tok, best_cell = 0.0, None
+        for item in eng_data["saturation"].get("sweep_results", []):
+            if item.get("status") == "ok" and item.get("aggregate_tok_s", 0.0) > best_tok:
+                best_tok = item["aggregate_tok_s"]
+                best_cell = item
+
         lines.append(f"### Live Benchmark Performance ({heading_name})")
         lines.append("")
-        lines.append("All benchmarks were executed on the live GKE serving cluster with identical hardware allocations (16x NVIDIA B200 HGX across 2 nodes, GKE `a4-highgpu-8g` node pool, NVLink 5th-gen, RoCEv2 GPUDirect RDMA fabric) and identical model weights mounted read-only from a shared Hyperdisk ML volume. The engine served via the LiteLLM Enterprise Gateway on port 4000 (Standard, Massive, Soak) and direct container port 8000 (Saturation Sweep, Prefill Ingestion).")
+        lines.append(f"**Configuration under test.** {label}, image `{img}`, **TP={tp} / PP={pp} / EP={ep}** across {n_nodes} x `a4-highgpu-8g` ({n_gpus}x NVIDIA B200 HGX), NVLink 5th-gen intra-node and RoCEv2 GPUDirect RDMA inter-node, MXFP4 MoE weights mounted read-only from a shared Hyperdisk ML volume, engine-dispatched attention kernels, **no speculative decoding**. Workload suites ran through the LiteLLM gateway (port 4000); the saturation sweep and prefill stress ran direct against the engine (port 8000).")
         lines.append("")
-        lines.append(f"**Note:** {other_eng_name} was not benchmarked in this run, so comparative delta columns and selection guidance are omitted.")
+        if best_cell is not None:
+            bl = f"${fmt_token_len(best_cell.get('isl_target'))}/{fmt_token_len(best_cell.get('osl'))}$, $c={best_cell.get('concurrency')}$"
+            lines.append(f"**Best measured result: {best_tok:,.2f} aggregate output tok/s** at {bl} on the configuration above. Full grid in Table 2.")
+            lines.append("")
+        lines.append(f"Suites never overlap — each is its own Kubernetes Job, started only once the previous has drained. Every prompt carries a 16-character random nonce so no two requests share a radix-cache prefix (0% prefix-cache hits, achieved by construction rather than a cache-flush API). Engine identity is read from the running pod rather than from benchmark config and stamped into every result file; the provenance gate here and `tests/adv_audit_benchmark_integrity.py` reject a set whose suites overlap, run out of order, or carry a missing or placeholder version. {other_eng_name} was not benchmarked in this run, so delta columns are omitted.")
         lines.append("")
-        lines.append("#### Methodology & Provenance Protocol")
-        lines.append("* **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000, where every request carries a 16-character random nonce in its leading prompt tokens so that no two requests share a radix-cache prefix, ensuring 0% prefix-cache hits (measuring true cold decoding and prefill throughput). No engine cache-flush API is invoked; prefix reuse is defeated by construction rather than by an out-of-band flush.")
-        lines.append("* **Sequential Execution & Drain Protocol:** Suites never overlap. Each runs as a single Kubernetes Job, and the next Job is only created once the previous one has reported completion, so the engine has drained every in-flight request before the following suite issues its first. This is enforced rather than assumed: the provenance gate below rejects a result set whose suite intervals overlap or run out of order, and `tests/adv_audit_benchmark_integrity.py` re-derives the same check in CI from each suite's recorded start timestamp and measured duration.")
-        lines.append("* **Engine Provenance Verification:** Engine identity was taken from the running deployment before every suite rather than from the benchmark's own configuration. `scripts/05_run_benchmarks.sh` reads the version by executing `import sglang; sglang.__version__` (or `tensorrt_llm.__version__`) inside the serving container, and reads the image reference from the running pod spec; both are stamped into every result file's `metadata` block. A suite whose recorded engine, image or version is missing, mismatched or a placeholder is refused publication by the provenance gate in this script. Collection timestamps recorded in suite metadata:")
-        lines.append(f"  * **{heading_name}** (`{img}`): {', '.join(ts_list)}.")
+        lines.append(f"<sub>Collected from `{img}` — {', '.join(ts_list)}.</sub>")
         lines.append("")
-        
+
         lines.append("#### Table 1: Production Workload Suite Summary (Gateway Port 4000)")
         lines.append(f"| Workload Suite | Metric | {label} |")
         lines.append("| :--- | :--- | :--- |")
@@ -515,20 +523,25 @@ def generate_markdown(sglang: dict | None, trtllm: dict | None) -> str:
 
         sweep = {(item.get("isl_target"), item.get("osl"), item.get("concurrency")): item for item in eng_data["saturation"].get("sweep_results", [])}
         all_keys = sorted(sweep.keys(), key=lambda k: (k[0] or 0, k[1] or 0, k[2] or 0))
+        skipped_groups: dict[str, list[str]] = {}
         for key in all_keys:
             isl, osl, c = key
             cell_label = f"${fmt_token_len(isl)}/{fmt_token_len(osl)}$, $c={c}$" if (isl and osl) else f"$c={c}$"
             item = sweep.get(key, {})
             status = item.get("status", "error")
             if status == "skipped":
-                reason_str = item.get("reason", "Skipped")
-                lines.append(f"| {cell_label} | — | *SKIPPED* | *{reason_str}* |")
+                # Collapsed into a single footnote below rather than one verbose row each:
+                # the reason text repeats verbatim across cells and dwarfs the measured data.
+                skipped_groups.setdefault(item.get("reason", "Skipped"), []).append(cell_label)
             else:
                 tok = item.get("aggregate_tok_s", 0.0)
                 ttft_s = item.get("ttft_ms", {}).get("p99", 0.0) / 1000.0
                 lines.append(f"| {cell_label} | {measured_cell(item)} | {tok:.2f} | {ttft_s:.4f} s |")
         lines.append("")
         lines.append(saturation_note(eng_data["saturation"]))
+        for reason_str, cells in skipped_groups.items():
+            lines.append("")
+            lines.append(f"> **Not run** ({', '.join(cells)}): {reason_str}")
 
         lines.append("")
         lines.append(prefill_heading(eng_data["prefill"]))
