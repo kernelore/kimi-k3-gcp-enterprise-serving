@@ -160,6 +160,10 @@ spec:
           value: "${SGLANG_MEM_FRACTION_STATIC}"
         - name: SGLANG_SCHEDULE_POLICY
           value: "${SGLANG_SCHEDULE_POLICY}"
+        - name: SGLANG_CHUNKED_PREFILL_SIZE
+          value: "${SGLANG_CHUNKED_PREFILL_SIZE}"
+        - name: SGLANG_MAX_RUNNING_REQUESTS
+          value: "${SGLANG_MAX_RUNNING_REQUESTS}"
         - name: SGLANG_QUANTIZATION
           value: "${SGLANG_QUANTIZATION}"
         - name: SGLANG_ENABLE_TORCH_COMPILE
@@ -330,6 +334,23 @@ spec:
           fi
           if [ -n "${SGLANG_KV_CACHE_DTYPE}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --kv-cache-dtype ${SGLANG_KV_CACHE_DTYPE}"
+          fi
+          # Both UNSET by default so the engine keeps its own defaults; the cookbook
+          # pins neither. They exist because the saturation sweep produced two failure
+          # signatures that these flags address directly, and neither was tunable:
+          #   * TTFT P99 blew out to 94.5 s at 8k/c=128 while decode streams starved --
+          #     the signature of prefill monopolising the scheduler. Lowering
+          #     --chunked-prefill-size interleaves prefill chunks with decode steps.
+          #   * Retraction appeared in exactly the cells where c * (ISL+OSL) exceeded
+          #     the engine's reported max_total_num_tokens. Setting
+          #     --max-running-requests to floor(max_total_num_tokens / (ISL+OSL))
+          #     converts a retraction storm into clean admission queueing.
+          # Set from measurement, not by default.
+          if [ -n "${SGLANG_CHUNKED_PREFILL_SIZE}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --chunked-prefill-size ${SGLANG_CHUNKED_PREFILL_SIZE}"
+          fi
+          if [ -n "${SGLANG_MAX_RUNNING_REQUESTS}" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --max-running-requests ${SGLANG_MAX_RUNNING_REQUESTS}"
           fi
           # DAY-0: drop --mem-fraction-static to 0.80 if OOM at ~94% of weight loading
           # DAY-0: --dcp-size deliberately NOT enabled. It is what the cookbook's B200
