@@ -108,6 +108,69 @@ spec:
       - key: "cloud.google.com/gke-spot"
         operator: "Exists"
         effect: "NoSchedule"
+      serviceAccountName: ${SERVING_POD_SERVICE_ACCOUNT}
+      initContainers:
+      # DSPARK draft checkpoint fetch. The draft (~4 GiB) lands in a pod-local
+      # emptyDir rather than on the ROX Hyperdisk that carries the base weights.
+      # That disk is READ_ONLY_MANY once hydrated and the only supported way to add
+      # a file to it is to delete it and re-stage all 1.45 TiB, which would make
+      # speculative decoding impossible to switch on for an already-running cluster
+      # and would risk the hydrated checkpoint for the sake of a 4 GiB file. Copying
+      # per pod costs about ten seconds at the ~450 MiB/s this bucket sustains, and
+      # each pod needs its own local copy anyway. The step is a no-op when
+      # SGLANG_SPECULATIVE_ALGORITHM is empty, so the non-speculative deployment
+      # pays nothing but a container start.
+      - name: dspark-draft-fetch
+        image: google/cloud-sdk:500.0.0-slim
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          if [ -z "${SGLANG_SPECULATIVE_ALGORITHM}" ]; then
+            echo "Speculative decoding is disabled; no draft checkpoint to fetch."
+            exit 0
+          fi
+          DEST="/mnt/draft/${DSPARK_DRAFT_DIR_NAME}"
+          echo "Fetching DSPARK draft ${GCS_WEIGHTS_BUCKET}/${DSPARK_DRAFT_DIR_NAME} -> ${DEST}"
+          if ! gcloud storage ls "${GCS_WEIGHTS_BUCKET}/${DSPARK_DRAFT_DIR_NAME}/**" >/dev/null 2>&1; then
+            echo "FATAL: speculative decoding is enabled but ${GCS_WEIGHTS_BUCKET}/${DSPARK_DRAFT_DIR_NAME} is empty or absent." >&2
+            echo "       Stage the RadixArk/Kimi-K3-DSpark checkpoint into that prefix first." >&2
+            exit 1
+          fi
+          mkdir -p "${DEST}"
+          gcloud storage rsync -r "${GCS_WEIGHTS_BUCKET}/${DSPARK_DRAFT_DIR_NAME}" "${DEST}/"
+          # The draft repository ships no generation_config.json and SGLang refuses to
+          # load a draft model without one. The day-0 recipe copies the base model's
+          # file across; doing it here means no operator has to remember.
+          cp /mnt/rox/Kimi-K3/generation_config.json "${DEST}/generation_config.json"
+          python3 -c "
+          import glob, os
+          d = '${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH}'
+          shards = glob.glob(os.path.join(d, '*.safetensors'))
+          if not shards:
+              raise RuntimeError(f'FATAL: no safetensors shards found in draft checkpoint {d}.')
+          if not os.path.isfile(os.path.join(d, 'config.json')):
+              raise RuntimeError(f'FATAL: draft checkpoint {d} has no config.json.')
+          size_gib = sum(os.path.getsize(f) for f in shards) / (1024**3)
+          print(f'=== DSPARK DRAFT GATE ===\nShards: {len(shards)}\nSize: {size_gib:.2f} GiB\n=========================')
+          "
+        env:
+        - name: SGLANG_SPECULATIVE_ALGORITHM
+          value: "${SGLANG_SPECULATIVE_ALGORITHM}"
+        - name: DSPARK_DRAFT_DIR_NAME
+          value: "${DSPARK_DRAFT_DIR_NAME}"
+        resources:
+          requests:
+            cpu: "4"
+            memory: "8Gi"
+          limits:
+            memory: "16Gi"
+        volumeMounts:
+        - name: dspark-draft
+          mountPath: /mnt/draft
+        - name: model-rox
+          mountPath: /mnt/rox
+          readOnly: true
       containers:
       - name: sglang-mpi-node
         image: ${SERVING_IMAGE}
@@ -164,6 +227,16 @@ spec:
           value: "${SGLANG_CHUNKED_PREFILL_SIZE}"
         - name: SGLANG_MAX_RUNNING_REQUESTS
           value: "${SGLANG_MAX_RUNNING_REQUESTS}"
+        - name: SGLANG_DISABLE_CUSTOM_ALL_REDUCE
+          value: "${SGLANG_DISABLE_CUSTOM_ALL_REDUCE}"
+        - name: SGLANG_SPECULATIVE_ALGORITHM
+          value: "${SGLANG_SPECULATIVE_ALGORITHM}"
+        - name: SGLANG_SPECULATIVE_DRAFT_MODEL_PATH
+          value: "${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH}"
+        - name: SGLANG_SPECULATIVE_DSPARK_BLOCK_SIZE
+          value: "${SGLANG_SPECULATIVE_DSPARK_BLOCK_SIZE}"
+        - name: SGLANG_ENABLE_LINEAR_REPLAYSSM_SPEC
+          value: "${SGLANG_ENABLE_LINEAR_REPLAYSSM_SPEC}"
         - name: SGLANG_QUANTIZATION
           value: "${SGLANG_QUANTIZATION}"
         - name: SGLANG_ENABLE_TORCH_COMPILE
@@ -352,6 +425,51 @@ spec:
           if [ -n "${SGLANG_MAX_RUNNING_REQUESTS}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --max-running-requests ${SGLANG_MAX_RUNNING_REQUESTS}"
           fi
+          # Required to make SGLANG_PARALLEL_PROFILE=tp8pp2 start at all on this stack.
+          # TP16 spans both nodes, so SGLang disables its custom all-reduce and routes
+          # every collective through NCCL. TP8 fits inside one node, which re-enables
+          # the custom all-reduce path -- and that path registers its CUDA graph buffers
+          # through CUDA IPC handles. On this pod configuration that registration fails
+          # during decode graph capture:
+          #   get_graph_buffer_ipc_meta -> custom_all_reduce.cuh:508
+          #   Exception: Capture cuda graph failed: invalid argument
+          # It is not memory pressure: it reproduces identically at
+          # --mem-fraction-static 0.85 and 0.80, and /dev/shm is a 512Gi tmpfs.
+          # Setting this falls back to NCCL for intra-node all-reduce and keeps CUDA
+          # graphs enabled, which is the trade that matters -- disabling decode CUDA
+          # graphs instead costs far more than custom all-reduce ever wins.
+          if [ "${SGLANG_DISABLE_CUSTOM_ALL_REDUCE}" = "true" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --disable-custom-all-reduce"
+          fi
+          # DSPARK speculative decoding. OFF by default: the baseline this repository
+          # publishes is a no-drafting TP16 run, and speculation must be measured
+          # against it rather than folded into it silently.
+          # Topology is unchanged -- 2 x A4 (16 x B200), TP16 -- which is the A4 variant
+          # the Google Cloud day-0 write-up documents; the A4X/GB200 NVL72 variant it
+          # prefers is explicitly out of scope here.
+          # The draft checkpoint must already be on the ROX volume beside the base
+          # weights, carrying a generation_config.json copied from the base model.
+          # 02-hydrate-weights-gcs stages both when DSPARK is enabled.
+          if [ -n "${SGLANG_SPECULATIVE_ALGORITHM}" ]; then
+            if [ ! -d "${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH}" ]; then
+              echo "FATAL: SGLANG_SPECULATIVE_ALGORITHM=${SGLANG_SPECULATIVE_ALGORITHM} but draft model directory ${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH} is absent." >&2
+              echo "       Re-run 03_deploy_workloads.sh with SGLANG_SPECULATIVE_ALGORITHM set so the hydration job stages the draft checkpoint." >&2
+              exit 1
+            fi
+            if [ ! -f "${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH}/generation_config.json" ]; then
+              echo "FATAL: ${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH}/generation_config.json is missing." >&2
+              echo "       DSPARK requires the base model's generation_config.json to be copied into the draft directory." >&2
+              exit 1
+            fi
+            EXTRA_ARGS="${EXTRA_ARGS} --speculative-algorithm ${SGLANG_SPECULATIVE_ALGORITHM}"
+            EXTRA_ARGS="${EXTRA_ARGS} --speculative-draft-model-path ${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH}"
+            if [ -n "${SGLANG_SPECULATIVE_DSPARK_BLOCK_SIZE}" ]; then
+              EXTRA_ARGS="${EXTRA_ARGS} --speculative-dspark-block-size ${SGLANG_SPECULATIVE_DSPARK_BLOCK_SIZE}"
+            fi
+            if [ "${SGLANG_ENABLE_LINEAR_REPLAYSSM_SPEC}" = "true" ]; then
+              EXTRA_ARGS="${EXTRA_ARGS} --enable-linear-replayssm-spec"
+            fi
+          fi
           # DAY-0: drop --mem-fraction-static to 0.80 if OOM at ~94% of weight loading
           # DAY-0: --dcp-size deliberately NOT enabled. It is what the cookbook's B200
           # "balanced" and "high throughput" cells add on top of this "low latency" cell
@@ -399,6 +517,9 @@ spec:
         - name: model-rox
           mountPath: /mnt/rox
           readOnly: true
+        - name: dspark-draft
+          mountPath: /mnt/draft
+          readOnly: true
         - name: dshm
           mountPath: /dev/shm
         - name: nvidia-dir
@@ -422,6 +543,12 @@ spec:
         emptyDir:
           medium: Memory
           sizeLimit: 512Gi
+      # Node-local scratch for the DSPARK draft. Disk-backed, not medium: Memory --
+      # the draft is read once at load and then lives in VRAM, so spending 4 GiB of
+      # host RAM on it would be waste. Stays empty when speculative decoding is off.
+      - name: dspark-draft
+        emptyDir:
+          sizeLimit: 32Gi
       - name: nvidia-dir
         hostPath:
           path: /home/kubernetes/bin/nvidia
