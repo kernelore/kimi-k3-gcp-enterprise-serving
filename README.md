@@ -405,17 +405,31 @@ queueing and TTFT. It is not the harness's `tpot_ms` field; see the caveat below
   **2.45x** the true 11.84 ms/token. Tables 4 and 5 avoid the field entirely —
   both derive from `usage.completion_tokens` and wall-clock duration.
 * **These speedups are an upper bound, because the benchmark prompt is unusually
-  easy to predict.** The harness builds every prompt by repeating one fixed
-  synthetic passage `round(ISL / BASE_TOKENS_APPROX)` times, and a draft model is
-  exceptionally good at continuing text it has already seen verbatim. Acceptance
-  during the sweep averaged **6.29 - 6.41 of 8** drafted tokens at the measured
-  batch sizes (`#running-req` 8, 16 and 32; peaks reached 7.0 - 7.8). Issued a
-  single free-form prompt instead, the same engine accepted **2.33 - 2.85**, and
-  at an equivalent `#running-req: 1` during the sweep it accepted 4.41. Real
-  traffic that is less repetitive than a duplicated passage should be expected to
-  land well below the acceptance rates above, and therefore well below the
-  2.00x - 3.82x in Table 4. Treat these figures as the ceiling for repetitive or
-  highly structured workloads, not as a general-purpose multiplier.
+  easy to predict — and the penalty has been measured, not estimated.** The
+  harness builds every prompt by repeating one fixed synthetic passage
+  `round(ISL / BASE_TOKENS_APPROX)` times, and a draft model is exceptionally
+  good at continuing text it has already seen verbatim. Acceptance during the
+  sweep averaged **6.29 - 6.41 of 8** drafted tokens at the measured batch sizes
+  (`#running-req` 8, 16 and 32; peaks reached 7.0 - 7.8).
+
+  Re-running the $1k/1k$, $c=16$ shape against the same live engine with **16
+  distinct non-repetitive prompts** — coherent English, no passage repeated
+  within or across requests — collapses the gain:
+
+  | $1k/1k$, $c=16$ on the DSPARK engine | Repeated-passage prompt (Table 4) | Non-repetitive prompts |
+  | :--- | ---: | ---: |
+  | Aggregate output tok/s | 1661.36 | **656.60** |
+  | Effective TPOT | 9.63 ms | **24.37 ms** |
+  | Accepted tokens per verify step | 6.29 - 6.41 | **2.28** |
+  | Mean prompt tokens | 917.5 | 1,523.0 |
+
+  Identical 16,384 generated tokens in both cases. Acceptance falls by roughly
+  2.8x and throughput by 2.53x purely because the text became harder to predict.
+  **Plan capacity from the right-hand column, not from Table 4**, unless the
+  workload genuinely is repetitive. The residual 656.60 vs the default profile's
+  492.02 is indicative only — it was not possible to re-run the non-speculative
+  baseline on this prompt set before the spot pair was torn down, and these
+  prompts are 46% longer, so the two are not a controlled pair.
 * **The gain narrows as the batch saturates** (3.82x at $c=8$ down to 2.11x at
   $c=32$ on $1k/1k$) because a full batch already amortises weight loading across
   requests, leaving speculation less headroom to recover.
