@@ -103,6 +103,18 @@ def validate_provenance(sglang: dict | None, trtllm: dict | None):
         if eng_data is None:
             continue
         exp_ver = get_engine_version(eng_name, root=Path(__file__).resolve().parent.parent)
+        # Loop-invariant: the pinned tag does not change between suites. Kimi K3 pins
+        # `lmsysorg/sglang:kimi-k3`, which is a build name and not a version number, so
+        # there is nothing for a recorded engine_version to be equal to and the equality
+        # check below cannot run. Say so rather than skipping in silence -- a reader of
+        # this output should not assume the version was cross-checked when it was not.
+        is_exp_semver = bool(re.match(r"^[0-9]+\.[0-9]+(\.[0-9]+)?$", exp_ver))
+        if not is_exp_semver:
+            print(
+                f"NOTE: {eng_name} pinned image tag '{exp_ver}' is not a version number; "
+                f"engine_version is validated for presence and placeholders only, "
+                f"not cross-checked against the image."
+            )
         prev_end_dt = None
         prev_suite_name = None
         for s in suites:
@@ -116,7 +128,6 @@ def validate_provenance(sglang: dict | None, trtllm: dict | None):
             if not ver_raw or ver_raw.lower() in ["unknown", "todo", "placeholder", "none", "null"]:
                 raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json engine_version '{ver_raw}' is invalid or placeholder")
             ver_norm = normalize_version(ver_raw)
-            is_exp_semver = bool(re.match(r"^[0-9]+\.[0-9]+(\.[0-9]+)?$", exp_ver))
             if is_exp_semver:
                 if ver_norm != exp_ver:
                     raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json engine_version '{ver_raw}' does not match expected '{exp_ver}'")
@@ -234,6 +245,69 @@ def fmt_token_len(n: int) -> str:
     return str(n)
 
 
+def prefill_heading(*prefill_blocks) -> str:
+    """Build the Table 3 heading from the prompt length the run actually measured.
+
+    The heading hardcoded "8,192 prompt tok" because that is the length the prefill
+    harness aims for. It is not the length it hits: the prompt is a fixed piece of
+    prose and the tokenizer decides how many tokens that is. The DAY-1 run measured
+    5,777, so the heading advertised a prompt 42% larger than the one the throughput
+    figure directly beneath it was computed from. Report what was counted.
+    """
+    counts = []
+    for blk in prefill_blocks:
+        n = (blk or {}).get("prompt_tokens", 0) or 0
+        if n and n not in counts:
+            counts.append(n)
+    if not counts:
+        return "#### Table 3: Prompt Prefill Ingestion Stress ($\\to 16\\text{ out}$)"
+    tok = " / ".join(f"{n:,}" for n in counts)
+    return (
+        f"#### Table 3: Prompt Prefill Ingestion Stress "
+        f"(${tok}\\text{{ prompt tok measured}} \\to 16\\text{{ out}}$)"
+    )
+
+
+def measured_cell(*items) -> str:
+    """Render the prompt length one grid cell actually reached, per engine present."""
+    vals = [round(n) for it in items if (n := (it or {}).get("prompt_tokens_observed", 0) or 0)]
+    if not vals:
+        return "—"
+    if len(set(vals)) == 1:
+        return f"{vals[0]:,}"
+    return " / ".join(f"{v:,}" for v in vals)
+
+
+def saturation_note(sat_block) -> str:
+    """Explain the gap between a cell's requested ISL and the prompt it actually got.
+
+    Derived from the result file rather than written as prose, so it cannot drift away
+    from the data the way a hand-maintained sentence would once the constant is retuned.
+    """
+    base = (sat_block or {}).get("grid", {}).get("BASE_TOKENS_APPROX")
+    ratios = [
+        item["prompt_tokens_observed"] / item["isl_target"]
+        for item in (sat_block or {}).get("sweep_results", [])
+        if item.get("status") == "ok" and item.get("isl_target") and item.get("prompt_tokens_observed")
+    ]
+    note = (
+        "> The ISL in each cell label is the *requested* input length. The measured column is the"
+        " prompt length the tokenizer actually produced for that cell, as reported by the server's"
+        " `usage.prompt_tokens`, and is the length the throughput and TTFT figures beside it were"
+        " obtained at. The sweep builds each prompt by repeating a fixed synthetic passage"
+        " `round(ISL / BASE_TOKENS_APPROX)` times, so a cell reaches its target only as accurately"
+        " as that constant describes the passage."
+    )
+    if base:
+        note += f" This run used `BASE_TOKENS_APPROX`={base:,}, recorded in the result file's `grid` block."
+    if ratios:
+        note += (
+            f" Every measured cell above landed at {min(ratios):.0%}-{max(ratios):.0%} of its labelled ISL."
+        )
+    note += " Read the measured column, not the label, when comparing against another system."
+    return note
+
+
 def calc_delta(val_sglang: float, val_trtllm: float, higher_is_better: bool = True) -> str:
     if val_sglang == 0:
         return "+0.00%"
@@ -312,8 +386,8 @@ def generate_markdown(sglang: dict | None, trtllm: dict | None) -> str:
                 
         lines.append("")
         lines.append("#### Table 2: ISL/OSL x Concurrency Saturation Sweep (Direct Port 8000, 0% Cache Hits)")
-        lines.append(f"| Grid Cell (ISL/OSL, $c$) | {g_label} tok/s | {t_label} tok/s | Throughput $\\Delta$ | {g_label} TTFT P99 (s) | {t_label} TTFT P99 (s) | TTFT P99 $\\Delta$ |")
-        lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+        lines.append(f"| Grid Cell (ISL/OSL, $c$) | Prompt tok (measured) | {g_label} tok/s | {t_label} tok/s | Throughput $\\Delta$ | {g_label} TTFT P99 (s) | {t_label} TTFT P99 (s) | TTFT P99 $\\Delta$ |")
+        lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
         
         g_sweep = {(item.get("isl_target"), item.get("osl"), item.get("concurrency")): item for item in sglang["saturation"].get("sweep_results", [])}
         t_sweep = {(item.get("isl_target"), item.get("osl"), item.get("concurrency")): item for item in trtllm["saturation"].get("sweep_results", [])}
@@ -329,7 +403,7 @@ def generate_markdown(sglang: dict | None, trtllm: dict | None) -> str:
                 g_reason = gi.get("reason", "Skipped")
                 t_reason = ti.get("reason", "Skipped")
                 reason_str = g_reason if g_reason == t_reason else f"SGLang: {g_reason}; TRTLLM: {t_reason}"
-                lines.append(f"| {cell_label} | *SKIPPED* | *SKIPPED* | — | *{reason_str}* | *{reason_str}* | — |")
+                lines.append(f"| {cell_label} | — | *SKIPPED* | *SKIPPED* | — | *{reason_str}* | *{reason_str}* | — |")
                 continue
             elif g_status == "skipped":
                 g_tok_str, g_ttft_str = "*SKIPPED*", f"*{gi.get('reason', 'Skipped')}*"
@@ -348,10 +422,13 @@ def generate_markdown(sglang: dict | None, trtllm: dict | None) -> str:
                 t_tok_str, t_ttft_str = f"{t_tok:.2f}", f"{t_ttft_s:.4f} s"
                 d_tok = calc_delta(g_tok, t_tok, True)
                 d_ttft = calc_delta(g_ttft_s, t_ttft_s, False)
-            lines.append(f"| {cell_label} | {g_tok_str} | {t_tok_str} | **{d_tok}** | {g_ttft_str} | {t_ttft_str} | **{d_ttft}** |")
+            lines.append(f"| {cell_label} | {measured_cell(gi, ti)} | {g_tok_str} | {t_tok_str} | **{d_tok}** | {g_ttft_str} | {t_ttft_str} | **{d_ttft}** |")
 
         lines.append("")
-        lines.append("#### Table 3: Prompt Prefill Ingestion Stress ($8,192\\text{ prompt tok} \\to 16\\text{ out}$)")
+        lines.append(saturation_note(sglang["saturation"]))
+
+        lines.append("")
+        lines.append(prefill_heading(sglang["prefill"], trtllm["prefill"]))
         lines.append(f"| Metric | {g_label} | {t_label} | Delta ($\\Delta$) |")
         lines.append("| :--- | :--- | :--- | :--- |")
         gp_tok, tp_tok = sglang["prefill"]["prefill_tok_s_system"], trtllm["prefill"]["prefill_tok_s_system"]
@@ -433,9 +510,9 @@ def generate_markdown(sglang: dict | None, trtllm: dict | None) -> str:
                 
         lines.append("")
         lines.append("#### Table 2: ISL/OSL x Concurrency Saturation Sweep (Direct Port 8000, 0% Cache Hits)")
-        lines.append(f"| Grid Cell (ISL/OSL, $c$) | {label} tok/s | {label} TTFT P99 (s) |")
-        lines.append("| :--- | :--- | :--- |")
-        
+        lines.append(f"| Grid Cell (ISL/OSL, $c$) | Prompt tok (measured) | {label} tok/s | {label} TTFT P99 (s) |")
+        lines.append("| :--- | :--- | :--- | :--- |")
+
         sweep = {(item.get("isl_target"), item.get("osl"), item.get("concurrency")): item for item in eng_data["saturation"].get("sweep_results", [])}
         all_keys = sorted(sweep.keys(), key=lambda k: (k[0] or 0, k[1] or 0, k[2] or 0))
         for key in all_keys:
@@ -445,14 +522,16 @@ def generate_markdown(sglang: dict | None, trtllm: dict | None) -> str:
             status = item.get("status", "error")
             if status == "skipped":
                 reason_str = item.get("reason", "Skipped")
-                lines.append(f"| {cell_label} | *SKIPPED* | *{reason_str}* |")
+                lines.append(f"| {cell_label} | — | *SKIPPED* | *{reason_str}* |")
             else:
                 tok = item.get("aggregate_tok_s", 0.0)
                 ttft_s = item.get("ttft_ms", {}).get("p99", 0.0) / 1000.0
-                lines.append(f"| {cell_label} | {tok:.2f} | {ttft_s:.4f} s |")
-                
+                lines.append(f"| {cell_label} | {measured_cell(item)} | {tok:.2f} | {ttft_s:.4f} s |")
         lines.append("")
-        lines.append("#### Table 3: Prompt Prefill Ingestion Stress ($8,192\\text{ prompt tok} \\to 16\\text{ out}$)")
+        lines.append(saturation_note(eng_data["saturation"]))
+
+        lines.append("")
+        lines.append(prefill_heading(eng_data["prefill"]))
         lines.append(f"| Metric | {label} |")
         lines.append("| :--- | :--- |")
         p_tok = eng_data["prefill"]["prefill_tok_s_system"]

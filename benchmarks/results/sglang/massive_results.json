@@ -1,0 +1,66 @@
+{
+  "engine": "trtllm",
+  "metadata": {
+    "engine": "sglang",
+    "version": "0.5.16",
+    "engine_version": "0.5.16",
+    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/kimi-prod/sglang-blackwell:latest",
+    "run_timestamp": "2026-08-01T00:05:45Z",
+    "tp": 16,
+    "pp": 1,
+    "ep": 16,
+    "nodes": 2,
+    "gpus": 16
+  },
+  "successful_requests": 100,
+  "total_requests": 100,
+  "total_completed": 100,
+  "token_count_source": "openai_usage",
+  "ttft_mean_ms": 11836.94,
+  "tpot_mean_ms": 35.53,
+  "throughput_tokens_sec": 244.84,
+  "benchmark_config": {
+    "dry_run": false,
+    "endpoint": "http://kimi-k3-gateway-svc:4000/v1/completions",
+    "model": "moonshotai/Kimi-K3",
+    "api_key": "REDACTED",
+    "concurrency": 20,
+    "requests": 100,
+    "max_tokens": 256,
+    "temperature": 0.3,
+    "output": "/tmp/results/incluster_massive_results.json",
+    "engine": "trtllm",
+    "metadata": "{\"engine\": \"sglang\", \"version\": \"0.5.16\", \"engine_version\": \"0.5.16\", \"image\": \"europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/kimi-prod/sglang-blackwell:latest\", \"run_timestamp\": \"2026-08-01T00:05:45Z\", \"tp\": 16, \"pp\": 1, \"ep\": 16, \"nodes\": 2, \"gpus\": 16}",
+    "suite_start_ts": "2026-08-01T00:05:47Z",
+    "suite_end_ts": "2026-08-01T00:07:32Z",
+    "suite_duration_s": 104.5598
+  },
+  "execution_summary": {
+    "total_requests": 100,
+    "successful_requests": 100,
+    "failed_requests": 0,
+    "total_benchmark_time_seconds": 104.559,
+    "token_count_source": "openai_usage"
+  },
+  "metrics": {
+    "total_tokens_generated": 25600,
+    "cluster_throughput_tokens_per_sec": 244.84,
+    "per_gpu_throughput_tokens_per_sec": 15.3,
+    "ttft_ms": {
+      "mean": 11836.94,
+      "p50": 903.47,
+      "p90": 50403.37,
+      "p99": 50420.18,
+      "min": 540.41,
+      "max": 50420.18
+    },
+    "tpot_ms": {
+      "mean": 35.53,
+      "p50": 35.48,
+      "p90": 35.85,
+      "p99": 36.92,
+      "min": 35.1,
+      "max": 36.92
+    }
+  }
+}

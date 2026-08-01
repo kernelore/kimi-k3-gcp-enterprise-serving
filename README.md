@@ -271,12 +271,63 @@ Feature / Metric              | SGLang (`sglang`)                               
 #### Live Benchmark Performance Comparison
 
 <!-- ENGINE_COMPARISON_START -->
-| Metric / Engine Profile | SGLang (Primary Default) | NVIDIA TensorRT-LLM (Experimental) |
+
+### Live Benchmark Performance (SGLang)
+
+All benchmarks were executed on the live GKE serving cluster with identical hardware allocations (16x NVIDIA B200 HGX across 2 nodes, GKE `a4-highgpu-8g` node pool, NVLink 5th-gen, RoCEv2 GPUDirect RDMA fabric) and identical model weights mounted read-only from a shared Hyperdisk ML volume. The engine served via the LiteLLM Enterprise Gateway on port 4000 (Standard, Massive, Soak) and direct container port 8000 (Saturation Sweep, Prefill Ingestion).
+
+**Note:** NVIDIA TensorRT-LLM was not benchmarked in this run, so comparative delta columns and selection guidance are omitted.
+
+#### Methodology & Provenance Protocol
+* **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000, where every request carries a 16-character random nonce in its leading prompt tokens so that no two requests share a radix-cache prefix, ensuring 0% prefix-cache hits (measuring true cold decoding and prefill throughput). No engine cache-flush API is invoked; prefix reuse is defeated by construction rather than by an out-of-band flush.
+* **Sequential Execution & Drain Protocol:** Suites never overlap. Each runs as a single Kubernetes Job, and the next Job is only created once the previous one has reported completion, so the engine has drained every in-flight request before the following suite issues its first. This is enforced rather than assumed: the provenance gate below rejects a result set whose suite intervals overlap or run out of order, and `tests/adv_audit_benchmark_integrity.py` re-derives the same check in CI from each suite's recorded start timestamp and measured duration.
+* **Engine Provenance Verification:** Engine identity was taken from the running deployment before every suite rather than from the benchmark's own configuration. `scripts/05_run_benchmarks.sh` reads the version by executing `import sglang; sglang.__version__` (or `tensorrt_llm.__version__`) inside the serving container, and reads the image reference from the running pod spec; both are stamped into every result file's `metadata` block. A suite whose recorded engine, image or version is missing, mismatched or a placeholder is refused publication by the provenance gate in this script. Collection timestamps recorded in suite metadata:
+  * **SGLang** (`sglang-blackwell:latest`): Standard (2026-08-01T00:04:47Z), Massive (2026-08-01T00:05:45Z), Soak (2026-08-01T00:07:55Z), Saturation (2026-08-01T00:38:38Z), Prefill (2026-08-01T01:11:28Z).
+
+#### Table 1: Production Workload Suite Summary (Gateway Port 4000)
+| Workload Suite | Metric | SGLang (0.5.16) |
 | :--- | :--- | :--- |
-| **Status** | *pending first live benchmark run after the 2026-07-27 weight release* | *pending first live benchmark run after the 2026-07-27 weight release* |
-| **Time-to-First-Token (TTFT)** | — | — |
-| **Time-per-Output-Token (TPOT)** | — | — |
-| **Normalized Per-GPU Throughput** | — | — |
+| Standard Suite ($c=8$, $128\text{ tok}$) | TTFT P50 (ms) | 632.21 |
+|  | TPOT mean (ms) | 30.71 |
+|  | Throughput (tok/s) | 225.40 |
+|  | Success rate | 100.0% |
+| Massive Stress ($c=20$, $256\text{ tok}$) | TTFT P50 (ms) | 903.47 |
+|  | TPOT mean (ms) | 35.53 |
+|  | Throughput (tok/s) | 244.84 |
+|  | Success rate | 100.0% |
+| Endurance Soak ($c=18$, $1800\text{s}$) | TTFT P50 (ms) | 614.75 |
+|  | TPOT mean (ms) | 40.68 |
+|  | Throughput (tok/s) | 420.54 |
+|  | Completed cycles | 2981 |
+
+#### Table 2: ISL/OSL x Concurrency Saturation Sweep (Direct Port 8000, 0% Cache Hits)
+| Grid Cell (ISL/OSL, $c$) | Prompt tok (measured) | SGLang (0.5.16) tok/s | SGLang (0.5.16) TTFT P99 (s) |
+| :--- | :--- | :--- | :--- |
+| $1k/1k$, $c=1$ | 918 | 40.52 | 0.3700 s |
+| $1k/1k$, $c=8$ | 917 | 258.51 | 0.7155 s |
+| $1k/1k$, $c=32$ | 918 | 840.23 | 2.7551 s |
+| $1k/1k$, $c=128$ | 918 | 2314.46 | 5.4815 s |
+| $8k/1k$, $c=1$ | 7,133 | 40.29 | 0.4386 s |
+| $8k/1k$, $c=8$ | 7,134 | 241.62 | 2.8154 s |
+| $8k/1k$, $c=32$ | 7,134 | 684.28 | 9.9412 s |
+| $8k/1k$, $c=128$ | 7,134 | 1152.47 | 94.4919 s |
+| $32k/2k$, $c=1$ | 28,445 | 39.46 | 1.3314 s |
+| $32k/2k$, $c=8$ | 28,446 | 220.14 | 10.1987 s |
+| $32k/2k$, $c=32$ | 28,446 | 427.97 | 124.8238 s |
+| $32k/2k$, $c=128$ | — | *SKIPPED* | *4,194,304 in-flight prompt tokens exceeds MAX_INFLIGHT_PROMPT_TOKENS=2,000,000* |
+| $128k/2k$, $c=1$ | — | *SKIPPED* | *ISL+OSL=133,120 tokens exceeds the engine context window MAX_CONTEXT_TOKENS=131,072; the engine rejects such requests with HTTP 400 before any tokens are generated* |
+| $128k/2k$, $c=8$ | — | *SKIPPED* | *ISL+OSL=133,120 tokens exceeds the engine context window MAX_CONTEXT_TOKENS=131,072; the engine rejects such requests with HTTP 400 before any tokens are generated* |
+| $128k/2k$, $c=32$ | — | *SKIPPED* | *ISL+OSL=133,120 tokens exceeds the engine context window MAX_CONTEXT_TOKENS=131,072; the engine rejects such requests with HTTP 400 before any tokens are generated* |
+| $128k/2k$, $c=128$ | — | *SKIPPED* | *ISL+OSL=133,120 tokens exceeds the engine context window MAX_CONTEXT_TOKENS=131,072; the engine rejects such requests with HTTP 400 before any tokens are generated* |
+
+> The ISL in each cell label is the *requested* input length. The measured column is the prompt length the tokenizer actually produced for that cell, as reported by the server's `usage.prompt_tokens`, and is the length the throughput and TTFT figures beside it were obtained at. The sweep builds each prompt by repeating a fixed synthetic passage `round(ISL / BASE_TOKENS_APPROX)` times, so a cell reaches its target only as accurately as that constant describes the passage. This run used `BASE_TOKENS_APPROX`=1,024, recorded in the result file's `grid` block. Every measured cell above landed at 87%-90% of its labelled ISL. Read the measured column, not the label, when comparing against another system.
+
+#### Table 3: Prompt Prefill Ingestion Stress ($5,777\text{ prompt tok measured} \to 16\text{ out}$)
+| Metric | SGLang (0.5.16) |
+| :--- | :--- |
+| Prefill throughput | 15502.49 prompt tok/s |
+| TTFT mean (ms) | 372.65 ms |
+
 <!-- ENGINE_COMPARISON_END -->
 
 ---

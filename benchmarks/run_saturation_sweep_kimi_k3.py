@@ -55,7 +55,18 @@ def extract_chunk_text(chunk: dict) -> str | None:
 
 
 # Approximate token count of SYNTHETIC_BASE_1K (authoritative count is reported by engine in usage block).
-BASE_TOKENS_APPROX = 1024
+#
+# Calibrated against the DAY-1 run rather than assumed. The passage was written to be
+# "about 1024 tokens" and 1024 was used here, but Kimi K3's tokenizer packs it into
+# roughly 889: the 8192-target cells issued 8 repetitions and measured 7,133 prompt
+# tokens, the 32768-target cells issued 32 and measured 28,445 -- both solving to
+# ~889/rep, so every cell undershot its target by 11-13%. The measurements were still
+# sound (throughput is divided by the tokens the engine actually counted, and
+# prompt_tokens_observed records them), but the grid labels overstated the load.
+# At 889 the 8k and 32k targets land within ~2%. The 1024 target cannot: one
+# repetition is the smallest prompt this construction can build, so that cell stays
+# near 900 tokens regardless. Re-derive this constant if the passage or model changes.
+BASE_TOKENS_APPROX = 889
 
 # (input_tokens_target, output_tokens) — the documented DAY-1 ISL/OSL grid.
 ISL_OSL_GRID = [
@@ -90,7 +101,7 @@ SYNTHETIC_BASE_1K = (
     " latency. Furthermore, the 2 TB ReadOnlyMany Hyperdisk ML storage"
     " architecture enables horizontal pod scaling without redundant checkpoint"
     " downloads. "
-) * 6  # ~1024 tokens (~4300 chars)
+) * 6  # ~889 tokens as measured on Kimi K3 (~4300 chars); see BASE_TOKENS_APPROX
 
 
 def generate_unique_prompt(idx, c, isl_target):

@@ -23,6 +23,21 @@ nothing about how a request was issued or timed depends on it.
 They have been left as measured rather than corrected in place. Runs made after the fix
 carry the right value in both places.
 
+## Saturation prompt calibration
+
+`saturation_results.json` records the calibration constant its run used in
+`grid.BASE_TOKENS_APPROX`. The committed sweep used `1024`, the value the synthetic
+passage was written to approximate. Kimi K3's tokenizer in fact renders that passage as
+about 889 tokens, so every cell built a prompt 11–13% shorter than its grid label — the
+`prompt_tokens_observed` field on each cell records what was actually sent, and the
+throughput figures are computed against those counts, not the label.
+
+`benchmarks/run_saturation_sweep_kimi_k3.py` has since been recalibrated to `889`, so a
+re-run will land the 8k and 32k targets within about 2% and will not reproduce these
+prompt lengths. That is intended: the constant is a property of the tokenizer, not of the
+measurement. Compare runs using `prompt_tokens_observed` and the recorded
+`grid.BASE_TOKENS_APPROX`, never the grid label alone.
+
 ## Suite ordering
 
 The provenance gate in `generate_comparison.py` requires the suites to have been run in the

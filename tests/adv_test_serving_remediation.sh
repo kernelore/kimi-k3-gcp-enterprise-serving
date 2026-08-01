@@ -143,43 +143,96 @@ fi
 echo "--> Check 6: Adversarial Proof of Provenance Gate (testing invalid inputs)..."
 if compgen -G "benchmarks/results/*/*.json" > /dev/null; then
   python3 -c '
+import copy
 import sys
 from pathlib import Path
 
 sys.path.insert(0, "benchmarks")
 from generate_comparison import validate_provenance, load_json
 
+SUITES = ["standard", "massive", "soak", "saturation", "prefill"]
 root = Path("benchmarks/results")
-sglang_data = {s: load_json(root / "sglang" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
-trtllm_data = {s: load_json(root / "trtllm" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
 
-# Test 1: Mismatched engine version
-sglang_bad_ver = dict(sglang_data)
-sglang_bad_ver["standard"] = dict(sglang_data["standard"])
-sglang_bad_ver["standard"]["metadata"] = dict(sglang_data["standard"]["metadata"])
-sglang_bad_ver["standard"]["metadata"]["engine_version"] = "v0.99.9-bogus"
 
-try:
-    validate_provenance(sglang_bad_ver, trtllm_data)
-    print("ERROR: validate_provenance() failed to catch mismatched engine version!", file=sys.stderr)
+def load_engine(name):
+    """Load an engine only when all five of its suites are present.
+
+    validate_provenance takes None for an absent engine and the generator publishes
+    single-engine result sets, so this check has to do the same. It used to load both
+    engines unconditionally and died on the missing file the moment one engine was
+    published on its own.
+    """
+    paths = [root / name / (s + "_results.json") for s in SUITES]
+    if not all(p.exists() for p in paths):
+        return None
+    return {s: load_json(p) for s, p in zip(SUITES, paths)}
+
+
+sglang_data = load_engine("sglang")
+trtllm_data = load_engine("trtllm")
+if sglang_data is None and trtllm_data is None:
+    print("    [SKIP] No engine has a complete five-suite result set to mutate.")
+    sys.exit(0)
+
+if sglang_data is not None:
+    base, other, first = sglang_data, trtllm_data, True
+else:
+    base, other, first = trtllm_data, None, False
+
+
+def call(data):
+    return validate_provenance(data, other) if first else validate_provenance(None, data)
+
+
+def interval_key(doc):
+    for k in ["benchmark_config", "soak_config", "sweep_config", "grid", "prefill_config"]:
+        if isinstance(doc.get(k), dict) and "suite_start_ts" in doc[k]:
+            return k
+    return None
+
+
+# An unmutated set must pass, otherwise every rejection below proves nothing.
+call(copy.deepcopy(base))
+print("    [OK] Unmutated result set passes the gate")
+
+
+def expect_reject(label, mutate):
+    data = copy.deepcopy(base)
+    mutate(data)
+    try:
+        call(data)
+    except ValueError:
+        print("    [OK] Rejected: " + label)
+        return
+    print("ERROR: validate_provenance() accepted " + label + "!", file=sys.stderr)
     sys.exit(1)
-except ValueError as e:
-    print(f"    [OK] Caught expected version mismatch error: {e}")
 
-# Test 2: Invalid / malformed timestamp
-sglang_bad_ts = dict(sglang_data)
-sglang_bad_ts["soak"] = dict(sglang_data["soak"])
-sglang_bad_ts["soak"]["metadata"] = dict(sglang_data["soak"]["metadata"])
-sglang_bad_ts["soak"]["metadata"]["run_timestamp"] = "invalid-date-format"
 
-try:
-    validate_provenance(sglang_bad_ts, trtllm_data)
-    print("ERROR: validate_provenance() failed to catch malformed timestamp!", file=sys.stderr)
-    sys.exit(1)
-except ValueError as e:
-    print(f"    [OK] Caught expected timestamp format error: {e}")
+# Only properties the gate enforces unconditionally are asserted here. Equality between
+# the recorded engine_version and the pinned image tag is deliberately NOT one of them:
+# the tag is a build name rather than a version, so that branch never runs, and a test
+# claiming otherwise passed only because this whole check was being skipped.
+expect_reject("placeholder engine_version", lambda d: d["standard"]["metadata"].update(engine_version="unknown"))
+expect_reject("empty engine_version", lambda d: d["standard"]["metadata"].update(engine_version=""))
+expect_reject("engine identity not matching its results directory", lambda d: d["standard"]["metadata"].update(engine="somethingelse"))
+expect_reject("container image belonging to a different engine", lambda d: d["standard"]["metadata"].update(image="registry/x/unrelated-image:latest"))
+expect_reject("malformed run_timestamp", lambda d: d["soak"]["metadata"].update(run_timestamp="invalid-date-format"))
+expect_reject("missing run_timestamp", lambda d: d["soak"]["metadata"].update(run_timestamp=""))
+
+key = interval_key(base["soak"])
+if key:
+    expect_reject(
+        "soak interval moved before the suite preceding it",
+        lambda d: d["soak"][key].update(suite_start_ts="2020-01-01T00:00:00Z", suite_end_ts="2020-01-01T00:01:00Z"),
+    )
+    expect_reject(
+        "suite_start_ts later than suite_end_ts",
+        lambda d: d["soak"][key].update(suite_start_ts="2020-01-02T00:00:00Z", suite_end_ts="2020-01-01T00:00:00Z"),
+    )
+else:
+    print("    [SKIP] soak records no suite interval; ordering mutations not exercised.")
 '
-  echo "    [OK] Check 6 passed: Provenance Gate successfully rejected adversarial version and timestamp inputs."
+  echo "    [OK] Check 6 passed: Provenance Gate rejected every adversarial input."
   PASSED=$((PASSED + 1))
 else
   echo "    [SKIP] Check 6 skipped: benchmarks/results/ is empty (pre-launch state)."
@@ -216,45 +269,82 @@ PASSED=$((PASSED + 1))
 echo "--> Check 10: Adversarial Proof of Suite Timestamp Gate (testing skip and overlap rejection)..."
 if compgen -G "benchmarks/results/*/*.json" > /dev/null; then
   python3 -c '
-import sys
+import copy
 import io
+import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, "benchmarks")
 from generate_comparison import validate_provenance, load_json
 
+SUITES = ["standard", "massive", "soak", "saturation", "prefill"]
 root = Path("benchmarks/results")
-sglang_data = {s: load_json(root / "sglang" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
-trtllm_data = {s: load_json(root / "trtllm" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
 
-# Skip path: ensure baseline JSONs (lacking suite_start_ts) print informational notice and do not fail
+
+def load_engine(name):
+    paths = [root / name / (s + "_results.json") for s in SUITES]
+    if not all(p.exists() for p in paths):
+        return None
+    return {s: load_json(p) for s, p in zip(SUITES, paths)}
+
+
+sglang_data = load_engine("sglang")
+trtllm_data = load_engine("trtllm")
+if sglang_data is None and trtllm_data is None:
+    print("    [SKIP] No engine has a complete five-suite result set to mutate.")
+    sys.exit(0)
+
+if sglang_data is not None:
+    base, other, name, first = sglang_data, trtllm_data, "sglang", True
+else:
+    base, other, name, first = trtllm_data, None, "trtllm", False
+
+
+def call(data):
+    return validate_provenance(data, other) if first else validate_provenance(None, data)
+
+
+def interval_key(doc):
+    for k in ["benchmark_config", "soak_config", "sweep_config", "grid", "prefill_config"]:
+        if isinstance(doc.get(k), dict) and "suite_start_ts" in doc[k]:
+            return k
+    return None
+
+
+# Skip path. Construct the missing-interval condition rather than relying on the committed
+# results to exhibit it: this used to assert that standard_results.json had no
+# suite_start_ts, which was true only of the pre-launch placeholder files and became false
+# the moment a real run was published.
+stripped = copy.deepcopy(base)
+key = interval_key(stripped["standard"])
+if key:
+    stripped["standard"][key].pop("suite_start_ts", None)
+    stripped["standard"][key].pop("suite_end_ts", None)
 buf = io.StringIO()
 with redirect_stdout(buf):
-    validate_provenance(sglang_data, trtllm_data)
-out = buf.getvalue()
-if "NOTE: Skipping interval overlap checks for sglang standard" not in out:
-    print("ERROR: validate_provenance() failed to print skip notice for baseline without suite_start_ts!", file=sys.stderr)
+    call(stripped)
+if "Skipping interval overlap checks for " + name + " standard" not in buf.getvalue():
+    print("ERROR: validate_provenance() did not print the skip notice when suite_start_ts was absent!", file=sys.stderr)
     sys.exit(1)
-print("    [OK] Skip path verified: Informational notice printed without error when suite_start_ts is absent.")
+print("    [OK] Skip path verified: notice printed and no error raised when suite_start_ts is absent.")
 
-# Rejection path: inject overlapping suite_start_ts and suite_end_ts
-sglang_overlap = {s: dict(sglang_data[s]) for s in ["standard", "massive", "soak", "saturation", "prefill"]}
-sglang_overlap["standard"] = dict(sglang_data["standard"])
-sglang_overlap["standard"]["benchmark_config"] = dict(sglang_data["standard"].get("benchmark_config", {}))
-sglang_overlap["standard"]["benchmark_config"]["suite_start_ts"] = "2026-07-26T10:00:00Z"
-sglang_overlap["standard"]["benchmark_config"]["suite_end_ts"] = "2026-07-26T10:10:00Z"
-sglang_overlap["massive"] = dict(sglang_data["massive"])
-sglang_overlap["massive"]["benchmark_config"] = dict(sglang_data["massive"].get("benchmark_config", {}))
-sglang_overlap["massive"]["benchmark_config"]["suite_start_ts"] = "2026-07-26T10:05:00Z"
-sglang_overlap["massive"]["benchmark_config"]["suite_end_ts"] = "2026-07-26T10:20:00Z"
-
+# Rejection path: make massive start before standard finishes.
+overlap = copy.deepcopy(base)
+s_key = interval_key(overlap["standard"]) or "benchmark_config"
+m_key = interval_key(overlap["massive"]) or "benchmark_config"
+overlap["standard"].setdefault(s_key, {}).update(
+    suite_start_ts="2026-07-26T10:00:00Z", suite_end_ts="2026-07-26T10:10:00Z"
+)
+overlap["massive"].setdefault(m_key, {}).update(
+    suite_start_ts="2026-07-26T10:05:00Z", suite_end_ts="2026-07-26T10:20:00Z"
+)
 try:
-    validate_provenance(sglang_overlap, trtllm_data)
+    call(overlap)
     print("ERROR: validate_provenance() failed to catch overlapping suite timestamps!", file=sys.stderr)
     sys.exit(1)
 except ValueError as e:
-    print(f"    [OK] Caught expected interval overlap error: {e}")
+    print("    [OK] Caught expected interval overlap error: " + str(e))
 '
   echo "    [OK] Check 10 passed: Suite timestamp gate correctly handles skip and overlap rejection paths."
   PASSED=$((PASSED + 1))

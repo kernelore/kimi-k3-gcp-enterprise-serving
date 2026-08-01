@@ -1,0 +1,27 @@
+{
+  "success": true,
+  "engine": "sglang",
+  "metadata": {
+    "engine": "sglang",
+    "version": "0.5.16",
+    "engine_version": "0.5.16",
+    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/kimi-prod/sglang-blackwell:latest",
+    "run_timestamp": "2026-08-01T01:11:28Z",
+    "tp": 16,
+    "pp": 1,
+    "ep": 16,
+    "nodes": 2,
+    "gpus": 16
+  },
+  "prompt_tokens": 5777,
+  "token_count_source": "openai_usage",
+  "ttft_sec": 0.3726499080657959,
+  "ttft_ms": 372.6499080657959,
+  "prefill_tok_s_system": 15502.486046447648,
+  "prefill_tok_s_per_gpu": 968.905377902978,
+  "prefill_config": {
+    "suite_start_ts": "2026-08-01T01:11:30Z",
+    "suite_end_ts": "2026-08-01T01:11:31Z",
+    "suite_duration_s": 0.7382
+  }
+}

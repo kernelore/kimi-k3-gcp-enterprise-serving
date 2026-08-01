@@ -1,0 +1,66 @@
+{
+  "engine": "trtllm",
+  "metadata": {
+    "engine": "sglang",
+    "version": "0.5.16",
+    "engine_version": "0.5.16",
+    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/kimi-prod/sglang-blackwell:latest",
+    "run_timestamp": "2026-08-01T00:07:55Z",
+    "tp": 16,
+    "pp": 1,
+    "ep": 16,
+    "nodes": 2,
+    "gpus": 16
+  },
+  "successful_requests": 2981,
+  "total_requests": 2981,
+  "total_completed": 2981,
+  "token_count_source": "openai_usage",
+  "ttft_mean_ms": 576.13,
+  "tpot_mean_ms": 40.68,
+  "throughput_tokens_sec": 420.54,
+  "soak_config": {
+    "dry_run": false,
+    "endpoint": "http://kimi-k3-gateway-svc:4000/v1/completions",
+    "model": "moonshotai/Kimi-K3",
+    "api_key": "REDACTED",
+    "concurrency": 18,
+    "duration": 1800,
+    "max_tokens": 256,
+    "temperature": 0.3,
+    "output": "/tmp/results/incluster_soak_results.json",
+    "engine": "trtllm",
+    "metadata": "{\"engine\": \"sglang\", \"version\": \"0.5.16\", \"engine_version\": \"0.5.16\", \"image\": \"europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/kimi-prod/sglang-blackwell:latest\", \"run_timestamp\": \"2026-08-01T00:07:55Z\", \"tp\": 16, \"pp\": 1, \"ep\": 16, \"nodes\": 2, \"gpus\": 16}",
+    "suite_start_ts": "2026-08-01T00:07:57Z",
+    "suite_end_ts": "2026-08-01T00:38:05Z",
+    "suite_duration_s": 1808.1355
+  },
+  "execution_summary": {
+    "total_duration_seconds": 1808.129,
+    "total_requests_completed": 2981,
+    "total_requests_failed": 0,
+    "success_rate_percent": 100.0,
+    "token_count_source": "openai_usage"
+  },
+  "metrics": {
+    "total_output_tokens": 760393,
+    "sustained_cluster_tps": 420.54,
+    "per_gpu_throughput_tps": 26.28,
+    "ttft_ms": {
+      "mean": 576.13,
+      "p50": 614.75,
+      "p90": 689.08,
+      "p99": 920.14,
+      "min": 343.09,
+      "max": 1784.19
+    },
+    "tpot_ms": {
+      "mean": 40.68,
+      "p50": 40.97,
+      "p90": 43.62,
+      "p99": 45.34,
+      "min": 34.53,
+      "max": 64.58
+    }
+  }
+}
