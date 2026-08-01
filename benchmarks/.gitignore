@@ -7,3 +7,9 @@ results/
 !results/
 !results/*/
 !results/**/*.json
+
+# ...except the in-cluster Job's retrieval artifact. scripts/05_run_benchmarks.sh copies it
+# verbatim to the canonical <suite>_results.json that the comparison generator and the
+# integrity audit read by exact name, so committing both publishes identical bytes twice
+# under two names. Must stay below the un-ignore rules above to take effect.
+results/*/incluster_*.json
