@@ -221,6 +221,19 @@ def validate_parity(sglang: dict | None, trtllm: dict | None):
             if gp != tp:
                 raise ValueError(f"Parameter Parity Violation in prefill: SGLang prompt tokens ({gp}) != TRT-LLM ({tp})")
 
+def fmt_token_len(n: int) -> str:
+    """Render a sequence length for a saturation grid cell label.
+
+    Integer division by 1024 floors any sub-1024 length to "0k", which published
+    a zero output length for the 128- and 512-token rows of the DAY-1 grid --
+    cells that in fact generate 128 and 512 tokens. Lengths that are not a whole
+    number of kibitokens are printed verbatim instead.
+    """
+    if n and n >= 1024 and n % 1024 == 0:
+        return f"{n // 1024}k"
+    return str(n)
+
+
 def calc_delta(val_sglang: float, val_trtllm: float, higher_is_better: bool = True) -> str:
     if val_sglang == 0:
         return "+0.00%"
@@ -307,7 +320,7 @@ def generate_markdown(sglang: dict | None, trtllm: dict | None) -> str:
         all_keys = sorted(set(g_sweep.keys()) | set(t_sweep.keys()), key=lambda k: (k[0] or 0, k[1] or 0, k[2] or 0))
         for key in all_keys:
             isl, osl, c = key
-            cell_label = f"${isl//1024}k/{osl//1024}k$, $c={c}$" if (isl and osl) else f"$c={c}$"
+            cell_label = f"${fmt_token_len(isl)}/{fmt_token_len(osl)}$, $c={c}$" if (isl and osl) else f"$c={c}$"
             gi = g_sweep.get(key, {})
             ti = t_sweep.get(key, {})
             g_status = gi.get("status", "error")
@@ -427,7 +440,7 @@ def generate_markdown(sglang: dict | None, trtllm: dict | None) -> str:
         all_keys = sorted(sweep.keys(), key=lambda k: (k[0] or 0, k[1] or 0, k[2] or 0))
         for key in all_keys:
             isl, osl, c = key
-            cell_label = f"${isl//1024}k/{osl//1024}k$, $c={c}$" if (isl and osl) else f"$c={c}$"
+            cell_label = f"${fmt_token_len(isl)}/{fmt_token_len(osl)}$, $c={c}$" if (isl and osl) else f"$c={c}$"
             item = sweep.get(key, {})
             status = item.get("status", "error")
             if status == "skipped":
