@@ -404,11 +404,21 @@ queueing and TTFT. It is not the harness's `tpot_ms` field; see the caveat below
   196 chunks (2.61 tokens per chunk), and the inter-chunk P50 of 29.02 ms was
   **2.45x** the true 11.84 ms/token. Tables 4 and 5 avoid the field entirely —
   both derive from `usage.completion_tokens` and wall-clock duration.
-* **Draft acceptance** during the sweep ran at 7.0-7.6 of 8 drafted tokens,
-  which is what buys the throughput; the gain narrows at higher concurrency
-  (3.82x at $c=8$ down to 2.11x at $c=32$ on $1k/1k$) because a saturated batch
-  already amortises weight loading across requests, leaving speculation less
-  headroom to recover.
+* **These speedups are an upper bound, because the benchmark prompt is unusually
+  easy to predict.** The harness builds every prompt by repeating one fixed
+  synthetic passage `round(ISL / BASE_TOKENS_APPROX)` times, and a draft model is
+  exceptionally good at continuing text it has already seen verbatim. Acceptance
+  during the sweep averaged **6.29 - 6.41 of 8** drafted tokens at the measured
+  batch sizes (`#running-req` 8, 16 and 32; peaks reached 7.0 - 7.8). Issued a
+  single free-form prompt instead, the same engine accepted **2.33 - 2.85**, and
+  at an equivalent `#running-req: 1` during the sweep it accepted 4.41. Real
+  traffic that is less repetitive than a duplicated passage should be expected to
+  land well below the acceptance rates above, and therefore well below the
+  2.00x - 3.82x in Table 4. Treat these figures as the ceiling for repetitive or
+  highly structured workloads, not as a general-purpose multiplier.
+* **The gain narrows as the batch saturates** (3.82x at $c=8$ down to 2.11x at
+  $c=32$ on $1k/1k$) because a full batch already amortises weight loading across
+  requests, leaving speculation less headroom to recover.
 * **TTFT is not cross-profile comparable in absolute terms.** These cells issue
   their requests as a burst, so TTFT includes admission queueing. The default
   profile's 15-29 s figures are dominated by that queue, not by prefill.
@@ -445,11 +455,20 @@ The closest public comparison for this deployment is a published NVIDIA Develope
 
 | Metric at $c=16$ | vLLM (published) | SGLang TP16 (measured) | Delta | SGLang TP16 + DSPARK (measured) | Delta |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| $1k/1k$ aggregate output tok/s | 329.64 | **492.02** | **1.49x** | **1661.36** | **5.04x** |
-| $8k/1k$ aggregate output tok/s | 312.63 | **425.15** | **1.36x** | **1014.10** | **3.24x** |
+| $1k/1k$ aggregate output tok/s | 329.64 | **492.02** | **1.49x** | 1661.36 § | 5.04x § |
+| $8k/1k$ aggregate output tok/s | 312.63 | **425.15** | **1.36x** | 1014.10 § | 3.24x § |
 | Raw decode step (ITL median, ms) | 63.10 | **31.81** | **1.98x faster** | not comparable † | — |
-| Effective TPOT (ms) | 31.93 – 44.87 | **31.81** | parity to 1.41x | **9.63** | **3.32x – 4.66x faster** |
+| Effective TPOT (ms) | 31.93 – 44.87 | **31.81** | parity to 1.41x | 9.63 § | 3.32x – 4.66x faster § |
 | Prefill ingestion (prompt tok/s) | 12,185 ‡ | **15,502.49** | **1.27x** | not re-measured | — |
+
+§ The DSPARK deltas are **not** claimed as a like-for-like win over the published
+vLLM run, and are deliberately left unbolded. Speculative decoding is highly
+sensitive to how predictable the generated text is, and this harness's prompts
+are a repeated synthetic passage — an unusually favourable case (see the
+acceptance-rate caveat above). The published run's prompt distribution is
+unknown, and it does not state whether speculative decoding was enabled. The
+`TP16` column is the sound comparator; the DSPARK column shows what this
+hardware does with speculation on a repetitive workload.
 
 † Under speculative decoding one streamed chunk carries every token accepted in a
 verify step, so a chunk-derived inter-token median measures per-step latency and
