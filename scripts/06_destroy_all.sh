@@ -138,10 +138,15 @@ if command -v gcloud >/dev/null 2>&1; then
   echo "OUT-OF-BAND RETAINED BUCKET INVENTORY (Terraform remote state backend — not a leak):"
   BUCKETS=$(gcloud storage ls --project="${PROJECT_ID}" 2>/dev/null | grep -E "kimi-k3|kimi3|kimi-prod" || true)
   for b in ${BUCKETS}; do
-    SIZE_BYTES=$(gcloud storage du -s "${b}" 2>/dev/null | awk '{print $1}' || echo "0")
-    SIZE_GIB=$(awk "BEGIN {printf \"%.2f\", ${SIZE_BYTES:-0}/1073741824}")
-    COST_EST=$(awk "BEGIN {printf \"$%.2f\", (${SIZE_BYTES:-0}/1073741824)*0.02}")
-    echo "  * ${b} (~${SIZE_GIB} GiB | est. ${COST_EST}/mo) [OUT-OF-BAND RETAINED]"
+    # `gcloud storage du -s` right-aligns the byte count in a fixed-width column, so a
+    # bucket of >= 1 TiB (13-digit count) leaves no space before the URL and `$1` would
+    # swallow it ("1560998984390gs://bucket"). Take the leading digits only, and pass the
+    # value to awk via -v so bucket names can never end up inside the awk program text.
+    SIZE_BYTES=$(gcloud storage du -s "${b}" 2>/dev/null | head -1 | grep -oE '^[0-9]+' || true)
+    SIZE_BYTES="${SIZE_BYTES:-0}"
+    SIZE_GIB=$(awk -v bytes="${SIZE_BYTES}" 'BEGIN {printf "%.2f", bytes/1073741824}')
+    COST_EST=$(awk -v bytes="${SIZE_BYTES}" 'BEGIN {printf "%.2f", (bytes/1073741824)*0.02}')
+    echo "  * ${b} (~${SIZE_GIB} GiB | est. \$${COST_EST}/mo) [OUT-OF-BAND RETAINED]"
   done
   echo "------------------------------------------------------------------------------"
 fi
