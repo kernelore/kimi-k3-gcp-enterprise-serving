@@ -39,6 +39,13 @@ spec:
               key: GATEWAY_MASTER_KEY
         - name: SERVING_MODEL_NAME
           value: "${SERVING_MODEL_NAME}"
+        # Python block-buffers stdout when it is a pipe rather than a TTY, which it always
+        # is here. Only the soak harness flushes by hand, so every other suite emitted
+        # nothing to `kubectl logs` until it exited -- a 40-minute saturation sweep that
+        # looks indistinguishable from a hung one for its entire run. Unbuffer at the
+        # container level so progress from any harness streams as it is produced.
+        - name: PYTHONUNBUFFERED
+          value: "1"
         # The saturation sweep drives up to 128 concurrent SSE streams from a Python
         # ThreadPoolExecutor in this pod, and every first-token timestamp -- the TTFT the
         # suite reports -- is taken client-side. Starving the load generator makes the

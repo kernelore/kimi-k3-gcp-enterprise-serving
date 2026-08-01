@@ -242,13 +242,18 @@ if [ "${IN_CLUSTER}" = "true" ]; then
     exit 1
   fi
 
+  # BENCH_LABEL only reaches the banner the Job echoes before it starts. The template is
+  # written for soak and every other mode is patched into it below, so without this the
+  # log of a saturation or prefill run opened with "Soak Endurance Test" and read as the
+  # wrong suite to anyone tailing it.
   BENCH_SCRIPT=""
+  BENCH_LABEL=""
   case "${MODE}" in
-    soak)       BENCH_SCRIPT="soak_benchmark_kimi_k3.py" ;;
-    standard)   BENCH_SCRIPT="benchmark_kimi_k3.py" ;;
-    massive)    BENCH_SCRIPT="massive_benchmark_kimi_k3.py" ;;
-    prefill)    BENCH_SCRIPT="run_prefill_benchmark_kimi_k3.py" ;;
-    saturation) BENCH_SCRIPT="run_saturation_sweep_kimi_k3.py" ;;
+    soak)       BENCH_SCRIPT="soak_benchmark_kimi_k3.py";         BENCH_LABEL="Soak Endurance Test" ;;
+    standard)   BENCH_SCRIPT="benchmark_kimi_k3.py";              BENCH_LABEL="Standard Suite" ;;
+    massive)    BENCH_SCRIPT="massive_benchmark_kimi_k3.py";      BENCH_LABEL="Massive Stress Suite" ;;
+    prefill)    BENCH_SCRIPT="run_prefill_benchmark_kimi_k3.py";  BENCH_LABEL="Prefill Ingestion Suite" ;;
+    saturation) BENCH_SCRIPT="run_saturation_sweep_kimi_k3.py";   BENCH_LABEL="Saturation Sweep" ;;
     *)
       echo "ERROR: Unsupported mode '${MODE}' for --in-cluster benchmark."
       exit 1
@@ -309,6 +314,7 @@ if [ "${IN_CLUSTER}" = "true" ]; then
       echo "    Configuring in-cluster job for mode '${MODE}' (${BENCH_SCRIPT})..."
       sed -i "s/soak_benchmark_kimi_k3\.py/${BENCH_SCRIPT}/g" "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
       sed -i "s/incluster_soak_results\.json/incluster_${MODE}_results.json/g" "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
+      sed -i "s/Soak Endurance Test/${BENCH_LABEL}/g" "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
     fi
     echo "    Applying in-cluster benchmark Job (${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml)..."
     kubectl delete job kimi-k3-incluster-benchmark -n llm-serving --ignore-not-found=true
