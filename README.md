@@ -14,13 +14,17 @@ a4-highgpu-8g` nodes — 16x NVIDIA B200 HGX total per serving pod replica over
 RoCEv2 fabric) \
 **Target Workload:** High-Throughput Enterprise AI Engineering & Autonomous Agentic Workflows (`32k` to `128k` active context window out of the `1,048,576` maximum
 declared by the checkpoint's `max_position_embeddings`; this stack deploys `--context-length 131072` via `SGLANG_CONTEXT_LENGTH`) \
-**Deployment Scope (Zonal Baseline → Regional HA Ready):** By default, the entire stack is provisioned with Zonal scope (`europe-north1-b` for the GKE cluster, Cloud SQL instance, Memorystore Redis cache, and Hyperdisk ML volume) to eliminate cross-zone network egress charges and accelerate deployment. The deployment can be easily extended to a Regional HA architecture by configuring `location = var.region` on the GKE cluster, setting `availability_type = "REGIONAL"` on Cloud SQL, upgrading Memorystore Redis to `tier = "STANDARD_HA"`, and distributing GPU worker replicas (`DP=N`) across multiple availability zones behind the internal load balancer.
+**Deployment Scope:** Zonal by default (`europe-north1-b` for GKE, Cloud SQL, Redis and
+the Hyperdisk ML volume) to avoid cross-zone egress. Regional HA is a
+configuration change, not a redesign: `location = var.region` on the cluster,
+`availability_type = "REGIONAL"` on Cloud SQL, `tier = "STANDARD_HA"` on Redis, and
+`DP=N` replicas spread across zones behind the internal load balancer.
 
 ---
 
 ## ⚡ Executive Summary & Full Tier 0-1-2 Architecture Overview
 
-Deploying **Kimi K3** (`moonshotai/Kimi-K3`) at production scale represents a frontier engineering challenge. Featuring **2.8 Trillion total parameters** (**104 Billion activated per token**), **Stable LatentMoE** (`896` total routed experts, `16` active + `2` shared experts per token, 93 total layers = 69 KDA + 24 Gated MLA attention, with `first_k_dense_replace = 1` giving the first layer a dense MLP instead of a routed MoE block — it is not a 94th layer), **Kimi Delta Attention (`KDA`)**, and **Attention Residuals (`AttnRes`)**, the model is trained end-to-end with **Quantization-Aware Training (QAT)** utilizing **`MXFP4` (Microscaling 4-bit weights)** and **`MXFP8` activations** via `compressed-tensors` (group size 32; attention, shared experts, dense MLP, lm_head, and vision encoder kept in bf16). Under `KimiK3ForConditionalGeneration`, the architecture is multimodal (KimiLinear text backbone + MoonViT-V2 401M vision encoder); this serving stack natively validates text serving.
+**Kimi K3** (`moonshotai/Kimi-K3`) is a **2.8 T** parameter model with **104 B activated per token**, built on **Stable LatentMoE** (`896` routed experts, `16` active + `2` shared per token; 93 layers = 69 **KDA** + 24 Gated MLA, with `first_k_dense_replace = 1` giving layer 1 a dense MLP rather than a routed MoE block — not a 94th layer) plus **Attention Residuals (`AttnRes`)**. It is trained end to end with **Quantization-Aware Training** in **`MXFP4`** weights and **`MXFP8`** activations via `compressed-tensors` (group size 32; attention, shared experts, dense MLP, lm_head and vision encoder stay bf16). Under `KimiK3ForConditionalGeneration` it is multimodal (KimiLinear text backbone + MoonViT-V2 401M vision encoder); this stack validates text serving.
 
 Because the full model weight footprint in `MXFP4` occupies **1,453.7 GiB (96 safetensors shards) (= 1,560.9 GB; plan ~1.56 TB)** on
 disk and requires **`~2.8 TB` aggregate serving VRAM** (V<sub>weights</sub> +
@@ -53,8 +57,8 @@ RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 |                                                                                                                 |
 |  +--------------------------------------------------+         +----------------------------------------------+  |
 |  |             Leader Node (Node 1 - 8x B200)       |<=======>|        Worker Node (Node 2 - 8x B200)        |  |
-|  |  - Intra-Node: NVLink (1.8 TB/s) TP=8            | RoCEv2  |  - Intra-Node: NVLink (1.8 TB/s) TP=8        |  |
-|  |  - Inter-Node: GPUDirect RDMA PP=1..2 / EP=8..16 | 3.2Tbps |  - Inter-Node: GPUDirect RDMA PP=1..2 / EP=8..16 |  |
+|  |  - Default: TP=16 / PP=1 / EP=16 spans BOTH nodes|  RoCEv2 |  - Default: TP=16 / PP=1 / EP=16 (one MPI world)|  |
+|  |  - Intra-Node NVLink 1.8 TB/s; Inter-Node GDRDMA | 3.2Tbps |  - Optional profile: TP=8 / PP=2 / EP=8       |  |
 |  |  - SGLang / TRT-LLM Execution Engine             | MTU 8896|  - SGLang / TRT-LLM MoE MXFP4 Kernels        |  |
 |  |  - KV/State Pool (derived): ~443 GB              |         |  - KV/State Pool (derived): ~443 GB          |  |
 |  +--------------------------+-----------------------+         +----------------------+-----------------------+  |
@@ -78,10 +82,10 @@ RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 | **Google Kubernetes Engine (GKE)** | `module.cluster` | Private nodes with public, IAM-gated control-plane endpoint (or fully private with `enable_private_endpoint = true`) orchestrating dual-engine (SGLang / TRT-LLM) pods, Workload Identity Federation, and node pool autoscaling. |
 | **Compute Engine A4 VMs** | `module.node_pool_spot` | `a4-highgpu-8g` Blackwell instances equipped with 8x NVIDIA B200 GPUs (1,440 GB HBM3e, 180 GB/GPU) and 32x local NVMe SSDs (32 × 375 GiB = 12,000 GiB ≈ 11.7 TiB) per node, operating in 2-node pairs over RoCEv2. |
 | **Hyperdisk ML (`ROX`)** | `module.storage` | 2,000 GB (2 TB) high-throughput block volume flipped to `ReadOnlyMany` mode for shared, zero-cold-start model weight mounting. |
-| **Cloud Memorystore for Redis** | `module.cache` | In-memory tier for exact-match prompt caching (measured in-VPC from the gateway pod against Redis 6.2.14: `PING` 0.31 ms p50 / 0.67 ms p99, 512 B `GET` 0.40 ms p50 / 0.82 ms p99, 512 B `SET` 0.37 ms p50 / 0.74 ms p99 — sub-millisecond, not the single-digit-ms this previously estimated) and gateway token-bucket rate limiting (RPM/TPM). Note: exact-match prompt caching applies at the gateway level; inside the serving engine, RadixAttention prefix caching reuse benefits only the 24 MLA attention layers, while KDA linear layers are not prefix-shareable. |
+| **Cloud Memorystore for Redis** | `module.cache` | Gateway-level exact-match prompt caching and token-bucket rate limiting (RPM/TPM). Measured in-VPC against Redis 6.2.14: `PING` 0.31/0.67 ms, 512 B `GET` 0.40/0.82 ms, 512 B `SET` 0.37/0.74 ms (p50/p99). |
 | **Cloud SQL for PostgreSQL** | `module.database` | Private database accessed via Cloud SQL Auth Proxy storing virtual API keys, user budgets, and gateway routing configurations. |
 | **BigQuery** | `module.audit` | Serverless audit dataset (`kimi_k3_enterprise_audit`) for asynchronous logging of conversation trajectories and token telemetry. |
-| **Cloud Storage (GCS)** | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Remote Terraform state versioning and high-speed weight hydration backup bucket (measured hydration: 1,453.7 GiB in 11 min 18 s, 2.1 GiB/s average). |
+| **Cloud Storage (GCS)** | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Remote Terraform state versioning and the weight hydration backup bucket. |
 | **Artifact Registry** | `module.storage` | Secure private container registry hosting the custom SGLang and experimental TensorRT-LLM Blackwell serving images. The image actually built and deployed is `${REGION}-docker.pkg.dev/${PROJECT_ID}/kimi-prod/sglang-blackwell:latest` (`03_deploy_workloads.sh:237`) — a **mutable tag**, not a digest. The digest pin sits one level up, on the base image in `docker/Dockerfile.sglang`: `FROM lmsysorg/sglang:kimi-k3@sha256:81a9c00654b3e4c7c681a4728a64fcb4853aa698dc9fea1959bbf4eb26bfb2e5`. |
 | **Cloud Build** | `scripts/03_deploy_workloads.sh` | Serverless build pipeline for automated, self-healing image compilation from `docker/Dockerfile`. |
 | **Virtual Private Cloud (VPC)** | `module.network` | Private network topology with Private Services Access (PSA), IAP SSH restrictions, and secondary RoCEv2 fabric (MTU 8896). |
@@ -112,12 +116,12 @@ Total serving VRAM across a distributed replica pool is derived step-by-step fro
 - **Aggregate KV/State Pool**: 55.4 GB × 16 GPUs ≈ **887 GB** (≈443 GB/node)
 
 > [!IMPORTANT]
-> Every figure in this section is a **paper derivation, not a measurement.** It also treats the KV pool as uniform, which Kimi K3 is not: only the 24 MLA layers consume per-token KV, while the 69 KDA layers hold a fixed-size recurrent state per *sequence*, sized by the engine's own default recurrent-state ratio (this deployment pins no override). Real capacity is bounded by both pools at once and must be read from the engine's own reported budget at deployment, not from this arithmetic.
+> Every figure in this section is a **paper derivation, not a measurement**, and it treats the KV pool as uniform, which Kimi K3 is not: only the 24 MLA layers consume per-token KV, while the 69 KDA layers hold a fixed-size recurrent state per *sequence*. Real capacity is bounded by both pools at once and must be read from the engine's reported budget, not from this arithmetic.
 
 > [!NOTE]
 > **What the engine actually reported.** Taking the paragraph above at its word, the running deployment was asked. `/get_server_info` returned **`max_total_num_tokens = 927,808`** — the admission budget the scheduler enforces, spanning both pools at once, which is the number to plan against rather than the 887 GB derived above.
 >
-> That budget is reachable. During the saturation sweep the engine logged `KV cache pool is full. Retract requests.` in exactly two cells — **8k ISL @ c=128** (8 events) and **32k ISL @ c=32** (2 events), the two heaviest cells that ran to completion. It recovered by retracting and requeueing rather than erroring, so those runs are valid, but their throughput includes the cost of the retraction. The `32k @ c=128` and all `128k` cells were skipped by the harness before reaching this point and are marked `SKIPPED` in Table 2. Read the two flagged cells as measurements of a pool at its limit, not of one with headroom.
+> That budget is reachable. The engine logged `KV cache pool is full. Retract requests.` in exactly two cells — **8k @ c=128** (8 events) and **32k @ c=32** (2 events), the two heaviest that ran to completion. It retracted and requeued rather than erroring, so those runs are valid, but their throughput includes the retraction cost. Read them as measurements of a pool at its limit, not one with headroom.
 
 ### 3. Concurrent 128k Context Session Capacity
 
@@ -159,7 +163,7 @@ While **1x 2-Node Replica (DP=1, 16x B200 GPUs) serves as the turnkey MVP baseli
 
 ### 1. MoE All-to-All Expert Routing over RoCEv2
 
-Kimi K3's Stable LatentMoE architecture routes tokens across **896 total experts** with **16 active experts per token**. In a 2-node TensorRT-LLM MPI deployment (`--tp_size 8 --pp_size 2 --ep_size 8`), expert parallelism (EP=8) requires continuous all-to-all tensor dispatch across physical node boundaries. This architecture enables secondary multi-NIC RoCEv2 interfaces (MTU 8896) over Google Cloud Titanium adapters, providing **`3.2 Tbps` dedicated RDMA bandwidth per node** to prevent networking bottlenecks during expert routing.
+Routing 16 of 896 experts per token means continuous all-to-all dispatch across the node boundary whenever expert parallelism spans both nodes. The stack therefore provisions secondary multi-NIC RoCEv2 interfaces (MTU 8896) over Google Cloud Titanium adapters, giving **`3.2 Tbps` of dedicated RDMA bandwidth per node** so expert routing is not the bottleneck.
 
 ### 2. Gateway Chain-of-Thought (CoT) Preservation
 
@@ -180,11 +184,7 @@ Large-scale agentic models can exhibit "action overfitting"—prematurely invoki
 
 ### 4. Selectable Inference Engine (TensorRT-LLM vs SGLang) & RoCEv2 RDMA Co-Design
 
-To support diverse production serving requirements and experimental research on
-NVIDIA Blackwell B200 HGX, this architecture introduces a **Selectable
-Dual-Engine Serving Framework**. Operators can seamlessly switch between
-**SGLang** (the Primary Default) and **NVIDIA TensorRT-LLM** (the Experimental
-Option) via a single environment variable in `scripts/config.env`:
+The engine is selected by one variable in `scripts/config.env`:
 
 ```bash
 # Set to "sglang" (default) or "trtllm" (experimental option)
@@ -193,11 +193,9 @@ export INFERENCE_ENGINE="sglang"
 
 #### Dual-Engine Architecture & Multi-Node Distributed Execution
 
-Because Kimi K3's 2.8 Trillion total parameter footprint (1,453.7 GiB MXFP4
-weights) exceeds single-node HBM3e capacity, both engines operate in a **2-Node
-Distributed Replica (`16x NVIDIA B200 HGX GPUs`)** over Google Cloud's RoCEv2
-RDMA fabric. However, their distributed coordination mechanisms differ
-significantly:
+Because the 1,453.7 GiB MXFP4 footprint exceeds single-node HBM3e capacity, both
+engines run as a **2-node replica (16x B200 HGX)** over RoCEv2 RDMA. Their
+coordination mechanisms differ:
 
 1.  **SGLang (Primary Default | `INFERENCE_ENGINE="sglang"`)**:
 
@@ -206,24 +204,24 @@ significantly:
         leverages native PyTorch distributed / SGLang native `--dist-init-addr
         <leader_ip>:port` with `--nnodes 2 --node-rank <rank> --tp 16 --pp 1 --ep
         16`. Pinned to `lmsysorg/sglang:kimi-k3`.
-    -   **Native Parsers**: Configured with `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3`. Using the older `kimi_k2` parser value silently leaks chain-of-thought into `content`; this repo pins `kimi_k3`.
+    -   **Native Parsers**: `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3` (see the CoT section for why `kimi_k2` is unsafe here).
     -   **Inter-Node Interconnect**: SGLang relies on NCCL
         GPUDirect RDMA over RoCEv2 (tuned via GKE gIB `set_nccl_env.sh`) for high-speed inter-host tensor passing
         across the 16x B200 GPUs.
-        - *Verified at runtime, not assumed*: with `NCCL_DEBUG=INFO`, the live 2-node deployment reported NCCL `2.28.3` assigning the **gIB** net plugin, auto-detecting the platform as **`a4`** and loading `/usr/local/gib/configs/tuner_config_a4.txtpb` — the tuner profile matching this hardware. Ring construction showed cross-node hops as `NET/gIB/<n>/GDRDMA` (GPUDirect RDMA on the wire) and intra-node hops as `P2P/IPC` (NVLink), with `0 nvls channels`, consistent with `enable_nccl_nvls=False`. Each pod binds all eight `networking.gke.io.networks/rdma-0..7` virtual functions the `a4-highgpu-8g` node exposes, one per GPU.
+        - *Verified at runtime, not assumed*: under `NCCL_DEBUG=INFO` the live deployment reported NCCL `2.28.3` assigning the **gIB** plugin, auto-detecting platform **`a4`** and loading `/usr/local/gib/configs/tuner_config_a4.txtpb`. Rings showed cross-node hops as `NET/gIB/<n>/GDRDMA` and intra-node hops as `P2P/IPC` (NVLink), with `0 nvls channels`, consistent with `enable_nccl_nvls=False`. Each pod binds all eight `networking.gke.io.networks/rdma-0..7` virtual functions, one per GPU.
     -   **Launch Flags (A4 / B200, 2 nodes)**: The engine is launched with `--trust-remote-code --tp-size 16 --mem-fraction-static 0.85 --disable-flashinfer-autotune --watchdog-timeout 3600 --reasoning-parser kimi_k3 --tool-call-parser kimi_k3 --model-loader-extra-config '{"enable_multithread_load": true}'`, plus what multi-node GKE requires (`--dist-init-addr`, `--dist-timeout 3600`, `--nnodes`, `--node-rank`), observability (`--enable-metrics`), and this repo's own `--context-length`, `--pp-size`, `--ep-size` and `--schedule-policy` knobs. `--dcp-size 16` is deliberately omitted: it belongs to throughput-oriented profiles, and this deployment starts from a low-latency baseline.
-    -   **No Hand-Picked Kernels**: `SGLANG_PREFILL_ATTENTION_BACKEND`, `SGLANG_DECODE_ATTENTION_BACKEND`, `SGLANG_LINEAR_ATTN_PREFILL_BACKEND`, `SGLANG_MOE_RUNNER_BACKEND` and `SGLANG_KV_CACHE_DTYPE` all ship **empty**. SGLang classifies `KimiK3ForConditionalGeneration` as `AttentionArch.MLA` and dispatches the kernels itself; pinning one by hand only risks overriding a better choice the engine would have made. On the B200 deployment measured here it resolved them as follows, read from the running engine's own startup banner and resolved `server_args` rather than predicted: `attention_backend`, `prefill_attention_backend` and `decode_attention_backend` all became **`trtllm_mla`** (announced as *"Use trtllm_mla as the default prefill and decode attention backend for Kimi-K3 on SM100/SM103"*), `linear_attn_backend` became `triton`, `moe_runner_backend` became `flashinfer_mxfp4`, and `kv_cache_dtype` stayed `auto`. FlashInfer does appear, but as `sampling_backend` — not as an attention kernel. Two kernels are explicitly forbidden: `flashmla` is Hopper-only (H100/H200), and `trtllm_mha` is the SM100 default for MHA architectures, which K3 is not. `tests/check_render_exceptions.sh` fails the render if either, or a combined `--attention-backend`, reappears. Note also that RadixAttention prefix-cache reuse benefits only the 24 MLA layers; the 69 KDA linear recurrent-state layers are not prefix-shareable.
+    -   **No Hand-Picked Kernels**: the four `*_BACKEND` variables and `SGLANG_KV_CACHE_DTYPE` all ship **empty**. SGLang classifies `KimiK3ForConditionalGeneration` as `AttentionArch.MLA` and dispatches kernels itself; hand-pinning only risks overriding a better choice. Read from the running engine's startup banner and resolved `server_args` rather than predicted, it selected `trtllm_mla` for prefill and decode attention, `triton` for `linear_attn_backend`, `flashinfer_mxfp4` for `moe_runner_backend`, and left `kv_cache_dtype` at `auto`. FlashInfer appears only as `sampling_backend`, not as an attention kernel. Two kernels are forbidden — `flashmla` is Hopper-only and `trtllm_mha` is the SM100 default for MHA architectures, which K3 is not — and `tests/check_render_exceptions.sh` fails the render if either, or a combined `--attention-backend`, reappears. RadixAttention prefix reuse benefits only the 24 MLA layers; the 69 KDA recurrent-state layers are not prefix-shareable.
     -   **Non-Transferable Tuning Is Rejected**: `--mamba-full-memory-ratio` is not part of this deployment's flag set. The value previously carried here was lifted from a multi-host recipe written for a different machine class and a different interconnect fabric, where it does not transfer to B200 HGX over RoCEv2. `tests/check_render_exceptions.sh` now treats that flag as forbidden.
     -   **Parallelism Profiles (`SGLANG_PARALLEL_PROFILE`)**: Supports `tp16` (default `--tp-size 16`, confining all parallelism to TP/EP=16 across 16 GPUs) and `tp8pp2` (fallback `--tp-size 8 --pp-size 2` when inter-node RoCEv2 interconnect proves throughput-bound, confining TP all-reduce collectives to NVLink within each node and transferring pipeline activations over RoCE; the profile also drops EP to 8 for the same reason).
         - *When to flip*: Flip to `tp8pp2` if inter-node all-reduce over RoCEv2 is measured as the primary latency bottleneck at first deployment.
-        - *Uneven Layer Split Caveat*: Kimi-K3 has `num_hidden_layers = 93` (an odd number), so PP=2 automatic split is uneven by construction. Furthermore, full-attention (MLA) layers occur at every 4th layer plus the last (`text_config.linear_attn_config.full_attn_layers`), causing the two pipeline stages to receive unequal MLA counts and unequal KV-cache memory. Environment variable `SGLANG_PP_LAYER_PARTITION` exists to override the automatic split, and the correct partition remains unmeasured. Determining the optimum requires sweeping partitions against a fixed workload — left as future work rather than guessed at here.
-        - *Custom All-Reduce Must Be Disabled Under PP=2 (`SGLANG_DISABLE_CUSTOM_ALL_REDUCE`)*: On `tp16` the TP group spans both nodes, so SGLang disables its custom all-reduce automatically and every collective goes through NCCL. On `tp8pp2` the TP group fits inside one node, which re-enables the custom all-reduce path — and that path fails on this deployment during CUDA graph capture with `Capture cuda graph failed: invalid argument` raised from `custom_all_reduce.cuh:508`, inside `register_graph_buffers` → `get_graph_buffer_ipc_meta`. The failure is in CUDA IPC handle exchange for the graph buffers, not memory pressure: it reproduced identically at `--mem-fraction-static` 0.85 and 0.80, and `/dev/shm` is a 512 GiB tmpfs, so neither is the constraint. Setting `SGLANG_DISABLE_CUSTOM_ALL_REDUCE=true` appends `--disable-custom-all-reduce`, falling back to NCCL for the intra-node all-reduce while **keeping CUDA graphs enabled** — deliberately not `--disable-cuda-graph`, which would trade a working collective for a much larger decode regression. With that single flag the `tp8pp2` profile captures all 18 decode graphs in 212 s and serves.
+        - *Uneven Layer Split Caveat*: `num_hidden_layers = 93` is odd, so the PP=2 automatic split is uneven by construction, and MLA layers fall on every 4th plus the last, giving the two stages unequal MLA counts and unequal KV memory. `SGLANG_PP_LAYER_PARTITION` can override the split; the optimum is unmeasured and left as future work rather than guessed at.
+        - *Custom All-Reduce Must Be Disabled Under PP=2 (`SGLANG_DISABLE_CUSTOM_ALL_REDUCE`)*: on `tp16` the TP group spans both nodes, so SGLang disables custom all-reduce automatically. On `tp8pp2` the group fits inside one node, re-enabling a path that fails here during CUDA graph capture — `Capture cuda graph failed: invalid argument` from `custom_all_reduce.cuh:508`, inside `register_graph_buffers` → `get_graph_buffer_ipc_meta`. It is IPC handle exchange, not memory pressure: identical at `--mem-fraction-static` 0.85 and 0.80, with `/dev/shm` a 512 GiB tmpfs. Setting the variable appends `--disable-custom-all-reduce`, falling back to NCCL while **keeping CUDA graphs enabled** — deliberately not `--disable-cuda-graph`, which would trade a working collective for a much larger decode regression. With that one flag the profile captures all 18 decode graphs in 212 s and serves.
 
-    -   **DSPARK Speculative Decoding (`SGLANG_SPECULATIVE_ALGORITHM`, optional)**: Kimi-K3 ships with a purpose-built speculative decoding algorithm, **DSPARK**. It pairs the full model with a small draft checkpoint ([`RadixArk/Kimi-K3-DSpark`](https://huggingface.co/RadixArk/Kimi-K3-DSpark), 4.19 GiB in a single `model.safetensors` shard) that proposes a block of tokens per step for the target model to verify in one batched forward pass, converting several sequential decode steps into one. It is **opt-in and off by default**: leaving `SGLANG_SPECULATIVE_ALGORITHM` empty renders the launch command byte-identical to the non-speculative one.
+    -   **DSPARK Speculative Decoding (`SGLANG_SPECULATIVE_ALGORITHM`, optional)**: **DSPARK** is Kimi-K3's purpose-built speculative algorithm. A small draft checkpoint ([`RadixArk/Kimi-K3-DSpark`](https://huggingface.co/RadixArk/Kimi-K3-DSpark), 4.19 GiB in one `model.safetensors` shard) proposes a block of tokens per step for the target model to verify in a single batched forward pass, collapsing several sequential decode steps into one. It is **off by default**: leaving the variable empty renders the launch command byte-identical to the non-speculative one.
         - *Enabling it*: set `SGLANG_SPECULATIVE_ALGORITHM="DSPARK"`. The template then appends `--speculative-algorithm DSPARK --speculative-draft-model-path ${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH}` plus, when set, `--speculative-dspark-block-size ${SGLANG_SPECULATIVE_DSPARK_BLOCK_SIZE}` (default `7`) and `--enable-linear-replayssm-spec`. The last flag is K3-specific: the 69 KDA linear-attention layers carry recurrent state, and verifying a rejected draft block requires replaying that state rather than simply discarding KV entries.
         - *Topology*: DSPARK runs on the existing **2 x A4 (16 x B200) TP=16** topology — no extra nodes, no parallelism change. The draft model is small enough that it adds no parallelism decision: it is replicated per rank, not sharded.
-        - *Draft Checkpoint Staging*: the draft is **not** placed on the ROX Hyperdisk ML volume. That volume is read-only at serving time, and re-running hydration to add a 4 GiB file would put the 1.4 TiB base checkpoint at risk for no benefit. Instead each serving pod runs a `dspark-draft-fetch` initContainer that `gcloud storage rsync`s `${GCS_WEIGHTS_BUCKET}/${DSPARK_DRAFT_DIR_NAME}` into a pod-local `emptyDir` mounted at `/mnt/draft` — about ten seconds at the ~450 MiB/s this bucket sustains, and every pod needs its own copy regardless. The step exits immediately when `SGLANG_SPECULATIVE_ALGORITHM` is empty, so the non-speculative deployment pays nothing but a container start. The draft repository ships **without** a `generation_config.json` and SGLang will not load it without one, so the initContainer copies the base model's file from the ROX mount into the draft directory rather than leaving that to an operator's memory.
-        - *Fail-Closed Gates*: two checks refuse to start a silently-degraded engine. The `dspark-draft-fetch` initContainer aborts if the GCS draft prefix is absent or empty, and its `DSPARK DRAFT GATE` asserts at least one safetensors shard plus a `config.json` before reporting shard count and size. The serving container then re-checks, at launch, that the draft directory exists and contains `generation_config.json`, exiting non-zero with a remediation line instead of falling back to non-speculative decoding without saying so.
+        - *Draft Checkpoint Staging*: the draft is **not** placed on the ROX volume — that volume is read-only at serving time, and re-running hydration for a 4 GiB file would risk the 1.4 TiB base checkpoint for no benefit. Each serving pod instead runs a `dspark-draft-fetch` initContainer that rsyncs `${GCS_WEIGHTS_BUCKET}/${DSPARK_DRAFT_DIR_NAME}` into a pod-local `emptyDir` at `/mnt/draft`, about ten seconds at the ~450 MiB/s this bucket sustains. It exits immediately when `SGLANG_SPECULATIVE_ALGORITHM` is empty, so the non-speculative deployment pays only a container start. The draft repository ships **no** `generation_config.json` and SGLang will not load it without one, so the initContainer copies the base model's file across from the ROX mount.
+        - *Fail-Closed Gates*: two checks refuse to start a silently-degraded engine. The initContainer aborts if the GCS draft prefix is absent or empty, and its `DSPARK DRAFT GATE` asserts at least one safetensors shard plus a `config.json`. The serving container re-checks at launch that the draft directory exists and holds `generation_config.json`, exiting non-zero with a remediation line rather than silently falling back to non-speculative decoding.
 
 2.  **NVIDIA TensorRT-LLM (Experimental Option | `INFERENCE_ENGINE="trtllm"`)**:
 
@@ -318,7 +316,7 @@ project-specific values, and changing none of the above.
 
 **Best measured result: 2,314.46 aggregate output tok/s** at $1k/1k$, $c=128$ on the configuration above. Full grid in Table 2.
 
-Suites never overlap — each is its own Kubernetes Job, started only once the previous has drained. Every prompt carries a 16-character random nonce so no two requests share a radix-cache prefix (0% prefix-cache hits, achieved by construction rather than a cache-flush API). Engine identity is read from the running pod rather than from benchmark config and stamped into every result file; the provenance gate here and `tests/adv_audit_benchmark_integrity.py` reject a set whose suites overlap, run out of order, or carry a missing or placeholder version. NVIDIA TensorRT-LLM was not benchmarked in this run, so delta columns are omitted.
+**Method.** Suites never overlap — each is its own Kubernetes Job, started only once the previous has drained. Every prompt carries a 16-character random nonce, so no two requests share a radix-cache prefix (0% prefix-cache hits by construction, not by a cache-flush API). Engine identity is read from the running pod, not from benchmark config, and stamped into every result file; the provenance gate here and `tests/adv_audit_benchmark_integrity.py` reject a set whose suites overlap, run out of order, or carry a placeholder version. NVIDIA TensorRT-LLM was not benchmarked here, so delta columns are omitted.
 
 <sub>Collected from `sglang-blackwell:latest` — Standard (2026-08-01T00:04:47Z), Massive (2026-08-01T00:05:45Z), Soak (2026-08-01T00:07:55Z), Saturation (2026-08-01T00:38:38Z), Prefill (2026-08-01T01:11:28Z).</sub>
 
@@ -369,17 +367,16 @@ Suites never overlap — each is its own Kubernetes Job, started only once the p
 
 ### Optional Performance Profiles: TP8/PP2 and DSPARK Speculative Decoding
 
-This repository ships two optional serving profiles on top of the `TP16 / PP1 / EP16` default
-measured above. Both were benchmarked on the **same two `a4-highgpu-8g` nodes
-(16x B200)**, the same weights mounted from the same read-only Hyperdisk ML
-volume, the same direct container port 8000 path, and the same
-`benchmarks/run_saturation_sweep_kimi_k3.py` harness. No nodes were added.
+Two optional profiles sit on top of the `TP16 / PP1 / EP16` default measured above.
+Both were benchmarked on the **same two nodes**, same weights, same read-only
+volume, same direct port 8000 path and same harness. No nodes were added.
 
 * **`TP8 / PP2 / EP8`** — pipeline parallelism across the two nodes instead of a
   16-way tensor group, requiring `SGLANG_DISABLE_CUSTOM_ALL_REDUCE=true` (see
   the tuning notes above).
 * **`TP16 / PP1 / EP16 + DSPARK`** — speculative decoding with the
-  `RadixArk/Kimi-K3-DSpark` draft model, block size 8. Layered on the **default
+  `RadixArk/Kimi-K3-DSpark` draft model at the default block size 7, which drafts
+  8 tokens per verify step. Layered on the **default
   topology**, not on TP8/PP2; the two profiles were not combined.
 
 #### Table 4: Aggregate Output Throughput by Profile (Direct Port 8000, tok/s)
@@ -412,7 +409,7 @@ the columns are matched workloads rather than differently-sized runs.
 | $8k/1k$, $c=32$ | 46.93 ms | 38.57 ms | **23.42 ms** | 28.57 s | **3.42 s** |
 | $32k/2k$, $c=8$ | 35.67 ms | 30.09 ms | **13.49 ms** | 23.66 s | **6.37 s** |
 
-Effective TPOT here is derived as $1000 / \text{per\_user\_tok\_s}$ — the
+Effective TPOT here is derived as `1000 / per_user_tok_s` — the
 wall-clock time a single stream spends per generated token, inclusive of its own
 queueing and TTFT. It is not the harness's `tpot_ms` field; see the caveat below.
 
@@ -514,7 +511,7 @@ These Numbers Honestly" above.
 
 ‡ Derived from the published prompt-heavy run: 129,408 total input tokens / 10.62 s mean TTFT.
 
-The $c=16$ figures come from a `TP16 / PP1 / EP16` sweep issued straight at the serving pod, bypassing the gateway proxy, so that the comparison measures the engine rather than this repository's authentication, budget and caching layer. Two independent $c=16$ runs agreed to within 0.2% (492.49 / 492.02 on $1k/1k$; 424.40 / 425.15 on $8k/1k$). The ITL median on the $8k/1k$ cell is 32.33 ms, essentially unchanged from the 31.81 ms of the $1k/1k$ cell. The DSPARK column is the same sweep re-run on the same two nodes with speculative decoding enabled and nothing else changed; it is an optional profile, opt-in via `SGLANG_SPECULATIVE_ALGORITHM`, and not the default this repository deploys.
+The $c=16$ figures come from a `TP16 / PP1 / EP16` sweep issued straight at the serving pod, so the comparison measures the engine rather than this repository's auth, budget and caching layer. Two independent runs agreed to within 0.2% (492.49 / 492.02 at $1k/1k$; 424.40 / 425.15 at $8k/1k$), and the $8k/1k$ ITL median of 32.33 ms is essentially unchanged from 31.81 ms at $1k/1k$. The DSPARK column is the same sweep with speculative decoding enabled and nothing else changed.
 
 The same sweep re-measured the $c=8$ and $c=32$ cells to check that a direct-to-engine run is comparable with the gateway-routed numbers reported in the table above:
 
@@ -535,22 +532,20 @@ The gateway therefore costs at most a few percent of aggregate throughput, and t
 | Decode-heavy ($1k/8k$) | 458,073 | 62,560 | 13.66% | 1.96 |
 | Balanced ($1k/1k$) | 80,381 | 4,508 | 5.61% | 1.39 |
 
-Per-position acceptance collapses from 24.98% at draft position 0 to 0.12% at position 6 on the balanced run. That deployment spends draft compute on seven tokens to realise 1.39–2.04 of them, and its *raw* step time of ~63 ms is 1.98x this repository's ~32 ms. Speculative decoding recovers most of that deficit but does not overturn it: at its best acceptance the published run reaches effective TPOT parity, and this deployment stays 1.36–1.49x ahead on aggregate throughput without drafting at all.
+Per-position acceptance collapses from 24.98% at draft position 0 to 0.12% at position 6 on the balanced run: seven tokens of draft compute to realise 1.39–2.04 of them, on a *raw* step time of ~63 ms against this repository's ~32 ms. Speculation recovers most of that deficit but does not overturn it — at best acceptance the published run reaches effective TPOT parity, while this deployment stays 1.36–1.49x ahead on aggregate throughput without drafting at all.
 
 **Caveats — read before quoting these deltas.**
-* **Aggregate deltas likely overstate the steady-state gap.** Sixteen prompts issued as one burst is not steady state: as the batch drains, its tail runs at declining concurrency, which depresses the published aggregate tok/s (total generated / wall duration) and flatters its per-stream TPOT. The **ITL-median** row is the more robust comparator, being far less sensitive to batch drain than a total-over-duration figure. This repository's $c=16$ cells issue 32 requests through a fixed-width 16-worker pool, so the concurrency level is held for the bulk of the run instead of decaying from the first token, and are backed by a 30-minute soak (2,981 cycles, 100% success).
+* **Aggregate deltas likely overstate the steady-state gap.** Sixteen prompts as one burst is not steady state: the draining tail runs at declining concurrency, depressing the published aggregate tok/s and flattering its per-stream TPOT. The **ITL-median** row is the more robust comparator. This repository's $c=16$ cells issue 32 requests through a fixed-width 16-worker pool, holding concurrency for the bulk of the run, and are backed by a 30-minute soak (2,981 cycles, 100% success).
 * The published Balanced run's client command specifies `--model nvidia/Qwen3.6-27B-NVFP4` rather than Kimi K3 — the source page is internally inconsistent. A 27B model would not exhibit 44.87 ms TPOT on 16 B200s, so these figures are treated as K3, but that row carries less confidence than the other two.
 * The published "peak output tok/s" values (258.00 / 257.00 / 272.00) are *below* their corresponding means (312.63 / 378.14 / 329.64) in all three runs, which is not possible for a true instantaneous peak. That row is not used here.
 * The published run states no tensor/pipeline/expert parallelism sizes, no launch command, no vLLM version, no dtype and no interconnect. Hardware equivalence is inferred from "two B200 nodes" alone.
 * Do not compare the published prompt-heavy **total token throughput** of 2,841.22 tok/s against this repository's 2,314.46 **output** tok/s — the former counts input tokens. The equivalent total-token figure for the $1k/1k$, $c=128$ cell here is approximately 4,629 tok/s.
-* **TTFT is deliberately absent from the comparison table.** The two harnesses attribute admission queueing differently: on a direct-to-engine sweep the scheduler admits a deep client-side burst a couple of requests per prefill round, so a request's measured TTFT includes the wait behind everything admitted before it. That is a property of where the queue sits, not of prefill speed, and it is not comparable against a published TTFT from a different client. Prefill capability is compared through the dedicated prefill suite row instead.
+* **TTFT is deliberately absent from the table.** The two harnesses attribute admission queueing differently, so a direct-to-engine TTFT includes the wait behind everything admitted earlier — a property of where the queue sits, not of prefill speed. Prefill capability is compared through the dedicated prefill row instead.
 
-**Status of this section.** The $c=16$ column is measured, not interpolated: a dedicated
-sweep was run on this stack for exactly this comparison, and the TP8/PP2 and DSPARK
-parallelism work has since completed (see the optional-profiles section above). Chunked-prefill
-sizing, explicit running-request admission control and static memory fraction remain
-unswept; if any of them moves the default profile, every delta here will be restated from
-the new result files.
+**Status of this section.** The TP8/PP2 and DSPARK parallelism work has completed (see
+the optional-profiles section above). Chunked-prefill sizing, explicit running-request
+admission control and static memory fraction remain unswept; if any of them moves the
+default profile, every delta here will be restated from the new result files.
 
 <!-- EXTERNAL_COMPARISON_END -->
 
@@ -558,35 +553,19 @@ the new result files.
 
 ## 📦 Hybrid 3-Tier Storage Co-Design & Weight Backup Lifecycle
 
-To eliminate multi-hour weight downloads when scaling compute pods (the volume holds weights only; TRT-LLM PyTorch backend loads checkpoints directly without pre-compiled engine files), the architecture implements a hybrid 3-tier storage co-design:
+To eliminate multi-hour weight downloads when scaling compute pods, the architecture implements a hybrid 3-tier storage co-design:
 
-```
-+---------------------------------------------------------------------------------------------------+
-|                        Tier 0: Hyperdisk ML ReadOnlyMany (`ROX`) Volume                           |
-|  - Capacity: 2,000 GB (2 TB) Block Storage | Formatted XFS (mountOptions: nouuid, ro, norecovery) |
-|  - Content: Pre-staged MXFP4 safetensors shards (TRT-LLM PyTorch backend loads checkpoints directly) |
-+---------------------------------------------------------------------------------------------------+
-                                                  ^
-                                                  | (Concurrent Read-Only Mount across 2N Nodes)
-+---------------------------------------------------------------------------------------------------+
-|                     Tier 2: Local NVMe SSD RAID 0 Scratch Array (`/mnt/scratch`)                  |
-|  - Capacity: 32x 375 GiB Local NVMe SSDs = 11.7 TiB/node | Formatted XFS via RAID 0 DaemonSet     |
-|  - Content: Ultra-fast local buffer for MPI shared memory exchange and runtime staging logs       |
-+---------------------------------------------------------------------------------------------------+
-                                                  ^
-                                                  | (High-Speed Backup Hydration @ measured 2.1 GiB/s)
-+---------------------------------------------------------------------------------------------------+
-|                   Tier 3: Cloud Storage (GCS) Weight Backup Bucket                                |
-|  - URI: `gs://<project>-kimi-k3-weights-backup` | Cost: ~$40/month (outside TF state)             |
-|  - Content: Persistent backup of verified weight shards (measured: 11 min 18 s @ 2.1 GiB/s)       |
-+---------------------------------------------------------------------------------------------------+
-```
+| Tier | Medium | Capacity | Role |
+| :--- | :--- | :--- | :--- |
+| **Tier 0** | Hyperdisk ML `ROX`, XFS (`nouuid, ro, norecovery`) | 2,000 GB (2 TB) | Pre-staged MXFP4 shards, concurrently read-mounted across all 2N nodes. |
+| **Tier 2** | Local NVMe SSD RAID 0 (`/mnt/scratch`) | 32 x 375 GiB = 11.7 TiB per node | MPI shared-memory exchange and runtime staging. |
+| **Tier 3** | GCS `gs://<project>-kimi-k3-weights-backup` | 1,458 GiB = 1,453.7 base + 4.19 draft (~$29/mo, outside TF state) | Persistent backup; hydrates Tier 0 at a measured 2.1 GiB/s. |
 
 ### Weight Backup Hydration Lifecycle
 
-When deploying a fresh cluster or recovering from a disaster, downloading 1,453.7 GiB of weights from external model hubs can take hours. Using a pre-populated GCS weight backup bucket (`Tier 3`), the automated hydration job (`02-hydrate-weights-gcs.yaml.template`) transfers the entire 1,453.7 GiB weight footprint into the 2,000 GB Hyperdisk ML volume in **11 min 18 s at an average of 2.1 GiB/s**, measured end to end on this deployment: all 96 shards copied from `gs://${PROJECT_ID}-kimi-k3-weights-backup`, with `gcloud storage rsync` reporting the throughput itself (1,453.7 GiB / 678 s = 2.15 GiB/s, which agrees).
+Downloading 1,453.7 GiB from external model hubs takes hours. From the Tier 3 GCS backup, the hydration job (`02-hydrate-weights-gcs.yaml.template`) fills the 2,000 GB Hyperdisk ML volume in **11 min 18 s at 2.1 GiB/s**, measured end to end: all 96 shards, with `gcloud storage rsync` reporting the same rate (1,453.7 GiB / 678 s = 2.15 GiB/s).
 
-> **The hyperdisk is not what limits this.** The volume was provisioned at the default `hyperdisk_ml_throughput_mibps = 24,576 MiB/s` and hydration sustained roughly 2,150 MiB/s — about 9% of it. The ceiling here is the GCS read path and rsync's parallelism, not the disk, so raising provisioned throughput will not make hydration proportionally faster and the 6,144 MiB/s fallback (used when regional quota is unavailable) still sits comfortably above what the transfer actually draws. Provisioned throughput matters for the *serving* read pattern — 16 ranks faulting in shards concurrently at pod start — which is a different workload from this one-time sequential fill.
+> **The hyperdisk is not what limits this.** Provisioned at the default 24,576 MiB/s, hydration sustained ~2,150 MiB/s — about 9%. The ceiling is the GCS read path and rsync parallelism, so raising provisioned throughput will not speed hydration proportionally, and the 6,144 MiB/s fallback (used when regional quota is unavailable) still sits well above what the transfer draws. Provisioned throughput matters for the *serving* read pattern — 16 ranks faulting in shards at pod start — which is a different workload.
 
 #### Operational Seeding & Hydration Commands
 
@@ -605,16 +584,11 @@ export FORCE_WEIGHT_JOB="true"
 ./scripts/03_deploy_workloads.sh
 ```
 
-#### Complete Teardown & State Bucket Retention
-
-By default, `./scripts/06_destroy_all.sh` and `terraform destroy` remove all Terraform-managed resources—including the GKE cluster, RoCEv2 network, Cloud SQL instance, and Hyperdisk ML ReadOnlyMany (`ROX`) volume—to ensure zero ongoing cloud spend. For temporary overnight pauses that retain weights and disks, use the scheduled evening turndown CronJob or scale the serving StatefulSet to 0.
-
-There are two GCS buckets retained after `./scripts/06_destroy_all.sh`: the out-of-band Terraform remote state bucket (`gs://${PROJECT_ID}-kimi-k3-tfstate`) and the out-of-band weight backup bucket (`gs://${PROJECT_ID}-kimi-k3-weights-backup`), both listed in an **OUT-OF-BAND RETAINED BUCKET INVENTORY** report. To explicitly delete retained buckets when no longer needed:
-
-```bash
-# Delete the out-of-band Terraform remote state bucket
-gcloud storage rm --recursive "gs://${PROJECT_ID}-kimi-k3-tfstate"
-```
+Teardown and the two buckets that survive it are documented under
+[Idempotent Teardown & Clean Purge](#-idempotent-teardown--clean-purge). For a
+temporary overnight pause that keeps weights and disks, use the scheduled
+turndown CronJob (`10-scheduled-turndown-cronjob.yaml.template`) or scale the
+serving StatefulSet to 0.
 
 --------------------------------------------------------------------------------
 
@@ -630,7 +604,7 @@ kimi-k3-gcp-enterprise-serving/
 │   ├── generate_comparison.py     # Parity validator; regenerates the engine comparison table between the README markers
 │   ├── massive_benchmark_kimi_k3.py # High-concurrency stress test simulating 20 agent streams
 │   ├── run_prefill_benchmark_kimi_k3.py # Empirical prompt-ingestion prefill benchmark (8k-in/16-out)
-│   ├── run_saturation_sweep_kimi_k3.py # Direct engine saturation sweep across concurrency levels c=1..64
+│   ├── run_saturation_sweep_kimi_k3.py # Direct engine saturation sweep (default c=1,8,32,128)
 │   ├── soak_benchmark_kimi_k3.py  # 30-minute continuous stability endurance test (1,800 seconds)
 │   └── telemetry_sanitizer.py     # Redacts API keys and sensitive fields from telemetry before publication
 ├── docker/                        # Container definitions for custom serving runtimes
@@ -675,11 +649,11 @@ To achieve 55%+ compute cost savings, serving compute pools utilize Google Cloud
 
 * **Priority P0 (Non-Preemptible System Core):** The Enterprise AI Gateway (LiteLLM), Cloud SQL Auth Proxy, and Redis instance run exclusively on a dedicated, non-preemptible e2-standard system node pool (`np-system`). Control-plane routing and authentication never go offline.
 * **Priority P1 (Graceful Serving Workloads):** Serving pods run on the B200 spot pool with Kubernetes `SIGTERM` handling and `preStop` drain hooks. When GCP issues a 30-second spot preemption notice, the pod traps `SIGTERM`, executes the `preStop` drain hook to deregister from the LiteLLM gateway, finishes inflight requests, and terminates cleanly.
-* **Priority P2 (Batch Benchmarks Only):** Off-peak massive benchmark suites run at lowest priority, yielding resources instantly to P1 serving pods during quota contention. Reclamation of any GPU in the 2-node TP16/EP16 group takes down the whole serving replica until a replacement joins; spot suits benchmarking, on-demand is recommended for production.
+* **Priority P2 (Batch Benchmarks Only):** Off-peak massive benchmark suites run at lowest priority, yielding resources instantly to P1 serving pods during quota contention.
 
 ### 3. Warm Pod ROX Recovery (measured: 17 min 03 s)
 
-When a preempted B200 spot node is replaced by the GKE Cluster Autoscaler, traditional architectures suffer multi-hour cold starts downloading weights. Because Kimi K3's weights are mounted via ReadOnlyMany (`ROX`) Hyperdisk ML (the volume holds weights only; TRT-LLM PyTorch backend loads checkpoints directly without pre-compiled engine files), new pods bypass network downloads entirely. Once physical nodes pass CUDA initialization, the 2-node serving replica reaches `Ready` state in ***17 min 03 s***.
+When a preempted B200 spot node is replaced by the GKE Cluster Autoscaler, traditional architectures suffer multi-hour cold starts downloading weights. Because Kimi K3's weights are mounted via ReadOnlyMany (`ROX`) Hyperdisk ML, new pods bypass network downloads entirely. Once physical nodes pass CUDA initialization, the 2-node serving replica reaches `Ready` state in ***17 min 03 s***.
 
 Measured on a 2-node `a4-highgpu-8g` spot replica in `europe-north1-b` against an already-hydrated ROX volume, SGLang `tp16` profile:
 
@@ -692,7 +666,7 @@ Measured on a 2-node `a4-highgpu-8g` spot replica in `europe-north1-b` against a
 | SGLang reports *"The server is fired up and ready to roll!"* | 23:53:21 | 16 min 54 s |
 | Pod condition `Ready=True` | 23:53:30 | **17 min 03 s** |
 
-The 17-minute figure is checkpoint load plus distributed initialization only — no weight transfer occurs, which is precisely what the ROX design buys. Note that node provisioning (12 min 35 s) and pod warm-up (17 min 03 s) are *sequential* on a cold cluster but fully overlapped on a spot replacement, since the ROX volume stays attached to the surviving node. The `startupProbe` budget (`periodSeconds: 30 × failureThreshold: 120`) allows 60 minutes, leaving substantial headroom over the measured value.
+The 17 minutes are checkpoint load plus distributed initialization only — no weight transfer, which is what the ROX design buys. Node provisioning (12 min 35 s) and pod warm-up are *sequential* on a cold cluster but overlap on a spot replacement, since the volume stays attached to the surviving node. The `startupProbe` budget (30 s x 120) allows 60 minutes.
 
 ### 4. Self-Healing Teardown Loop & Database Guardrails (Issues 6 & 7 Guards)
 
@@ -700,45 +674,6 @@ Teardown automation (`06_destroy_all.sh`) incorporates proactive self-healing gu
 
 1. **Cloud SQL Role Dependency Guard (Issue 6):** Proactively drops the database `kimi_k3_gateway` via `gcloud sql databases delete` before running Terraform destroy. This releases PostgreSQL owned database roles, preventing Terraform from hanging on user deletion dependency violations.
 2. **SDN Peering Propagation Guard (Issue 7):** If Google Cloud SDN propagation delays cause VPC peering deletion failures, the teardown script detects the failure, automatically executes `gcloud compute networks peerings delete` to sever dangling private service access peerings, and retries `terraform destroy` until clean completion.
-
----
-
-## 🗺️ 4-Phase Implementation & Deployment Roadmap Summary
-
-The deployment lifecycle is structured into four systematic, verifiable engineering phases:
-
-```
-+-----------------------------------------------------------------------------------------------------------------+
-|                                 PHASE 1: Enterprise Infrastructure & Fabric Foundation                          |
-|  - Provision Private VPC, Secondary RoCEv2 Fabric Subnets (MTU 8896), Cloud NAT, and IAP SSH Firewall Rules     |
-|  - Deploy GKE Blackwell Cluster (Private Nodes, IAM-Gated Endpoint) and Workload Identity Federation (WIF)      |
-|  - Provision Cloud SQL PostgreSQL Instance (`kimi-k3-gateway-db`) & Cloud Memorystore Redis (`kimi-k3-gateway-cache`)   |
-+-----------------------------------------------------------------------------------------------------------------+
-                                                         |
-                                                         v
-+-----------------------------------------------------------------------------------------------------------------+
-|                                 PHASE 2: Hybrid Storage & Weight Hydration Pipeline                             |
-|  - Provision 2,000 GB (2 TB) Hyperdisk ML Block Volume & Apply Local NVMe RAID 0 DaemonSet (`/mnt/scratch`)     |
-|  - Execute GCS Weight Hydration Job (measured 11 min 18 s) or Hugging Face Secure Downloader                    |
-|  - Flip Hyperdisk ML Volume Access Mode to ReadOnlyMany (`ROX`) for Zero-Copy Multi-Node Scale-Out              |
-+-----------------------------------------------------------------------------------------------------------------+
-                                                         |
-                                                         v
-+-----------------------------------------------------------------------------------------------------------------+
-|                              PHASE 3: Enterprise Gateway & Multi-Node Serving Deployment                        |
-|  - Deploy Tier 1 LiteLLM Enterprise Gateway & Cloud SQL Proxy on Non-Preemptible System Pool (`np-system`)      |
-|  - Deploy 2-Node SGLang / TRT-LLM Headless StatefulSet (Leader Node 0 + Worker Node 1 over RoCEv2 / NVLink)     |
-|  - Configure Managed Service for Prometheus (GMP) Observability                                                 |
-+-----------------------------------------------------------------------------------------------------------------+
-                                                         |
-                                                         v
-+-----------------------------------------------------------------------------------------------------------------+
-|                            PHASE 4: Production Verification & Benchmark Certification                           |
-|  - Execute 5-Point Enterprise Gateway Verification Suite (Auth, Virtual Keys, Quotas, Redis Cache, BigQuery)    |
-|  - Run In-Cluster Soak Benchmark (`05_run_benchmarks.sh --mode soak --in-cluster`) & Saturation Sweeps        |
-|  - Certify Telemetry Audit Sink in BigQuery (`check_bq.py`) & Verify Zero Out-of-Memory (OOM) Execution         |
-+-----------------------------------------------------------------------------------------------------------------+
-```
 
 ---
 
@@ -844,11 +779,11 @@ For immediate smoke testing from your local terminal via automated port-forwardi
 #### 📊 Direct Engine Saturation Sweep & Prefill Ingestion Benchmarking
 
 To run cache-bypassed direct GPU generation saturation sweeps across concurrency
-levels ($c \in \{1, 8, 16, 32, 64\}$) or evaluate prompt prefill ingestion rates
+levels (default $c \in \{1, 8, 32, 128\}$) or evaluate prompt prefill ingestion rates
 directly on the 16x B200 HGX pool:
 
 ```bash
-# 1. Run prompt prefill / ingestion benchmark (8,192 input tokens -> 16 output tokens)
+# 1. Run prompt prefill / ingestion benchmark (8k requested -> 5,777 measured prompt tok -> 16 out)
 python3 benchmarks/run_prefill_benchmark_kimi_k3.py
 
 # 2. Run direct engine saturation sweep (max_tokens=256, ignore_eos=True, 0% cache hits)
