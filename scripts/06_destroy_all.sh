@@ -125,6 +125,39 @@ if ! eval "${DESTROY_CMD}"; then
     terraform state rm module.database.google_service_networking_connection.private_vpc_connection 2>/dev/null || true
   fi
 
+  # Self-heal BigQuery audit dataset teardown.
+  # Project-level roles/editor maps to BigQuery projectWriters, and WRITER can delete tables
+  # but can neither update a dataset ACL nor delete the dataset itself -- only OWNER can. So
+  # destroying the dataset's IAM member fails with "403 bigquery.datasets.update denied" and a
+  # plain retry hits the same wall. That binding is redundant when the dataset is going away,
+  # so delete the dataset directly and drop both from state.
+  # `terraform output -raw` exits 0 with empty output when the output is already gone, so an
+  # `|| echo` fallback would never fire -- default on empty as well as on failure.
+  AUDIT_DATASET=$(terraform output -raw audit_dataset_id 2>/dev/null || true)
+  AUDIT_DATASET="${AUDIT_DATASET:-kimi_k3_enterprise_audit}"
+  if [ -n "${AUDIT_DATASET}" ] && command -v bq >/dev/null 2>&1 && \
+     bq --project_id="${PROJECT_ID}" show "${AUDIT_DATASET}" >/dev/null 2>&1; then
+    echo "    Releasing BigQuery audit dataset ${AUDIT_DATASET}..."
+    if bq --project_id="${PROJECT_ID}" rm -r -f -d "${AUDIT_DATASET}" >/dev/null 2>&1; then
+      terraform state rm module.gateway_iam.google_bigquery_dataset_iam_member.bigquery_data_editor 2>/dev/null || true
+      terraform state rm module.audit.google_bigquery_table.trajectories 2>/dev/null || true
+      terraform state rm module.audit.google_bigquery_dataset.enterprise_audit 2>/dev/null || true
+      echo "      Dataset ${AUDIT_DATASET} deleted and removed from state."
+    else
+      echo "      [ACTION REQUIRED] Cannot delete dataset ${AUDIT_DATASET}: the active principal is not a"
+      echo "                        BigQuery OWNER on it (roles/editor grants only WRITER). Grant the role,"
+      echo "                        re-run this script, then revoke it:"
+      echo "                          ACCT=\$(gcloud config get-value account)"
+      echo "                          gcloud projects add-iam-policy-binding ${PROJECT_ID} \\"
+      echo "                            --member=\"serviceAccount:\${ACCT}\" --role=\"roles/bigquery.admin\" --condition=None"
+      echo "                          bash scripts/06_destroy_all.sh"
+      echo "                          gcloud projects remove-iam-policy-binding ${PROJECT_ID} \\"
+      echo "                            --member=\"serviceAccount:\${ACCT}\" --role=\"roles/bigquery.admin\" --condition=None"
+      echo "                        roles/bigquery.admin is project-wide -- snapshot the IAM policy first and"
+      echo "                        diff it after revoking to confirm it was restored exactly."
+    fi
+  fi
+
   echo "    Retrying final terraform destroy..."
   sleep 5
   eval "${DESTROY_CMD}"
