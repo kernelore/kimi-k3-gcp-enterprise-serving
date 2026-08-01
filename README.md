@@ -343,9 +343,9 @@ All benchmarks were executed on the live GKE serving cluster with identical hard
 
 <!-- ENGINE_COMPARISON_END -->
 
-### Branch Performance Profiles: TP8/PP2 and DSPARK Speculative Decoding
+### Optional Performance Profiles: TP8/PP2 and DSPARK Speculative Decoding
 
-This branch adds two serving profiles on top of the `TP16 / PP1 / EP16` default
+This repository ships two optional serving profiles on top of the `TP16 / PP1 / EP16` default
 measured above. Both were benchmarked on the **same two `a4-highgpu-8g` nodes
 (16x B200)**, the same weights mounted from the same read-only Hyperdisk ML
 volume, the same direct container port 8000 path, and the same
@@ -455,7 +455,7 @@ queueing and TTFT. It is not the harness's `tpot_ms` field; see the caveat below
   15,502 prompt tok/s prefill rate is 0.13 s of a 66.60 s run (0.2%), and under
   1.5% even at a deliberately pessimistic 2,000 tok/s. It cannot account for a
   2.00x-3.82x gap.
-* **$32k/2k$ at $c=16$ and $c=32$ was not run** on the branch profiles. GPU time
+* **$32k/2k$ at $c=16$ and $c=32$ was not run** on these optional profiles. GPU time
   on the spot pair ran out; those two cells are absent, not omitted for being
   unfavourable.
 
@@ -499,7 +499,7 @@ These Numbers Honestly" above.
 
 ‡ Derived from the published prompt-heavy run: 129,408 total input tokens / 10.62 s mean TTFT.
 
-The $c=16$ figures come from a `TP16 / PP1 / EP16` sweep issued straight at the serving pod, bypassing the gateway proxy, so that the comparison measures the engine rather than this repository's authentication, budget and caching layer. Two independent $c=16$ runs agreed to within 0.2% (492.49 / 492.02 on $1k/1k$; 424.40 / 425.15 on $8k/1k$). The ITL median on the $8k/1k$ cell is 32.33 ms, essentially unchanged from the 31.81 ms of the $1k/1k$ cell. The DSPARK column is the same sweep re-run on the same two nodes with speculative decoding enabled and nothing else changed; it is a branch profile, opt-in via `SGLANG_SPECULATIVE_ALGORITHM`, not the default this repository deploys.
+The $c=16$ figures come from a `TP16 / PP1 / EP16` sweep issued straight at the serving pod, bypassing the gateway proxy, so that the comparison measures the engine rather than this repository's authentication, budget and caching layer. Two independent $c=16$ runs agreed to within 0.2% (492.49 / 492.02 on $1k/1k$; 424.40 / 425.15 on $8k/1k$). The ITL median on the $8k/1k$ cell is 32.33 ms, essentially unchanged from the 31.81 ms of the $1k/1k$ cell. The DSPARK column is the same sweep re-run on the same two nodes with speculative decoding enabled and nothing else changed; it is an optional profile, opt-in via `SGLANG_SPECULATIVE_ALGORITHM`, and not the default this repository deploys.
 
 The same sweep re-measured the $c=8$ and $c=32$ cells to check that a direct-to-engine run is comparable with the gateway-routed numbers reported in the table above:
 
