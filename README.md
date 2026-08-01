@@ -37,21 +37,6 @@ RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 
 ![Kimi K3 serving architecture on GKE Blackwell](assets/architecture.png)
 
-Reading the diagram in one paragraph: a private ILB fronts the **Tier 1**
-LiteLLM gateway on port 4000, which independently talks to Memorystore Redis
-(exact-match prompt cache), Cloud SQL (virtual keys and budgets), BigQuery
-(audit sink) and Cloud Monitoring (GMP + DCGM). It routes into **one**
-serving replica, which is a single Leader/Worker MPI world spanning **both**
-`a4-highgpu-8g` nodes as one TP=16 / PP=1 / EP=16 group — a replica is always
-a 2-node pair, never a single node, and the shipped node pool default
-(`max = 2`) therefore yields exactly one replica. Each node contributes 8x
-B200 HGX (1,440 GB HBM3e), roughly 780 GB of MXFP4 weight shard and a ~443 GB
-KV/recurrent-state pool, with NVLink inside the node and RoCEv2 GPUDirect
-RDMA across it. Storage is not a cache hierarchy: **Tier 3** GCS hydrates the
-**Tier 0** Hyperdisk ML volume once, Tier 0 is then mounted `ReadOnlyMany`
-straight into every serving pod, and the **Tier 2** local NVMe array is
-node-local scratch for MPI shared memory — never fed from Tier 0.
-
 ### ☁️ Google Cloud Products & Architectural Roles
 
 | Google Cloud Product | Resource Identifier in Stack | Architectural Role & Implementation Details |
@@ -282,8 +267,6 @@ default**, kept in its own section so it is never mistaken for the baseline.
 
 Deploy it by copying `scripts/config.env.example` to `scripts/config.env`, filling in
 project-specific values, and changing none of the above.
-
-#### Live Benchmark Performance Comparison
 
 <!-- ENGINE_COMPARISON_START -->
 
@@ -518,11 +501,6 @@ Per-position acceptance collapses from 24.98% at draft position 0 to 0.12% at po
 * The published run states no tensor/pipeline/expert parallelism sizes, no launch command, no vLLM version, no dtype and no interconnect. Hardware equivalence is inferred from "two B200 nodes" alone.
 * Do not compare the published prompt-heavy **total token throughput** of 2,841.22 tok/s against this repository's 2,314.46 **output** tok/s — the former counts input tokens. The equivalent total-token figure for the $1k/1k$, $c=128$ cell here is approximately 4,629 tok/s.
 * **TTFT is deliberately absent from the table.** The two harnesses attribute admission queueing differently, so a direct-to-engine TTFT includes the wait behind everything admitted earlier — a property of where the queue sits, not of prefill speed. Prefill capability is compared through the dedicated prefill row instead.
-
-**Status of this section.** The TP8/PP2 and DSPARK parallelism work has completed (see
-the optional-profiles section above). Chunked-prefill sizing, explicit running-request
-admission control and static memory fraction remain unswept; if any of them moves the
-default profile, every delta here will be restated from the new result files.
 
 <!-- EXTERNAL_COMPARISON_END -->
 
