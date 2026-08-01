@@ -294,8 +294,14 @@ spec:
           # --decode-attention-backend flashmla, which is why flashmla must never appear
           # here, and only the ROCm cells pin --attention-backend triton.
           # SGLang classifies KimiK3ForConditionalGeneration as AttentionArch.MLA (same
-          # branch as KimiLinearForCausalLM in configs/model_config.py), and
-          # _get_default_attn_backend resolves MLA on SM100 to flashinfer.
+          # branch as KimiLinearForCausalLM in configs/model_config.py). Left unset, the
+          # engine selects trtllm_mla for both phases -- it announces this at startup as
+          # "Use trtllm_mla as the default prefill and decode attention backend for
+          # Kimi-K3 on SM100/SM103", and the resolved server_args confirm
+          # attention_backend, prefill_attention_backend and decode_attention_backend all
+          # settle on trtllm_mla. (An earlier revision of this comment predicted
+          # flashinfer; the running B200 deployment disproved it. flashinfer is what
+          # sampling_backend resolves to, which is a different setting.)
           # Set these only with measurements in hand.
           if [ -n "${SGLANG_PREFILL_ATTENTION_BACKEND}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --prefill-attention-backend ${SGLANG_PREFILL_ATTENTION_BACKEND}"
