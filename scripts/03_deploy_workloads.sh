@@ -536,6 +536,44 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
     kubectl apply -f "${GENERATED_DIR}/02-staging-pvc.yaml"
 
     if [ -n "${GCS_WEIGHTS_BUCKET:-}" ] && [ "${GCS_WEIGHTS_BUCKET}" != "" ] && [ "${POPULATE_WEIGHTS_CACHE:-false}" != "true" ] && [ -f "${GENERATED_DIR}/02-hydrate-weights-gcs.yaml" ]; then
+      # Re-establish the serving SA's read grant on the weight backup bucket before the
+      # staging job runs.
+      #
+      # The bucket is deliberately out-of-band: it survives 06_destroy_all.sh so a redeploy
+      # does not re-download 1.45 TiB from Hugging Face. Terraform therefore owns none of
+      # its IAM. But terraform DOES own kimi-k3-serving-sa, and destroying it and creating
+      # it again yields the same email with a NEW unique id. GCS bindings resolve to the
+      # uid, not the email, so the surviving grant decays into a dead
+      # "deleted:serviceAccount:...?uid=<old>" tombstone and the new SA has no access.
+      #
+      # Left unhandled this is a guaranteed failure on every destroy/redeploy cycle, and it
+      # surfaces ~50 minutes in as an opaque 403 inside a Kubernetes Job, after the cluster,
+      # the image build and the GPU nodes have all been paid for. Establish it here, where
+      # the SA is known to exist and the cost of being wrong is one API call.
+      WEIGHTS_BUCKET_ROOT="$(printf '%s' "${GCS_WEIGHTS_BUCKET}" | sed -E 's#(gs://[^/]+).*#\1#')"
+      SERVING_SA_EMAIL="kimi-k3-serving-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+      echo "--> 5a. Verifying serving SA read access to weight backup bucket ${WEIGHTS_BUCKET_ROOT}..."
+      if gcloud storage buckets get-iam-policy "${WEIGHTS_BUCKET_ROOT}" \
+           --project="${PROJECT_ID}" --format=json 2>/dev/null \
+           | grep -q "\"serviceAccount:${SERVING_SA_EMAIL}\""; then
+        echo "    [OK] ${SERVING_SA_EMAIL} already holds a binding on ${WEIGHTS_BUCKET_ROOT}."
+      else
+        echo "    [INFO] No live binding found (a destroy/recreate cycle invalidates it). Granting roles/storage.objectViewer..."
+        if gcloud storage buckets add-iam-policy-binding "${WEIGHTS_BUCKET_ROOT}" \
+             --project="${PROJECT_ID}" \
+             --member="serviceAccount:${SERVING_SA_EMAIL}" \
+             --role=roles/storage.objectViewer >/dev/null 2>&1; then
+          echo "    [OK] Granted roles/storage.objectViewer on ${WEIGHTS_BUCKET_ROOT}."
+        else
+          echo "    [WARN] Could not grant roles/storage.objectViewer on ${WEIGHTS_BUCKET_ROOT}." >&2
+          echo "           Hydration will fail with HTTP 403 unless an operator runs:" >&2
+          echo "             gcloud storage buckets add-iam-policy-binding ${WEIGHTS_BUCKET_ROOT} \\" >&2
+          echo "               --member=serviceAccount:${SERVING_SA_EMAIL} \\" >&2
+          echo "               --role=roles/storage.objectViewer" >&2
+        fi
+      fi
+      # Read-only by design: hydration only reads. Seeding the bucket is a separate,
+      # explicitly opted-in path (POPULATE_WEIGHTS_CACHE=true) excluded by this branch.
       echo "--> 5b. Hydrating Kimi K3 weights directly from GCS (${GCS_WEIGHTS_BUCKET})..."
       # Arithmetic basis: 1,560,998,983,786 bytes = 1,453.7 GiB checkpoint across 96 shards.
       # At 1.0-2.5 GiB/s sustained parallel GCS read: 1453.7 / 2.5 = 581s (~10 min), 1453.7 / 1.0 = 1454s (~24 min).
