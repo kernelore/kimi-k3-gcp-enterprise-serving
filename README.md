@@ -35,45 +35,24 @@ GPUs` = `2,880 GB HBM3e` — 180 GB/GPU, 1,440 GB/node)** connected via Google C
 RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 **SGLang multi-node RoCEv2 serving (Primary Default)** with `--reasoning-parser kimi_k3 --tool-call-parser kimi_k3`. An experimental **NVIDIA TensorRT-LLM MPI** configuration is maintained in the codebase, though no published TensorRT-LLM K3 support exists as of launch.
 
-```
-+-----------------------------------------------------------------------------------------------------------------+
-|                                       Private VPC High-Performance Network                                      |
-|                 (Private Nodes, IAM-Gated Control Plane / Optional Private Endpoint, Private ILB)                |
-+--------------------------------------------------------+--------------------------------------------------------+
-                                                         |
-                                                         v
-+-----------------------------------------------------------------------------------------------------------------+
-|                      Tier 1: Enterprise AI Gateway Layer (LiteLLM + Cloud SQL + Redis)                          |
-|  - Virtual API Key Authentication (Internal Load Balancer Port 4000)                                            |
-|  - Token-Bucket Rate Limiting (TPM / RPM) & Exact-Match Prompt Caching on Redis (measured 0.40 ms p50 GET)      |
-|  - Asynchronous Telemetry & Trajectory Audit Sink streaming to BigQuery (`kimi_k3_enterprise_audit`)            |
-|  - Upstream distribution across N active serving replicas via Kubernetes ClusterIP Service                      |
-+--------------------------------------------------------+--------------------------------------------------------+
-                                                         |
-                                                         v
-+-----------------------------------------------------------------------------------------------------------------+
-|          GKE Blackwell Auto-Scaling Node Pool (`a4-highgpu-8g` | min: 0, max: `gpu_pool_max_nodes` (default 2))    |
-|               Distributed Selectable Dual-Engine (TensorRT-LLM vs SGLang) Leader-Worker StatefulSet             |
-|                                                                                                                 |
-|  +--------------------------------------------------+         +----------------------------------------------+  |
-|  |             Leader Node (Node 1 - 8x B200)       |<=======>|        Worker Node (Node 2 - 8x B200)        |  |
-|  |  - Default: TP=16 / PP=1 / EP=16 spans BOTH nodes|  RoCEv2 |  - Default: TP=16 / PP=1 / EP=16 (one MPI world)|  |
-|  |  - Intra-Node NVLink 1.8 TB/s; Inter-Node GDRDMA | 3.2Tbps |  - Optional profile: TP=8 / PP=2 / EP=8       |  |
-|  |  - SGLang / TRT-LLM Execution Engine             | MTU 8896|  - SGLang / TRT-LLM MoE MXFP4 Kernels        |  |
-|  |  - KV/State Pool (derived): ~443 GB              |         |  - KV/State Pool (derived): ~443 GB          |  |
-|  +--------------------------+-----------------------+         +----------------------+-----------------------+  |
-+-----------------------------|--------------------------------------------------------|--------------------------+
-                              |                                                        |
-                              +---------------------------+----------------------------+
-                                                          | (Concurrent ReadOnlyMany Attach)
-                                                          v
-+-----------------------------------------------------------------------------------------------------------------+
-|                                   Tier 0: Hyperdisk ML (`ROX` Multi-Node Storage)                               |
-|                         `2,000 GB` (`2 TB`) Shared Model Weight Storage                                         |
-|  - Shared ReadOnlyMany (`ROX`) persistent storage eliminating node cold-start downloads                         |
-|  - Instant Pod Hydration (measured 17 min 03 s warm recovery) concurrently attached to all N serving nodes      |
-+-----------------------------------------------------------------------------------------------------------------+
-```
+![Kimi K3 serving architecture on GKE Blackwell](assets/architecture.png)
+
+<sub>Editable vector source: [`assets/architecture.svg`](assets/architecture.svg).</sub>
+
+Reading the diagram in one paragraph: a private ILB fronts the **Tier 1**
+LiteLLM gateway on port 4000, which independently talks to Memorystore Redis
+(exact-match prompt cache), Cloud SQL (virtual keys and budgets), BigQuery
+(audit sink) and Cloud Monitoring (GMP + DCGM). It routes into **one**
+serving replica, which is a single Leader/Worker MPI world spanning **both**
+`a4-highgpu-8g` nodes as one TP=16 / PP=1 / EP=16 group — a replica is always
+a 2-node pair, never a single node, and the shipped node pool default
+(`max = 2`) therefore yields exactly one replica. Each node contributes 8x
+B200 HGX (1,440 GB HBM3e), roughly 780 GB of MXFP4 weight shard and a ~443 GB
+KV/recurrent-state pool, with NVLink inside the node and RoCEv2 GPUDirect
+RDMA across it. Storage is not a cache hierarchy: **Tier 3** GCS hydrates the
+**Tier 0** Hyperdisk ML volume once, Tier 0 is then mounted `ReadOnlyMany`
+straight into every serving pod, and the **Tier 2** local NVMe array is
+node-local scratch for MPI shared memory — never fed from Tier 0.
 
 ### ☁️ Google Cloud Products & Architectural Roles
 
