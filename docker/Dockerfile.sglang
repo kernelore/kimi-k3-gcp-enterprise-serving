@@ -1,5 +1,5 @@
 # Pinned SGLang Blackwell container image for Kimi K3 MXFP4 multi-node serving
-FROM lmsysorg/sglang:kimi-k3@sha256:81a9c00654b3e4c7c681a4728a64fcb4853aa698dc9fea1959bbf4eb26bfb2e5
+FROM lmsysorg/sglang:kimi-k3@sha256:6d9594a421be244f2af29d726158ebffe9c3c2b3f39b5b89affd8150a106e187
 
 # Install fla-core for Kimi Delta Attention (KDA) linear-attention layers and hf_transfer
 RUN pip install --no-cache-dir fla-core hf_transfer
