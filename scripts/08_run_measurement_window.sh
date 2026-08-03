@@ -158,6 +158,7 @@ STATE_ROOT="${PROJECT_ROOT}/benchmarks/results/windows/${RUN_LABEL}"
 LOG_DIR="${STATE_ROOT}/logs"
 SWEEP_STATE="${STATE_ROOT}/sweep"
 STAGE_DIR="${STATE_ROOT}/stages"
+ACTIVE_MARKER="${STATE_ROOT}/ACTIVE"
 RESULTS_DIR="${PROJECT_ROOT}/benchmarks/results/${INFERENCE_ENGINE:-sglang}"
 
 stage_wanted() { [[ ",${STAGES}," == *",$1,"* ]]; }
@@ -237,6 +238,10 @@ do_teardown() {
 on_exit() {
   local rc=$?
   do_teardown "exit rc=${rc}" || true
+  # Dropped only after the teardown has been attempted. While it exists the
+  # watchdog treats the cluster as this window's to destroy; removing it first
+  # would open a gap where neither of them owns the cleanup.
+  rm -f "${ACTIVE_MARKER}"
   elapsed_note
   say "window ${RUN_LABEL} finished with rc=${rc}; logs in ${LOG_DIR}"
   exit "${rc}"
@@ -252,12 +257,33 @@ arm_watchdog() {
 # Detached dead-man's switch. Destroys the stack if the runner dies without
 # cleaning up, or if the wall-clock deadline passes. Deliberately dependency
 # free and deliberately not set -e: it must survive its own errors.
-runner_pid="$1"; deadline="$2"; root="$3"; logdir="$4"; cluster="$5"
+runner_pid="$1"; deadline="$2"; root="$3"; logdir="$4"; cluster="$5"; active="$6"
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] watchdog: $*" >> "${logdir}/watchdog.log"; }
 
 cluster_up() {
   gcloud container clusters list --filter="name=${cluster}" \
     --format='value(name)' 2>/dev/null | grep -q .
+}
+
+# Only one window may own the cluster. Without this a watchdog left over from a
+# dead run would wake up during its grace period, see the cluster a *later* run
+# had just created, and destroy someone else's work mid-sweep. Ownership is the
+# ACTIVE marker: this watchdog's runner removes its own on a clean exit, and any
+# other window's marker means the cluster is not ours to tear down.
+owns_cluster() {
+  local other
+  if [ ! -f "${active}" ]; then
+    log "own ACTIVE marker is gone -- runner cleaned up; not ours to destroy"
+    return 1
+  fi
+  for other in "$(dirname "$(dirname "${active}")")"/*/ACTIVE; do
+    [ -e "${other}" ] || continue
+    if [ "${other}" != "${active}" ]; then
+      log "another window holds ${other}; deferring to it"
+      return 1
+    fi
+  done
+  return 0
 }
 
 force_destroy() {
@@ -277,26 +303,54 @@ while true; do
     sleep 120
     kill -KILL "${runner_pid}" 2>/dev/null
     if cluster_up; then force_destroy; else log "cluster already gone"; fi
+    rm -f "${active}"
     exit 0
   fi
   if ! kill -0 "${runner_pid}" 2>/dev/null; then
     log "runner gone; allowing 300s for its own trap to finish"
     sleep 300
+    if ! owns_cluster; then
+      exit 0
+    fi
     if cluster_up; then
       log "cluster still up after grace period -- the runner's trap did not clean up"
       force_destroy
     else
       log "cluster gone; nothing to do"
     fi
+    rm -f "${active}"
     exit 0
   fi
 done
 WATCHDOG
   chmod +x "${wd}"
+  echo "$$" > "${ACTIVE_MARKER}"
   setsid nohup bash "${wd}" "$$" "${DEADLINE_EPOCH}" "${PROJECT_ROOT}" \
-    "${LOG_DIR}" "${CLUSTER_NAME}" < /dev/null > /dev/null 2>&1 &
+    "${LOG_DIR}" "${CLUSTER_NAME}" "${ACTIVE_MARKER}" < /dev/null > /dev/null 2>&1 &
   WATCHDOG_PID="$!"
   say "watchdog armed (pid ${WATCHDOG_PID}), deadline $(date -u -d "@${DEADLINE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
+}
+
+# Refuse to start while another window still claims the cluster. Two runners
+# against one cluster name is not a race worth losing at $92/h.
+assert_sole_owner() {
+  local other
+  # Our own label is checked too, not skipped. Re-running a label whose previous
+  # run is still alive is the most likely way to end up with two windows on one
+  # cluster, and at this point our marker can only hold that older run's pid --
+  # arm_watchdog does not write ours until after this returns.
+  for other in "${PROJECT_ROOT}"/benchmarks/results/windows/*/ACTIVE; do
+    [ -e "${other}" ] || continue
+    local pid
+    pid="$(cat "${other}" 2>/dev/null || echo "")"
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+      echo "ERROR: window $(basename "$(dirname "${other}")") is still running (pid ${pid})." >&2
+      echo "       Two windows against cluster ${CLUSTER_NAME} would fight over it." >&2
+      exit 1
+    fi
+    echo "NOTE: clearing stale ACTIVE marker from $(basename "$(dirname "${other}")") (pid ${pid:-?} is gone)"
+    rm -f "${other}"
+  done
 }
 
 # ------------------------------------------------------------------------------
@@ -371,9 +425,19 @@ stage_deploy() {
   say "STAGE deploy: cluster, image, weights, serving StatefulSet"
   say "  (GPU pool min is 0, so nothing bills until the StatefulSet lands)"
   bash "${SCRIPT_DIR}/01_setup_and_check.sh"      >> "${LOG_DIR}/01_setup.log" 2>&1
-  AUTO_APPROVE=true \
+
+  # 02 and 03 refuse to create billable resources without LIVE_VALIDATION=yes.
+  # Setting it here is the point at which this run stops being a rehearsal, so
+  # it is set on the two commands that need it rather than exported for the
+  # whole script, and it is announced. A guard that is silently satisfied at the
+  # top of a 500-line file is decoration; the log should be able to answer
+  # "when did this start costing money, and what authorised it".
+  say "  AUTHORISING BILLABLE RESOURCES (LIVE_VALIDATION=yes)"
+  say "  ceiling ${BUDGET_HOURS} h -> ~\$$(python3 -c "print(int(${BUDGET_HOURS} * 92))") at ~\$92/h"
+  LIVE_VALIDATION=yes AUTO_APPROVE=true \
   bash "${SCRIPT_DIR}/02_deploy_infra.sh"         >> "${LOG_DIR}/02_infra.log" 2>&1
-  say "  infra up; GPU meter starts now"
+  say "  infra up; GPU meter starts when the StatefulSet lands"
+  LIVE_VALIDATION=yes \
   bash "${SCRIPT_DIR}/03_deploy_workloads.sh"     >> "${LOG_DIR}/03_workloads.log" 2>&1
   bash "${SCRIPT_DIR}/04_verify_cluster.sh"       >> "${LOG_DIR}/04_verify.log" 2>&1
   say "  cluster verified"
@@ -502,6 +566,7 @@ say "budget        ${BUDGET_HOURS} h -> forced teardown at $(date -u -d "@${DEAD
 say "state         ${STATE_ROOT}"
 echo "=============================================================================="
 
+assert_sole_owner
 arm_watchdog
 
 for stage in deploy sweep kv prefix collect; do

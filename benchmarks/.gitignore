@@ -13,3 +13,10 @@ results/
 # integrity audit read by exact name, so committing both publishes identical bytes twice
 # under two names. Must stay below the un-ignore rules above to take effect.
 results/*/incluster_*.json
+
+# ...and except the measurement-window scratch tree written by
+# scripts/08_run_measurement_window.sh. Its raw deploy and teardown logs carry the real
+# project ID and cluster names, and this repository is public. Curated result JSON is
+# copied out of here into results/<engine>/ deliberately, never swept in wholesale.
+# Also must stay below the un-ignore rules above: `!results/*/` would re-include it.
+results/windows/
