@@ -1,5 +1,16 @@
 # Pinned SGLang Blackwell container image for Kimi K3 MXFP4 multi-node serving
-FROM lmsysorg/sglang:kimi-k3@sha256:81a9c00654b3e4c7c681a4728a64fcb4853aa698dc9fea1959bbf4eb26bfb2e5
+#
+# Do not read the version out of the image ENV. This digest carries three layers
+# on top of the v0.5.16 build: a `COPY overlay/ /sgl-workspace/sglang/` that
+# replaces the Python `srt` and `kernels` trees with sgl-project/sglang branch
+# `kimi-k3` at c6ad1f26, then a compileall. `SGLANG_BUILD_COMMIT` and
+# `org.opencontainers.image.revision` still say fdebc938 because they are baked
+# into the base layer underneath, but the Python actually on disk is ~225
+# commits newer. Verify flags against c6ad1f26 (see the `ai.radixark.overlay.*`
+# labels for the authoritative source ref), not against the build commit.
+#
+# The compiled sgl-kernel wheel is NOT overlaid; it remains the fdebc938 build.
+FROM lmsysorg/sglang:kimi-k3@sha256:6d9594a421be244f2af29d726158ebffe9c3c2b3f39b5b89affd8150a106e187
 
 # Install fla-core for Kimi Delta Attention (KDA) linear-attention layers and hf_transfer
 RUN pip install --no-cache-dir fla-core hf_transfer

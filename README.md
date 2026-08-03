@@ -48,7 +48,7 @@ RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 | **Cloud SQL for PostgreSQL** | `module.database` | Private database accessed via Cloud SQL Auth Proxy storing virtual API keys, user budgets, and gateway routing configurations. |
 | **BigQuery** | `module.audit` | Serverless audit dataset (`kimi_k3_enterprise_audit`) for asynchronous logging of conversation trajectories and token telemetry. |
 | **Cloud Storage (GCS)** | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Remote Terraform state versioning and the weight hydration backup bucket. |
-| **Artifact Registry** | `module.storage` | Secure private container registry hosting the custom SGLang and experimental TensorRT-LLM Blackwell serving images. The image actually built and deployed is `${REGION}-docker.pkg.dev/${PROJECT_ID}/kimi-prod/sglang-blackwell:latest` (`03_deploy_workloads.sh:237`) — a **mutable tag**, not a digest. The digest pin sits one level up, on the base image in `docker/Dockerfile.sglang`: `FROM lmsysorg/sglang:kimi-k3@sha256:81a9c00654b3e4c7c681a4728a64fcb4853aa698dc9fea1959bbf4eb26bfb2e5`. |
+| **Artifact Registry** | `module.storage` | Secure private container registry hosting the custom SGLang and experimental TensorRT-LLM Blackwell serving images. The image actually built and deployed is `${REGION}-docker.pkg.dev/${PROJECT_ID}/kimi-prod/sglang-blackwell:latest` (`03_deploy_workloads.sh:237`) — a **mutable tag**, not a digest. The digest pin sits one level up, on the base image in `docker/Dockerfile.sglang`: `FROM lmsysorg/sglang:kimi-k3@sha256:6d9594a421be244f2af29d726158ebffe9c3c2b3f39b5b89affd8150a106e187`. |
 | **Cloud Build** | `scripts/03_deploy_workloads.sh` | Serverless build pipeline for automated, self-healing image compilation from `docker/Dockerfile`. |
 | **Virtual Private Cloud (VPC)** | `module.network` | Private network topology with Private Services Access (PSA), IAP SSH restrictions, and secondary RoCEv2 fabric (MTU 8896). |
 | **Managed Service for Prometheus (GMP)** | `module.observability` | Native metrics pipeline capturing NVIDIA DCGM GPU metrics and serving request telemetry. |
@@ -564,7 +564,7 @@ kimi-k3-gcp-enterprise-serving/
 │   └── telemetry_sanitizer.py     # Redacts API keys and sensitive fields from telemetry before publication
 ├── docker/                        # Container definitions for custom serving runtimes
 │   ├── Dockerfile                 # Experimental TensorRT-LLM serving container image definition
-│   └── Dockerfile.sglang          # Primary default SGLang serving container image (lmsysorg/sglang:kimi-k3@sha256:81a9c006...)
+│   └── Dockerfile.sglang          # Primary default SGLang serving container image (lmsysorg/sglang:kimi-k3@sha256:6d9594a4...)
 ├── scripts/                       # Automated lifecycle Bash & Python scripts
 │   ├── 01_setup_and_check.sh      # Preflight CLI checks, password generation, API enablement, tfvars sync
 │   ├── 02_deploy_infra.sh         # Terraform infrastructure provisioning (VPC, GKE, Spot VMs, Cloud SQL, Redis)

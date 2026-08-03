@@ -23,6 +23,19 @@ nothing about how a request was issued or timed depends on it.
 They have been left as measured rather than corrected in place. Runs made after the fix
 carry the right value in both places.
 
+## Which image produced these files
+
+Every file in `sglang/` was measured against base digest
+`lmsysorg/sglang:kimi-k3@sha256:81a9c006…`. `docker/Dockerfile.sglang` has since moved to
+`sha256:6d9594a4…`, which is the same v0.5.16 base plus a source overlay from
+`sgl-project/sglang@c6ad1f26` — about 225 commits of newer Python over the `srt` and
+`kernels` trees, with the compiled kernel wheel left at the older build.
+
+Nothing in this tree was re-measured for that move, and no gate catches it: the recorded
+`metadata.engine_version` is derived from the image *tag* (`kimi-k3`), which did not change,
+so the provenance checks pass either way. Treat a comparison between these numbers and
+anything measured on `6d9594a4…` as cross-image, not like-for-like.
+
 ## Saturation prompt calibration
 
 `saturation_results.json` records the calibration constant its run used in
