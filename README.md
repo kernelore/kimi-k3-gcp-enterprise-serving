@@ -48,7 +48,7 @@ RoCEv2 (`3.2 Tbps` per node inter-node interconnect, MTU 8896) operating under
 | **Cloud SQL for PostgreSQL** | `module.database` | Private database accessed via Cloud SQL Auth Proxy storing virtual API keys, user budgets, and gateway routing configurations. |
 | **BigQuery** | `module.audit` | Serverless audit dataset (`kimi_k3_enterprise_audit`) for asynchronous logging of conversation trajectories and token telemetry. |
 | **Cloud Storage (GCS)** | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Remote Terraform state versioning and the weight hydration backup bucket. |
-| **Artifact Registry** | `module.storage` | Secure private container registry hosting the custom SGLang and experimental TensorRT-LLM Blackwell serving images. The image actually built and deployed is `${REGION}-docker.pkg.dev/${PROJECT_ID}/kimi-prod/sglang-blackwell:latest` (`03_deploy_workloads.sh:237`) — a **mutable tag**, not a digest. The digest pin sits one level up, on the base image in `docker/Dockerfile.sglang`: `FROM lmsysorg/sglang:kimi-k3@sha256:6d9594a421be244f2af29d726158ebffe9c3c2b3f39b5b89affd8150a106e187`. |
+| **Artifact Registry** | `module.storage` | Secure private container registry hosting the custom SGLang and experimental TensorRT-LLM Blackwell serving images. The image actually built and deployed is `${REGION}-docker.pkg.dev/${PROJECT_ID}/kimi-prod/sglang-blackwell:latest` (`03_deploy_workloads.sh:264`) — a **mutable tag**, not a digest. The digest pin sits one level up, on the base image in `docker/Dockerfile.sglang`: `FROM lmsysorg/sglang:kimi-k3@sha256:6d9594a421be244f2af29d726158ebffe9c3c2b3f39b5b89affd8150a106e187`. |
 | **Cloud Build** | `scripts/03_deploy_workloads.sh` | Serverless build pipeline for automated, self-healing image compilation from `docker/Dockerfile`. |
 | **Virtual Private Cloud (VPC)** | `module.network` | Private network topology with Private Services Access (PSA), IAP SSH restrictions, and secondary RoCEv2 fabric (MTU 8896). |
 | **Managed Service for Prometheus (GMP)** | `module.observability` | Native metrics pipeline capturing NVIDIA DCGM GPU metrics and serving request telemetry. |
@@ -417,8 +417,15 @@ queueing and TTFT. It is not the harness's `tpot_ms` field; see the caveat below
   DSPARK run, identical at $1k$, $8k$ and $32k$, so it is chat-template overhead. At the
   worst cell it is 0.2% of run duration (under 1.5% even at a pessimistic 2,000 tok/s
   prefill rate) and cannot account for a 2.00x-3.82x gap.
-* **$32k/2k$ at $c=16$ and $c=32$ was not run** on these optional profiles — GPU time on
-  the spot pair ran out. Those cells are absent, not omitted for being unfavourable.
+* **$32k/2k$ at $c=16$ and $c=32$ was refused by the harness, not lost to a clock.** The
+  sweep declines any cell whose in-flight prompt tokens exceed
+  `MAX_INFLIGHT_PROMPT_TOKENS`, and it declines before issuing a request, so no GPU time
+  was spent on them either way. At $32k$ those cells need 524,288 and 1,048,576 in-flight
+  tokens against the 265,000 cap the optional profiles were run under, and each result
+  file records the arithmetic verbatim: `status: skipped`, with the reason. They are
+  reproducible by raising the cap, not by buying more hours — the earlier claim that
+  "GPU time ran out" was wrong on both counts. Absent, not omitted for being
+  unfavourable.
 
 <!-- EXTERNAL_COMPARISON_START -->
 <!-- Third-party citation block. The legacy-model-string guards (tests/test_cases_t1.sh
@@ -513,7 +520,7 @@ To eliminate multi-hour weight downloads when scaling compute pods, the architec
 | Tier | Medium | Capacity | Role |
 | :--- | :--- | :--- | :--- |
 | **Tier 0** | Hyperdisk ML `ROX`, XFS (`nouuid, ro, norecovery`) | 2,000 GB (2 TB) | Pre-staged MXFP4 shards, concurrently read-mounted across all 2N nodes. |
-| **Tier 2** | Local NVMe SSD RAID 0 (`/mnt/scratch`) | 32 x 375 GiB = 11.7 TiB per node | MPI shared-memory exchange and runtime staging. |
+| **Tier 2** | Local NVMe SSD RAID 0 (`/mnt/scratch`) | 32 x 375 GiB = 11.7 TiB per node | DSPARK draft weights (`/mnt/draft`) and the hicache `file` backend (`/mnt/scratch/hicache`). Not MPI shared memory — that is `/dev/shm`, a 512 GiB RAM-backed `emptyDir`. |
 | **Tier 3** | GCS `gs://<project>-kimi-k3-weights-backup` | 1,458 GiB = 1,453.7 base + 4.19 draft (~$29/mo, outside TF state) | Persistent backup; hydrates Tier 0 at a measured 2.1 GiB/s. |
 
 ### Weight Backup Hydration Lifecycle
@@ -557,10 +564,14 @@ kimi-k3-gcp-enterprise-serving/
 ├── benchmarks/                    # Synthetic load testing and stress benchmark Python suites
 │   ├── benchmark_kimi_k3.py       # Standard enterprise performance benchmark (TTFT, TPOT, Throughput)
 │   ├── generate_comparison.py     # Parity validator; regenerates the engine comparison table between the README markers
+│   ├── kv_accuracy_gate.py        # Needle-in-haystack accuracy gate for fp8 KV, with a bf16-vs-bf16 self-consistency floor
 │   ├── massive_benchmark_kimi_k3.py # High-concurrency stress test simulating 20 agent streams
 │   ├── run_prefill_benchmark_kimi_k3.py # Empirical prompt-ingestion prefill benchmark (8k-in/16-out)
+│   ├── run_prefix_reuse_bench.py  # Prefix-reuse benchmark; measures whether a third cache tier helps a 69/93 linear-attention model
+│   ├── run_realistic_sweep_kimi_k3.py # Two-arm sweep: repeated-passage vs non-repetitive corpus (default c=8,16,32)
 │   ├── run_saturation_sweep_kimi_k3.py # Direct engine saturation sweep (default c=1,8,32,128)
 │   ├── soak_benchmark_kimi_k3.py  # 30-minute continuous stability endurance test (1,800 seconds)
+│   ├── sweep_decision.py          # Pre-registered keep/back-out rule for tuning variants (exit 0 accept, 1 back out, 2 undecidable)
 │   └── telemetry_sanitizer.py     # Redacts API keys and sensitive fields from telemetry before publication
 ├── docker/                        # Container definitions for custom serving runtimes
 │   ├── Dockerfile                 # Experimental TensorRT-LLM serving container image definition
@@ -572,6 +583,7 @@ kimi-k3-gcp-enterprise-serving/
 │   ├── 04_verify_cluster.sh       # 5-point verification suite (Nodes, Gateway, Virtual Keys, Caching, BigQuery)
 │   ├── 05_run_benchmarks.sh       # Automated benchmark runner with in-cluster soak and workstation modes
 │   ├── 06_destroy_all.sh          # Self-healing teardown script with database role and peering guards
+│   ├── 07_run_tuning_sweep.sh     # Resumable Phase B/C tuning sweep driver; checkpoints per variant, judges via sweep_decision.py
 │   ├── check_bq.py                # Python audit client querying real-time BigQuery trajectory streams
 │   ├── config.env.example         # Template configuration for environment variables and resource tags
 │   ├── requirements.txt           # Python client dependencies (BigQuery and Cloud Storage)
@@ -584,7 +596,8 @@ kimi-k3-gcp-enterprise-serving/
 │   │                              # database, cache, audit, gateway_iam, observability
 │   └── manifests/                 # Kubernetes YAML templates and generated runtime manifests
 └── tests/                         # Offline suites: tiered cases t1-t5, adversarial gates, secret scan,
-                                   # render exceptions, dependency floors, NCCL parse and provenance checks
+                                   # render exceptions, dependency floors, NCCL parse, provenance checks,
+                                   # and the corpus, prefix-reuse, KV-accuracy and sweep-decision gates
 ```
 
 ---
