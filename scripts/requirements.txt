@@ -1,2 +1,2 @@
-google-cloud-bigquery>=3.42.2
+google-cloud-bigquery>=3.42.3
 google-cloud-storage>=3.13.0

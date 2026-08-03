@@ -18,7 +18,7 @@ FLOORS = {
     },
     "scripts/requirements.txt": {
         "google-cloud-storage": "3.13.0",
-        "google-cloud-bigquery": "3.42.2",
+        "google-cloud-bigquery": "3.42.3",
     },
     ".github/workflows/ci.yml": {
         "actions/checkout": 7,
