@@ -59,7 +59,7 @@ Usage: $0 [OPTIONS]
 Execute Kimi K3 performance benchmarks against the GKE serving stack.
 
 Options:
-  --mode <standard|massive|soak|prefill|saturation|realistic|prefix-reuse|all>  Benchmark suite to run (default: all)
+  --mode <standard|massive|soak|prefill|saturation|realistic|prefix-reuse|kv-accuracy|all>  Benchmark suite to run (default: all)
                                    - standard:   8 concurrent requests, 128 tokens
                                    - massive:    20 concurrent requests, 256 tokens (stress test)
                                    - soak:       30-minute continuous stability endurance test
@@ -75,6 +75,13 @@ Options:
                                                  radix cache, the NVMe cache tier or --schedule-policy lpm buy
                                                  anything on a model where 69 of 93 layers are linear-attention
                                                  and hold no reusable KV. Also a diagnostic, also not in 'all'.
+                                   - kv-accuracy: one capture of the fp8 KV accuracy probe set. Answers whether
+                                                 --kv-cache-dtype fp8_e4m3 costs correctness, which is settled
+                                                 before its throughput is looked at. Reaching a verdict needs
+                                                 three captures -- bf16 twice for the self-consistency floor,
+                                                 then fp8 -- so set KV_ACCURACY_LABEL and KV_ACCURACY_DTYPE per
+                                                 run and compare them offline afterwards with
+                                                 'kv_accuracy_gate.py compare'. Also a diagnostic, not in 'all'.
                                    - all:        Run the 5 published benchmark suites sequentially
   --target <gateway|serving>     Target endpoint for benchmarking (default: gateway)
                                    - gateway: LiteLLM Enterprise Proxy (port 4000) with virtual keys & Redis auth
@@ -266,6 +273,15 @@ if [ "${IN_CLUSTER}" = "true" ]; then
     saturation) BENCH_SCRIPT="run_saturation_sweep_kimi_k3.py";   BENCH_LABEL="Saturation Sweep" ;;
     realistic)  BENCH_SCRIPT="run_realistic_sweep_kimi_k3.py";    BENCH_LABEL="Prompt Sensitivity Sweep" ;;
     prefix-reuse) BENCH_SCRIPT="run_prefix_reuse_bench.py";       BENCH_LABEL="Prefix Reuse Bench" ;;
+    kv-accuracy)
+      # The Job template invokes `python3 <script> --endpoint=... --output=...`
+      # and this mode's CLI takes a `capture` subcommand before its flags, so
+      # the sed substitution above would emit a Job that fails on startup.
+      # Saying so is better than shipping one that dies after the pull.
+      echo "ERROR: '--mode kv-accuracy' cannot run in-cluster: the Job template has no slot for the 'capture' subcommand." >&2
+      echo "       Run it from the host against the gateway or serving endpoint instead." >&2
+      exit 1
+      ;;
     *)
       echo "ERROR: Unsupported mode '${MODE}' for --in-cluster benchmark."
       exit 1
@@ -619,6 +635,70 @@ if [ "${MODE}" = "prefix-reuse" ]; then
   fi
 fi
 
+if [ "${MODE}" = "kv-accuracy" ]; then
+  echo ""
+  echo "------------------------------------------------------------------------------"
+  sleep 1
+  echo "--> 9. Capturing fp8 KV accuracy probe set..."
+  echo "------------------------------------------------------------------------------"
+  sleep 1
+
+  # The label is what tells one capture from another, and comparing a capture
+  # against itself would report a perfect score for any dtype. Refuse rather
+  # than overwrite: each of these costs a full pass over 50 long-context probes
+  # on a running cluster, and two of the three need a StatefulSet restart
+  # between them.
+  KV_LABEL="${KV_ACCURACY_LABEL:-}"
+  if [ -z "${KV_LABEL}" ]; then
+    echo "ERROR: KV_ACCURACY_LABEL must be set (e.g. bf16-a, bf16-b, fp8) so captures can be told apart." >&2
+    exit 1
+  fi
+  KV_OUT="${RESULTS_DIR}/kv_accuracy_${KV_LABEL}.json"
+  if [ -e "${KV_OUT}" ]; then
+    echo "ERROR: ${KV_OUT} already exists; refusing to overwrite a capture. Use a different KV_ACCURACY_LABEL." >&2
+    exit 1
+  fi
+
+  KVA_ARGS=(
+    "capture"
+    "--endpoint=${TARGET_URL}"
+    "--output=${KV_OUT}"
+    "--api-key=${DEV_KEY}"
+    "--model=${SERVING_MODEL_NAME}"
+    "--engine=${ENGINE}"
+    "--label=${KV_LABEL}"
+  )
+  [ -n "${KV_ACCURACY_DTYPE:-}" ]           && KVA_ARGS+=("--kv-cache-dtype=${KV_ACCURACY_DTYPE}")
+  [ -n "${KV_ACCURACY_CONTEXT_TOKENS:-}" ]  && KVA_ARGS+=("--context-tokens=${KV_ACCURACY_CONTEXT_TOKENS}")
+  [ -n "${KV_ACCURACY_DEPTHS:-}" ]          && KVA_ARGS+=("--depths=${KV_ACCURACY_DEPTHS}")
+  [ -n "${KV_ACCURACY_PROBES_PER_DEPTH:-}" ] && KVA_ARGS+=("--probes-per-depth=${KV_ACCURACY_PROBES_PER_DEPTH}")
+  [ -n "${KV_ACCURACY_MAX_TOKENS:-}" ]      && KVA_ARGS+=("--max-tokens=${KV_ACCURACY_MAX_TOKENS}")
+  [ -n "${KV_ACCURACY_CORPUS_SEED:-}" ]     && KVA_ARGS+=("--corpus-seed=${KV_ACCURACY_CORPUS_SEED}")
+
+  if [ -z "${KV_ACCURACY_DTYPE:-}" ]; then
+    echo "    NOTE: KV_ACCURACY_DTYPE is unset, so this capture will not record which KV dtype produced it."
+  fi
+
+  if [ -f "${PROJECT_ROOT}/benchmarks/kv_accuracy_gate.py" ]; then
+    echo "    Verifying each needle is planted once at the depth it claims..."
+    if ! python3 "${PROJECT_ROOT}/benchmarks/kv_accuracy_gate.py" capture --label="${KV_LABEL}" --self-check \
+         ${KV_ACCURACY_CONTEXT_TOKENS:+"--context-tokens=${KV_ACCURACY_CONTEXT_TOKENS}"} \
+         ${KV_ACCURACY_DEPTHS:+"--depths=${KV_ACCURACY_DEPTHS}"} \
+         ${KV_ACCURACY_PROBES_PER_DEPTH:+"--probes-per-depth=${KV_ACCURACY_PROBES_PER_DEPTH}"} \
+         ${KV_ACCURACY_CORPUS_SEED:+"--corpus-seed=${KV_ACCURACY_CORPUS_SEED}"}; then
+      echo "ERROR: Probe self-check failed; refusing to run the capture." >&2
+      exit 1
+    fi
+    python3 "${PROJECT_ROOT}/benchmarks/kv_accuracy_gate.py" "${KVA_ARGS[@]}" || echo "WARNING: KV accuracy capture reported errors or timeouts."
+    echo ""
+    echo "    Capture written. Once bf16-a, bf16-b and fp8 all exist, reach a verdict with:"
+    echo "      python3 benchmarks/kv_accuracy_gate.py compare \\"
+    echo "        --baseline ${RESULTS_DIR}/kv_accuracy_bf16-a.json \\"
+    echo "        --repeat   ${RESULTS_DIR}/kv_accuracy_bf16-b.json \\"
+    echo "        --candidate ${RESULTS_DIR}/kv_accuracy_fp8.json"
+  fi
+fi
+
 # 8. Display Benchmark Summary (with 16x B200 GPU normalization factor)
 echo ""
 echo "=============================================================================="
@@ -764,6 +844,30 @@ for line in v.get('interpretation', []):
     print('  * ' + line)
 " 2>/dev/null || true
 fi
+
+# Every capture this run produced, not just the last one -- a run that only
+# shows the newest file reads as though the earlier captures were lost.
+for kv_file in "${RESULTS_DIR}"/kv_accuracy_*.json; do
+  [ -s "${kv_file}" ] || continue
+  echo "KV Accuracy Capture (${kv_file}):"
+  python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    d = json.load(f)
+s = d.get('summary') or {}
+ps = d.get('probe_set') or {}
+print('  - Label / declared dtype: {} / {}'.format(
+    d.get('capture_label'), d.get('kv_cache_dtype_declared')))
+print('  - Probes succeeded:       {} at {} context tokens'.format(
+    s.get('probes_succeeded'), ps.get('context_tokens')))
+print('  - Retrieval accuracy:     {}'.format(s.get('retrieval_accuracy')))
+print('  - Wrong-code rate:        {}'.format(s.get('wrong_code_rate')))
+print('  - Degenerate rate:        {}'.format(s.get('degenerate_rate')))
+for depth, acc in (s.get('retrieval_accuracy_by_depth') or {}).items():
+    print('      depth {}: {}'.format(depth, acc))
+print('  * A single capture cannot pass or fail fp8 on its own; run compare against a bf16 pair.')
+" "${kv_file}" 2>/dev/null || true
+done
 
 echo "=============================================================================="
 echo "To clean up all resources when finished, run:"
