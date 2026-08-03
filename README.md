@@ -825,13 +825,26 @@ rollout budget. Cluster logs show the backend loading and allocating normally
 on the retry, so that is a schedule failure and **not** a verdict on cutedsl.
 `B2`–`C2b` never ran.
 
+> [!CAUTION]
+> **The TTFT column above is not a prefill measurement, and it is easy to read
+> as one.** This suite issues from a pool at `requests = 2 x concurrency`, so
+> half of every cell waits for the first wave to finish generating all 1024
+> output tokens — about 1024 x 31 ms ≈ 32 s — before it is even dispatched. The
+> p50 lands between the first wave's real TTFT and the second wave's queue wait,
+> which is exactly where 18–23 s comes from. What prefill actually costs is in
+> `prefix_reuse_hicache-off.json`: a cold intercept of 1399 ms plus 0.025425 ms
+> per prefix token, so a 1536-token prompt ingests in roughly **1.4 s**. Use the
+> cold arm or `prefill_results.json` for ingestion latency; use this column only
+> to compare variants issued the same way.
+
 > [!NOTE]
-> A TTFT p50 of 18–23 s at every concurrency is the loudest signal in the table,
-> and every rank logs `BatchMLAPagedAttentionWrapper: backend='auto' selected
-> 'fa2' on SM100, which is not Blackwell-native and gives poor MLA decode
-> performance` — in the **baseline** configuration. The two untested variants
-> aimed at exactly this (`fa4` prefill backend, chunked prefill at 4096) are the
-> ones most likely to move the number.
+> The real unprompted signal is in the logs, not the table: every TP rank emits
+> `BatchMLAPagedAttentionWrapper: backend='auto' selected 'fa2' on SM100, which
+> is not Blackwell-native and gives poor MLA decode performance` — in the
+> **baseline** configuration. MLA decode is running on a non-Blackwell path on
+> Blackwell hardware, and no variant in the nine-row table changes it. Nothing
+> here measures what a Blackwell-native MLA decode backend would be worth, which
+> makes it the strongest untested candidate on the list.
 
 ---
 
