@@ -591,10 +591,27 @@ restart_with_env() {
     -o jsonpath='{.metadata.generation}' 2>/dev/null || echo "")"
 
   if [ -n "${gen_before}" ] && [ "${gen_before}" = "${gen_after}" ]; then
-    say "${label}: StatefulSet spec unchanged (generation ${gen_after}), no restart needed"
-    return 0
+    say "${label}: StatefulSet spec unchanged (generation ${gen_after}), no restart triggered"
+  else
+    say "${label}: spec changed (generation ${gen_before:-none} -> ${gen_after})"
   fi
-  say "${label}: spec changed (generation ${gen_before:-none} -> ${gen_after}), waiting for the rollout"
+
+  # Wait whether or not this apply moved the spec. "No restart is needed" and
+  # "the cluster is serving" are different claims, and the first was being used
+  # as the second: on the unchanged branch this returned straight into the
+  # benchmark. A StatefulSet can sit at exactly the spec just applied and still
+  # have no ready pods -- a preempted node, an earlier leg's rollout still
+  # converging, a crash loop.
+  #
+  # That is not hypothetical. On 2026-08-03 a B200 spot node was preempted
+  # partway through the hicache-on prefix arm; the cold and warm arms had
+  # already been measured, and the evicted and mixed arms recorded 0 successful
+  # requests out of 2 and 64. The harness reported that honestly rather than
+  # inventing numbers, but the leg still had to be paid for twice.
+  #
+  # rollout status returns immediately when everything is already ready, so the
+  # unchanged-and-healthy case costs nothing.
+  say "${label}: waiting for the StatefulSet to report ready"
   if ! kubectl rollout status "statefulset/${STATEFULSET}" -n "${NAMESPACE}" \
        --timeout="${READY_TIMEOUT}s" >> "${LOG_DIR}/${label}.log" 2>&1; then
     say "ERROR: ${label} rollout did not complete within ${READY_TIMEOUT}s"
