@@ -228,6 +228,12 @@ Kimi K3 Measurement Window - DRY RUN
     Guardrails asserted: POPULATE_WEIGHTS_CACHE=false PURGE_WEIGHTS_BACKUP=false
                          FORCE_WEIGHT_JOB=false
     Teardown:       EXIT trap + detached watchdog (deadline and PID based)
+    On success:     destroyed immediately
+    On failure:     $(if [ "${HOLD_ON_FAILURE}" = "true" ]; then
+                      echo "HELD for diagnosis, still billing, destroyed at the deadline above"
+                    else
+                      echo "destroyed immediately (--destroy-on-failure)"
+                    fi)
 
     Nothing was created. Drop --dry-run to run it.
 ==============================================================================
@@ -421,6 +427,9 @@ WATCHDOG
     < /dev/null > /dev/null 2>&1 &
   WATCHDOG_PID="$!"
   say "watchdog armed (pid ${WATCHDOG_PID}), deadline $(date -u -d "@${DEADLINE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
+  if [ "${HOLD_ON_FAILURE}" = "true" ]; then
+    say "  on failure the cluster is HELD, not destroyed -- it keeps billing until the deadline"
+  fi
 }
 
 # Refuse to start while another window still claims the cluster. Two runners
