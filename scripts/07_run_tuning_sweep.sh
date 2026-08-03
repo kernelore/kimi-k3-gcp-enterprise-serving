@@ -40,6 +40,8 @@ GENERATED_DIR="${TF_DIR}/manifests/generated"
 
 NAMESPACE="llm-serving"
 STATEFULSET="kimi-k3-serving"
+# shellcheck source=scripts/lib/serving_render_defaults.sh disable=SC1091
+source "${SCRIPT_DIR}/lib/serving_render_defaults.sh"
 
 VARIANTS=""
 # The realistic harness, not the saturation one. Two reasons, and both of them
@@ -462,8 +464,16 @@ render_serving_manifest() {
     echo "ERROR: could not read BASE_ALLOWED_VARS from 03_deploy_workloads.sh" >&2
     return 1
   fi
+
+  # The allow-list is only half of what sharing with 03 needs to be: it controls which
+  # names may be substituted and says nothing about their values. See the header of
+  # lib/serving_render_defaults.sh -- this is what failed all nine variants of the first
+  # live sweep, on a cluster that was up and answering inference correctly.
+  ensure_serving_render_env || return 1
+
   mkdir -p "$(dirname "${out}")"
   safe_envsubst "${allowed}" < "${template}" > "${out}"
+  assert_manifest_valid "${out}" || return 1
 }
 
 wait_for_ready() {
@@ -801,5 +811,33 @@ if [ "${INTERRUPTED}" = "true" ]; then
   echo "  Run was interrupted; re-run the same command to resume."
   exit 130
 fi
+
+# accepted, backed_out and undecided are all outcomes of the decision rule: the variant
+# ran, the benchmark produced numbers, and the rule read them. failed is not an outcome.
+# It means the apply was rejected, the rollout never became ready, or the benchmark never
+# ran -- an infrastructure defect wearing a verdict's clothing.
+#
+# This exists because the first live sweep marked all nine variants failed in seven
+# seconds and still exited 0, so the measurement window recorded sweep.done and moved on
+# to spend the rest of an eight-hour budget on a cluster whose sweep had produced nothing.
+# A resume then skipped the sweep entirely, because .done said it was finished.
+measured=0
+failed_count=0
+for name in "${PLANNED[@]}"; do
+  case "${CP_STATUS[${name}]:-pending}" in
+    accepted|backed_out|undecided) measured=$(( measured + 1 )) ;;
+    failed)                        failed_count=$(( failed_count + 1 )) ;;
+  esac
+done
+if [ "${failed_count}" -gt 0 ]; then
+  echo ""
+  echo "  WARNING: ${failed_count} of ${#PLANNED[@]} variant(s) failed without producing a measurement." >&2
+fi
+if [ "${measured}" -eq 0 ]; then
+  echo "  Nothing was measured. Exiting nonzero so the caller does not record this sweep as" >&2
+  echo "  complete; a partial sweep is still worth keeping, an empty one is a bug to fix." >&2
+  exit 1
+fi
+
 echo "  Still to do by hand: C0 fp8 accuracy gate, C3 hicache via the prefix-reuse bench,"
 echo "  and C4 final validation as separate sequential Jobs."

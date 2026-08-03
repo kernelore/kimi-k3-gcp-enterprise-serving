@@ -41,6 +41,8 @@ GENERATED_DIR="${TF_DIR}/manifests/generated"
 
 NAMESPACE="llm-serving"
 STATEFULSET="kimi-k3-serving"
+# shellcheck source=scripts/lib/serving_render_defaults.sh disable=SC1091
+source "${SCRIPT_DIR}/lib/serving_render_defaults.sh"
 
 BUDGET_HOURS="8"
 STAGES="deploy,sweep,kv,prefix,collect"
@@ -511,9 +513,14 @@ restart_with_env() {
              | sed "s/^BASE_ALLOWED_VARS='//; s/'$//")"
   [ -n "${allowed}" ] || { say "ERROR: could not read BASE_ALLOWED_VARS from 03"; return 1; }
 
+  # Same defect the sweep had: the allow-list was shared with 03, the values were not,
+  # so image and hostPath rendered empty and the apply was refused.
+  ensure_serving_render_env || { say "ERROR: ${label} render environment incomplete"; return 1; }
+
   [ -f "${rendered}" ] && previous_hash="$(sha256sum "${rendered}" | cut -d' ' -f1)"
   mkdir -p "${GENERATED_DIR}"
   safe_envsubst "${allowed}" < "${template}" > "${rendered}"
+  assert_manifest_valid "${rendered}" || { say "ERROR: ${label} rendered an invalid manifest"; return 1; }
   new_hash="$(sha256sum "${rendered}" | cut -d' ' -f1)"
 
   if [ "${previous_hash}" = "${new_hash}" ]; then
