@@ -251,6 +251,28 @@ spec:
           value: "${SGLANG_MOE_RUNNER_BACKEND}"
         - name: SGLANG_KV_CACHE_DTYPE
           value: "${SGLANG_KV_CACHE_DTYPE}"
+        - name: SGLANG_ENABLE_HIERARCHICAL_CACHE
+          value: "${SGLANG_ENABLE_HIERARCHICAL_CACHE}"
+        - name: SGLANG_HICACHE_RATIO
+          value: "${SGLANG_HICACHE_RATIO}"
+        - name: SGLANG_HICACHE_SIZE
+          value: "${SGLANG_HICACHE_SIZE}"
+        - name: SGLANG_HICACHE_WRITE_POLICY
+          value: "${SGLANG_HICACHE_WRITE_POLICY}"
+        - name: SGLANG_HICACHE_IO_BACKEND
+          value: "${SGLANG_HICACHE_IO_BACKEND}"
+        - name: SGLANG_HICACHE_STORAGE_BACKEND
+          value: "${SGLANG_HICACHE_STORAGE_BACKEND}"
+        # Consumed by SGLang itself, not by the launch wrapper. HiCacheFile reads this
+        # env var directly (srt/mem_cache/hicache_storage.py) and falls back to
+        # /tmp/hicache -- the container filesystem, which is the node boot disk. Pointing
+        # it at the NVMe RAID mount is the whole reason the array is mounted below.
+        - name: SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR
+          value: "${SGLANG_LOCAL_SCRATCH_MOUNT}/hicache"
+        # Bounds the on-disk cache so a long soak cannot fill the array. Eviction starts
+        # at EVICTION_RATIO of MAX_SIZE; MIN_FREE_SPACE is a hard floor in bytes.
+        - name: SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE
+          value: "${SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE}"
         - name: SGLANG_CONTEXT_LENGTH
           value: "${SGLANG_CONTEXT_LENGTH}"
         - name: SGLANG_REASONING_PARSER
@@ -400,13 +422,63 @@ spec:
           fi
           # MoE runner and KV-cache dtype are OFF by default. The SGLang cookbook's B200
           # 2-node cell sets neither; both appear only as opt-in overlays in the playground.
-          # flashinfer_mxfp4 in particular also expects SGLANG_TRTLLM_GEN_MOE_CUBIN_POOL to
-          # point at a cubin pool, which this deployment does not provide.
+          # flashinfer_mxfp4 needs SGLANG_TRTLLM_GEN_MOE_CUBIN_POOL to point at a cubin
+          # pool. The serving image already ships one: the Kimi-K3 image build downloads
+          # trtllm_gen_moe_cubin_pool into /opt/trtllm_gen_moe_cubin_pool and bakes
+          # SGLANG_TRTLLM_GEN_MOE_CUBIN_POOL into the image environment, so no staging
+          # step is required here and none is provided.
           if [ -n "${SGLANG_MOE_RUNNER_BACKEND}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --moe-runner-backend ${SGLANG_MOE_RUNNER_BACKEND}"
           fi
           if [ -n "${SGLANG_KV_CACHE_DTYPE}" ]; then
             EXTRA_ARGS="${EXTRA_ARGS} --kv-cache-dtype ${SGLANG_KV_CACHE_DTYPE}"
+          fi
+          # Hierarchical KV cache. OFF by default. When on with the "file" storage backend
+          # the third tier lands on the node-local NVMe RAID mounted at
+          # SGLANG_LOCAL_SCRATCH_MOUNT, which is why that array is mounted into this pod.
+          #
+          # The guard below is deliberately fatal rather than best-effort. The hostPath
+          # volume uses DirectoryOrCreate, so if the local-nvme-raid-formatter DaemonSet
+          # has not finished -- or found no NVMe devices at all -- kubelet silently hands
+          # this container an empty directory on the boot disk. The engine would then run
+          # a "hierarchical cache on NVMe" configuration entirely on the boot disk and
+          # report perfectly plausible numbers, which is worse than not starting. The
+          # DaemonSet touches .mounted only after the RAID is mounted, so its absence is
+          # an unambiguous signal. Nothing else in this pod depends on the array, so the
+          # check runs only when hierarchical caching is actually requested.
+          if [ "${SGLANG_ENABLE_HIERARCHICAL_CACHE}" = "true" ]; then
+            if [ ! -f "${SGLANG_LOCAL_SCRATCH_MOUNT}/.mounted" ]; then
+              echo "FATAL: SGLANG_ENABLE_HIERARCHICAL_CACHE=true but ${SGLANG_LOCAL_SCRATCH_MOUNT}/.mounted is absent." >&2
+              echo "       The local NVMe RAID is not mounted on this node, so the cache would silently land on the boot disk." >&2
+              echo "       Check the local-nvme-raid-formatter DaemonSet in kube-system, then restart this pod." >&2
+              exit 1
+            fi
+            # HiCacheFile creates its directory only on tp_rank 0, which lives on the
+            # leader node. Every other rank expects the path to already exist, so create
+            # it here on all ranks before the engine starts.
+            mkdir -p "${SGLANG_LOCAL_SCRATCH_MOUNT}/hicache"
+            # SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE is declared EnvStr(None) in SGLang's
+            # environ.py, so "unset" and "set to empty" are different states to the engine:
+            # unset means no cap, empty string is a value it would try to parse. The pod env
+            # block always defines the variable, so drop it here when no cap was configured.
+            if [ -z "${SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE}" ]; then
+              unset SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE
+            fi
+            EXTRA_ARGS="${EXTRA_ARGS} --enable-hierarchical-cache"
+            if [ -n "${SGLANG_HICACHE_STORAGE_BACKEND}" ]; then
+              EXTRA_ARGS="${EXTRA_ARGS} --hicache-storage-backend ${SGLANG_HICACHE_STORAGE_BACKEND}"
+            fi
+            if [ -n "${SGLANG_HICACHE_SIZE}" ]; then
+              EXTRA_ARGS="${EXTRA_ARGS} --hicache-size ${SGLANG_HICACHE_SIZE}"
+            elif [ -n "${SGLANG_HICACHE_RATIO}" ]; then
+              EXTRA_ARGS="${EXTRA_ARGS} --hicache-ratio ${SGLANG_HICACHE_RATIO}"
+            fi
+            if [ -n "${SGLANG_HICACHE_WRITE_POLICY}" ]; then
+              EXTRA_ARGS="${EXTRA_ARGS} --hicache-write-policy ${SGLANG_HICACHE_WRITE_POLICY}"
+            fi
+            if [ -n "${SGLANG_HICACHE_IO_BACKEND}" ]; then
+              EXTRA_ARGS="${EXTRA_ARGS} --hicache-io-backend ${SGLANG_HICACHE_IO_BACKEND}"
+            fi
           fi
           # Both UNSET by default so the engine keeps its own defaults; the cookbook
           # pins neither. They exist because the saturation sweep produced two failure
@@ -447,13 +519,18 @@ spec:
           # Topology is unchanged -- 2 x A4 (16 x B200), TP16 -- which is the A4 variant
           # the Google Cloud day-0 write-up documents; the A4X/GB200 NVL72 variant it
           # prefers is explicitly out of scope here.
-          # The draft checkpoint must already be on the ROX volume beside the base
-          # weights, carrying a generation_config.json copied from the base model.
-          # 02-hydrate-weights-gcs stages both when DSPARK is enabled.
+          # The draft checkpoint is NOT on the ROX volume. That disk is READ_ONLY_MANY
+          # once hydrated, so the dspark-draft-fetch init container above rsyncs the
+          # draft from GCS into node-local scratch and copies the base model's
+          # generation_config.json in beside it. By the time this runs, that init
+          # container has already succeeded -- so if the directory is missing here, the
+          # cause is the mount, not the staging.
           if [ -n "${SGLANG_SPECULATIVE_ALGORITHM}" ]; then
             if [ ! -d "${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH}" ]; then
               echo "FATAL: SGLANG_SPECULATIVE_ALGORITHM=${SGLANG_SPECULATIVE_ALGORITHM} but draft model directory ${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH} is absent." >&2
-              echo "       Re-run 03_deploy_workloads.sh with SGLANG_SPECULATIVE_ALGORITHM set so the hydration job stages the draft checkpoint." >&2
+              echo "       The dspark-draft-fetch init container stages this path; check its logs first:" >&2
+              echo "         kubectl -n llm-serving logs $POD_NAME -c dspark-draft-fetch" >&2
+              echo "       Confirm DSPARK_DRAFT_DIR_NAME is set and that prefix exists under the weights bucket." >&2
               exit 1
             fi
             if [ ! -f "${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH}/generation_config.json" ]; then
@@ -520,6 +597,8 @@ spec:
         - name: dspark-draft
           mountPath: /mnt/draft
           readOnly: true
+        - name: local-scratch
+          mountPath: ${SGLANG_LOCAL_SCRATCH_MOUNT}
         - name: dshm
           mountPath: /dev/shm
         - name: nvidia-dir
@@ -546,9 +625,27 @@ spec:
       # Node-local scratch for the DSPARK draft. Disk-backed, not medium: Memory --
       # the draft is read once at load and then lives in VRAM, so spending 4 GiB of
       # host RAM on it would be waste. Stays empty when speculative decoding is off.
+      #
+      # hostPath on the NVMe RAID rather than an emptyDir. The node pool requests its
+      # local SSDs through local_nvme_ssd_block_config, which is block mode: the disks
+      # are handed to the node as raw devices and are NOT registered as kubelet
+      # ephemeral storage. A disk-backed emptyDir therefore lands on the boot disk, not
+      # on the array. Pointing the draft at the RAID mount is what actually moves it off
+      # the boot disk. It also survives pod restarts on the same node, so the
+      # dspark-draft-fetch rsync below is a no-op on a warm restart instead of a re-copy.
       - name: dspark-draft
-        emptyDir:
-          sizeLimit: 32Gi
+        hostPath:
+          path: ${SGLANG_HOST_SCRATCH_PATH}/dspark-draft
+          type: DirectoryOrCreate
+      # The RAID-0 array itself, built and mounted on the host by the
+      # local-nvme-raid-formatter DaemonSet. Carries the hierarchical KV cache when
+      # SGLANG_ENABLE_HIERARCHICAL_CACHE=true. DirectoryOrCreate keeps pod start
+      # independent of the DaemonSet; the .mounted sentinel check in the launch wrapper
+      # is what turns a missing array into a loud failure rather than a silent one.
+      - name: local-scratch
+        hostPath:
+          path: ${SGLANG_HOST_SCRATCH_PATH}
+          type: DirectoryOrCreate
       - name: nvidia-dir
         hostPath:
           path: /home/kubernetes/bin/nvidia
