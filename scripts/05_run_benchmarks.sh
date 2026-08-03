@@ -59,7 +59,7 @@ Usage: $0 [OPTIONS]
 Execute Kimi K3 performance benchmarks against the GKE serving stack.
 
 Options:
-  --mode <standard|massive|soak|prefill|saturation|realistic|all>  Benchmark suite to run (default: all)
+  --mode <standard|massive|soak|prefill|saturation|realistic|prefix-reuse|all>  Benchmark suite to run (default: all)
                                    - standard:   8 concurrent requests, 128 tokens
                                    - massive:    20 concurrent requests, 256 tokens (stress test)
                                    - soak:       30-minute continuous stability endurance test
@@ -70,6 +70,11 @@ Options:
                                                  unpredictable prompts. Not part of 'all': it is a diagnostic,
                                                  its output is not one of the five audited suite files, and it
                                                  needs --metrics-endpoint to report acceptance per verify step.
+                                   - prefix-reuse: shared-prefix TTFT against prefix length, cold vs warm vs
+                                                 evicted-and-refetched. The only suite that can say whether the
+                                                 radix cache, the NVMe cache tier or --schedule-policy lpm buy
+                                                 anything on a model where 69 of 93 layers are linear-attention
+                                                 and hold no reusable KV. Also a diagnostic, also not in 'all'.
                                    - all:        Run the 5 published benchmark suites sequentially
   --target <gateway|serving>     Target endpoint for benchmarking (default: gateway)
                                    - gateway: LiteLLM Enterprise Proxy (port 4000) with virtual keys & Redis auth
@@ -260,6 +265,7 @@ if [ "${IN_CLUSTER}" = "true" ]; then
     prefill)    BENCH_SCRIPT="run_prefill_benchmark_kimi_k3.py";  BENCH_LABEL="Prefill Ingestion Suite" ;;
     saturation) BENCH_SCRIPT="run_saturation_sweep_kimi_k3.py";   BENCH_LABEL="Saturation Sweep" ;;
     realistic)  BENCH_SCRIPT="run_realistic_sweep_kimi_k3.py";    BENCH_LABEL="Prompt Sensitivity Sweep" ;;
+    prefix-reuse) BENCH_SCRIPT="run_prefix_reuse_bench.py";       BENCH_LABEL="Prefix Reuse Bench" ;;
     *)
       echo "ERROR: Unsupported mode '${MODE}' for --in-cluster benchmark."
       exit 1
@@ -343,6 +349,9 @@ if [ "${IN_CLUSTER}" = "true" ]; then
     # 10800s is the Job template's activeDeadlineSeconds, which is the real
     # ceiling either way -- there is no point waiting past it.
     realistic)  TIMEOUT="10800s" ;;
+    # The evicted arm prefills a full KV pool per sample, so this one is bounded
+    # by flush cost rather than by request count.
+    prefix-reuse) TIMEOUT="10800s" ;;
     *)          TIMEOUT="1200s" ;;
   esac
   echo "    Waiting for in-cluster benchmark Job to complete (timeout: ${TIMEOUT})..."
@@ -566,6 +575,50 @@ if [ "${MODE}" = "realistic" ]; then
   fi
 fi
 
+# Also excluded from 'all'. Unlike every other suite here this one wants prefix
+# cache hits rather than avoiding them, so running it alongside the published
+# suites would leave their prompts competing for the same KV pool.
+if [ "${MODE}" = "prefix-reuse" ]; then
+  echo ""
+  echo "------------------------------------------------------------------------------"
+  sleep 1
+  echo "--> 8. Executing Prefix Reuse Bench (cold vs warm vs evicted prefix TTFT)..."
+  echo "------------------------------------------------------------------------------"
+  sleep 1
+
+  PFX_ARGS=(
+    "--endpoint=${TARGET_URL}"
+    "--output=${RESULTS_DIR}/prefix_reuse_results.json"
+    "--api-key=${DEV_KEY}"
+    "--model=${SERVING_MODEL_NAME}"
+    "--engine=${ENGINE}"
+    "--metadata=$(get_metadata_json)"
+  )
+  [ -n "${SWEEP_METRICS_ENDPOINT:-}" ]      && PFX_ARGS+=("--metrics-endpoint=${SWEEP_METRICS_ENDPOINT}")
+  [ -n "${PREFIX_REUSE_ARMS:-}" ]           && PFX_ARGS+=("--arms=${PREFIX_REUSE_ARMS}")
+  [ -n "${PREFIX_REUSE_PREFIX_TOKENS:-}" ]  && PFX_ARGS+=("--prefix-tokens=${PREFIX_REUSE_PREFIX_TOKENS}")
+  [ -n "${PREFIX_REUSE_SUFFIX_TOKENS:-}" ]  && PFX_ARGS+=("--suffix-tokens=${PREFIX_REUSE_SUFFIX_TOKENS}")
+  [ -n "${PREFIX_REUSE_REPEATS:-}" ]        && PFX_ARGS+=("--repeats=${PREFIX_REUSE_REPEATS}")
+  [ -n "${PREFIX_REUSE_EVICT_REPEATS:-}" ]  && PFX_ARGS+=("--evict-repeats=${PREFIX_REUSE_EVICT_REPEATS}")
+  [ -n "${PREFIX_REUSE_TARGET_HIT_RATE:-}" ] && PFX_ARGS+=("--target-hit-rate=${PREFIX_REUSE_TARGET_HIT_RATE}")
+  [ -n "${PREFIX_REUSE_KV_POOL_TOKENS:-}" ] && PFX_ARGS+=("--kv-pool-tokens=${PREFIX_REUSE_KV_POOL_TOKENS}")
+  [ -n "${PREFIX_REUSE_MAX_TOTAL_FLUSH:-}" ] && PFX_ARGS+=("--max-total-flush-tokens=${PREFIX_REUSE_MAX_TOTAL_FLUSH}")
+
+  if [ -f "${PROJECT_ROOT}/benchmarks/run_prefix_reuse_bench.py" ]; then
+    echo "    Verifying prefixes are shared exactly and suffixes are not..."
+    if ! python3 "${PROJECT_ROOT}/benchmarks/run_prefix_reuse_bench.py" --self-check \
+         ${PREFIX_REUSE_PREFIX_TOKENS:+"--prefix-tokens=${PREFIX_REUSE_PREFIX_TOKENS}"} \
+         ${PREFIX_REUSE_SUFFIX_TOKENS:+"--suffix-tokens=${PREFIX_REUSE_SUFFIX_TOKENS}"} \
+         ${PREFIX_REUSE_KV_POOL_TOKENS:+"--kv-pool-tokens=${PREFIX_REUSE_KV_POOL_TOKENS}"} \
+         ${PREFIX_REUSE_EVICT_REPEATS:+"--evict-repeats=${PREFIX_REUSE_EVICT_REPEATS}"} \
+         ${PREFIX_REUSE_MAX_TOTAL_FLUSH:+"--max-total-flush-tokens=${PREFIX_REUSE_MAX_TOTAL_FLUSH}"}; then
+      echo "ERROR: Prefix self-check failed; refusing to run the bench." >&2
+      exit 1
+    fi
+    python3 "${PROJECT_ROOT}/benchmarks/run_prefix_reuse_bench.py" "${PFX_ARGS[@]}" || echo "WARNING: Prefix reuse bench reported errors or timeouts."
+  fi
+fi
+
 # 8. Display Benchmark Summary (with 16x B200 GPU normalization factor)
 echo ""
 echo "=============================================================================="
@@ -684,6 +737,31 @@ for e in d.get('arm_comparison', []):
         float(rep.get('aggregate_tok_s') or 0.0), float(nov.get('aggregate_tok_s') or 0.0),
         e.get('non_repetitive_over_repeated_tok_s'), e.get('prompt_token_ratio')))
 print('  - Diagnostic only: not one of the five published suites.')
+" 2>/dev/null || true
+fi
+
+if [ -s "${RESULTS_DIR}/prefix_reuse_results.json" ]; then
+  echo "Prefix Reuse Results (${RESULTS_DIR}/prefix_reuse_results.json):"
+  python3 -c "
+import json
+with open('${RESULTS_DIR}/prefix_reuse_results.json') as f:
+    d = json.load(f)
+v = d.get('verdict') or {}
+split = d.get('layer_split') or {}
+print('  - Layer split: {} full-attention of {} total (bound on reuse: {})'.format(
+    split.get('full_attention_layers'), split.get('total_layers'),
+    v.get('full_attention_layer_fraction')))
+for arm, s in (v.get('slopes') or {}).items():
+    print('  - {:<8} slope {} ms per prefix token over {} point(s)'.format(
+        arm, s.get('ms_per_prefix_token'), s.get('points')))
+for arm, eff in (v.get('reuse_efficiency') or {}).items():
+    print('  - {:<8} reuse_efficiency {}'.format(arm, eff))
+for m in d.get('mixed_arm', []):
+    print('  - mixed hit_rate={}: token-level expected {} observed {}, P99 TTFT {} ms'.format(
+        m.get('target_hit_rate'), m.get('token_level_hit_rate_expected'),
+        m.get('token_level_hit_rate_observed'), (m.get('ttft_ms') or {}).get('p99')))
+for line in v.get('interpretation', []):
+    print('  * ' + line)
 " 2>/dev/null || true
 fi
 
