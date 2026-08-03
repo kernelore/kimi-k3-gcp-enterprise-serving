@@ -47,6 +47,22 @@ STAGES="deploy,sweep,kv,prefix,collect"
 RESULTS_BUCKET=""
 DRY_RUN="false"
 KEEP_CLUSTER="false"
+# On a *failed* stage, keep the cluster up instead of destroying it.
+#
+# This defaults on, and the reasoning is a cost argument rather than a convenience one.
+# Three windows have now died in the deploy path -- twice on a fabric-gate timeout, once
+# because verification ran against four-second-old pods. Every one of those was a small
+# bug in front of a cluster that was otherwise healthy: window 3 had passed the fabric
+# gate at 286 GB/s and staged 1.45 TiB of weights before it was torn down over a missing
+# two-line wait. Destroying on failure means the next attempt re-pays the full ~$90
+# deploy just to reach the same line of code, so the teardown policy ended up costing far
+# more than the bugs did.
+#
+# Holding is not unbounded. The wall-clock deadline still applies and the watchdog still
+# enforces it, so the ceiling is the budget that was authorised at launch either way --
+# the difference is only whether a fixable failure gets a chance to be fixed in place.
+# A clean success still tears down normally; use --destroy-on-failure for the old behaviour.
+HOLD_ON_FAILURE="true"
 READY_TIMEOUT="1800"
 # Cold first start, as opposed to the warm restarts READY_TIMEOUT covers. Aligned to the
 # serving startupProbe budget (periodSeconds 30 x failureThreshold 120) so this wait and
@@ -79,6 +95,10 @@ Options:
                         start time)
   --keep-cluster        Skip the teardown. Refuses unless CONFIRM_KEEP_CLUSTER=1
                         is also set, because this is how you get a surprise bill.
+  --destroy-on-failure  Tear down when a stage fails, instead of holding the cluster
+                        for diagnosis. The default is to hold, because every window
+                        that has failed so far failed in front of a healthy cluster.
+                        The wall-clock deadline is the backstop either way.
   --dry-run             Print the plan and the cost ceiling, touch nothing.
   -h, --help            Show this usage guide and exit
 
@@ -97,6 +117,7 @@ while [[ $# -gt 0 ]]; do
     --first-ready-timeout) FIRST_READY_TIMEOUT="$2"; shift 2 ;;
     --run-label)      RUN_LABEL="$2"; shift 2 ;;
     --keep-cluster)   KEEP_CLUSTER="true"; shift ;;
+    --destroy-on-failure) HOLD_ON_FAILURE="false"; shift ;;
     --dry-run)        DRY_RUN="true"; shift ;;
     -h|--help)        show_usage; exit 0 ;;
     *)
@@ -169,6 +190,9 @@ LOG_DIR="${STATE_ROOT}/logs"
 SWEEP_STATE="${STATE_ROOT}/sweep"
 STAGE_DIR="${STATE_ROOT}/stages"
 ACTIVE_MARKER="${STATE_ROOT}/ACTIVE"
+# Written when a stage fails and the cluster is deliberately left up. Read by the
+# watchdog, which otherwise destroys the stack 300s after the runner dies.
+HOLD_MARKER="${STATE_ROOT}/HOLD"
 RESULTS_DIR="${PROJECT_ROOT}/benchmarks/results/${INFERENCE_ENGINE:-sglang}"
 
 stage_wanted() { [[ ",${STAGES}," == *",$1,"* ]]; }
@@ -212,6 +236,9 @@ EOF
 fi
 
 mkdir -p "${LOG_DIR}" "${SWEEP_STATE}" "${STAGE_DIR}"
+# A HOLD left behind by an earlier run of this same label would make this run's exit trap
+# keep the ACTIVE marker even on a clean success, stranding the watchdog. Start clean.
+rm -f "${HOLD_MARKER}"
 
 # ------------------------------------------------------------------------------
 # Teardown, and the watchdog that runs it when this script cannot
@@ -220,6 +247,7 @@ TEARDOWN_DONE="false"
 
 do_teardown() {
   local reason="$1"
+  local rc="${2:-0}"
   if [ "${TEARDOWN_DONE}" = "true" ]; then
     return 0
   fi
@@ -227,6 +255,25 @@ do_teardown() {
   if [ "${KEEP_CLUSTER}" = "true" ]; then
     say "TEARDOWN SKIPPED (--keep-cluster). The cluster is still running and"
     say "still billing. Destroy it with: FORCE_DESTROY=true ./scripts/06_destroy_all.sh"
+    return 0
+  fi
+  if [ "${rc}" -ne 0 ] && [ "${HOLD_ON_FAILURE}" = "true" ]; then
+    # The marker is what stops the watchdog destroying the stack 300s from now. Written
+    # before the first log line so that a kill landing mid-function still leaves the
+    # cluster held rather than half-held.
+    : > "${HOLD_MARKER}"
+    say "HOLD (${reason})"
+    say "  The cluster is UP and BILLING at roughly \$92/h. It was kept on purpose:"
+    say "  a failed stage is usually a fixable bug in front of a working cluster, and"
+    say "  destroying it means paying the whole deploy again to get back here."
+    say ""
+    say "  Backstop: the wall-clock deadline, unchanged at"
+    say "    $(date -u -d "@${DEADLINE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ) ($(python3 -c "print(round((${DEADLINE_EPOCH} - $(date -u +%s)) / 3600.0, 1))")h from now)"
+    say "  The watchdog destroys the stack then, whether or not anyone is watching."
+    say ""
+    say "  Destroy it sooner:  FORCE_DESTROY=true ./scripts/06_destroy_all.sh"
+    say "  Diagnose it:        kubectl get pods -n ${NAMESPACE}"
+    say "  Logs:               ${LOG_DIR}"
     return 0
   fi
   say "TEARDOWN (${reason})"
@@ -247,11 +294,19 @@ do_teardown() {
 
 on_exit() {
   local rc=$?
-  do_teardown "exit rc=${rc}" || true
+  do_teardown "exit rc=${rc}" "${rc}" || true
   # Dropped only after the teardown has been attempted. While it exists the
   # watchdog treats the cluster as this window's to destroy; removing it first
   # would open a gap where neither of them owns the cleanup.
-  rm -f "${ACTIVE_MARKER}"
+  #
+  # Kept when the cluster is held, for the same reason: ownership is what gives the
+  # watchdog standing to enforce the deadline on a cluster this window created. Dropping
+  # it here would leave 16 B200s running with nothing responsible for them.
+  if [ -f "${HOLD_MARKER}" ]; then
+    say "ACTIVE marker kept: the watchdog still owns the held cluster until the deadline"
+  else
+    rm -f "${ACTIVE_MARKER}"
+  fi
   elapsed_note
   say "window ${RUN_LABEL} finished with rc=${rc}; logs in ${LOG_DIR}"
   exit "${rc}"
@@ -267,7 +322,7 @@ arm_watchdog() {
 # Detached dead-man's switch. Destroys the stack if the runner dies without
 # cleaning up, or if the wall-clock deadline passes. Deliberately dependency
 # free and deliberately not set -e: it must survive its own errors.
-runner_pid="$1"; deadline="$2"; root="$3"; logdir="$4"; cluster="$5"; active="$6"
+runner_pid="$1"; deadline="$2"; root="$3"; logdir="$4"; cluster="$5"; active="$6"; hold="$7"
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] watchdog: $*" >> "${logdir}/watchdog.log"; }
 
 cluster_up() {
@@ -303,6 +358,7 @@ force_destroy() {
   log "teardown exited rc=$?"
 }
 
+hold_logged=""
 log "armed: runner pid ${runner_pid}, deadline $(date -u -d "@${deadline}" +%Y-%m-%dT%H:%M:%SZ), cluster ${cluster}"
 while true; do
   sleep 60
@@ -317,6 +373,31 @@ while true; do
     exit 0
   fi
   if ! kill -0 "${runner_pid}" 2>/dev/null; then
+    # The runner failed a stage and chose to leave the cluster up. Do not destroy it:
+    # that decision is the whole point of the hold, and the deadline check at the top of
+    # this loop is still the backstop, so the spend stays bounded by the budget that was
+    # authorised at launch.
+    if [ -f "${hold}" ]; then
+      # Ownership still has to hold. assert_sole_owner in a later window clears a stale
+      # ACTIVE marker -- and after a hold the runner pid *is* gone, so it looks stale.
+      # Without this check, that later window would deploy onto the held cluster while
+      # this watchdog carried on counting down to destroy it mid-sweep.
+      if ! owns_cluster; then
+        log "hold released: another window has taken ownership; standing down"
+        exit 0
+      fi
+      if ! cluster_up; then
+        log "held cluster is gone (destroyed out of band); nothing left to guard"
+        rm -f "${active}"
+        exit 0
+      fi
+      if [ "${hold_logged}" != "yes" ]; then
+        log "runner exited on a failure and left HOLD; cluster stays up for diagnosis"
+        log "deadline is now the only backstop: $(date -u -d "@${deadline}" +%Y-%m-%dT%H:%M:%SZ)"
+        hold_logged="yes"
+      fi
+      continue
+    fi
     log "runner gone; allowing 300s for its own trap to finish"
     sleep 300
     if ! owns_cluster; then
@@ -336,7 +417,8 @@ WATCHDOG
   chmod +x "${wd}"
   echo "$$" > "${ACTIVE_MARKER}"
   setsid nohup bash "${wd}" "$$" "${DEADLINE_EPOCH}" "${PROJECT_ROOT}" \
-    "${LOG_DIR}" "${CLUSTER_NAME}" "${ACTIVE_MARKER}" < /dev/null > /dev/null 2>&1 &
+    "${LOG_DIR}" "${CLUSTER_NAME}" "${ACTIVE_MARKER}" "${HOLD_MARKER}" \
+    < /dev/null > /dev/null 2>&1 &
   WATCHDOG_PID="$!"
   say "watchdog armed (pid ${WATCHDOG_PID}), deadline $(date -u -d "@${DEADLINE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
 }
@@ -357,6 +439,26 @@ assert_sole_owner() {
       echo "ERROR: window $(basename "$(dirname "${other}")") is still running (pid ${pid})." >&2
       echo "       Two windows against cluster ${CLUSTER_NAME} would fight over it." >&2
       exit 1
+    fi
+    # A held window looks exactly like a stale one from here: its runner exited, so its
+    # pid is gone. The difference is that its cluster is deliberately still up and still
+    # billing, and clearing the marker without saying so would let this run deploy on top
+    # of it. Make the operator say they mean it.
+    if [ -f "$(dirname "${other}")/HOLD" ]; then
+      local held_label
+      held_label="$(basename "$(dirname "${other}")")"
+      if [ "${RESUME_HELD_WINDOW:-}" != "1" ]; then
+        echo "ERROR: window ${held_label} failed and is HOLDING its cluster -- it is probably" >&2
+        echo "       still up and still billing at roughly \$92/h." >&2
+        echo "       Check:   gcloud container clusters list" >&2
+        echo "       Destroy: FORCE_DESTROY=true ./scripts/06_destroy_all.sh" >&2
+        echo "       Or set RESUME_HELD_WINDOW=1 to deploy onto the held cluster anyway." >&2
+        exit 1
+      fi
+      echo "NOTE: taking over the cluster held by ${held_label} (RESUME_HELD_WINDOW=1)"
+      rm -f "$(dirname "${other}")/HOLD"
+      rm -f "${other}"
+      continue
     fi
     echo "NOTE: clearing stale ACTIVE marker from $(basename "$(dirname "${other}")") (pid ${pid:-?} is gone)"
     rm -f "${other}"
