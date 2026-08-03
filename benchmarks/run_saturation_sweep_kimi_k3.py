@@ -114,9 +114,20 @@ def generate_unique_prompt(idx, c, isl_target):
 
 
 def execute_single_request(
-    req_idx, c, isl_target, endpoint, model, max_tokens, temperature, api_key=""
+    req_idx,
+    c,
+    isl_target,
+    endpoint,
+    model,
+    max_tokens,
+    temperature,
+    api_key="",
+    prompt_builder=None,
 ):
-  prompt = generate_unique_prompt(req_idx, c, isl_target)
+  # prompt_builder lets another harness reuse this request path with a
+  # different corpus (see run_realistic_sweep_kimi_k3). Default is unchanged.
+  builder = prompt_builder or generate_unique_prompt
+  prompt = builder(req_idx, c, isl_target)
   payload = {
       "model": model,
       "max_tokens": max_tokens,
@@ -304,10 +315,12 @@ def run_sweep_concurrency(
     api_key="",
     metrics_endpoint="",
     metrics_names=[],
+    prompt_builder=None,
+    label="Saturation Sweep",
 ):
   print(f"\n============================================================")
   print(
-      f"Executing Saturation Sweep at ISL={isl_target}, OSL={osl_target},"
+      f"Executing {label} at ISL={isl_target}, OSL={osl_target},"
       f" Concurrency={c} ({requests_per_c} total requests)..."
   )
   print(f"============================================================")
@@ -329,6 +342,7 @@ def run_sweep_concurrency(
             osl_target,
             0.2,
             api_key,
+            prompt_builder,
         )
         for i in range(requests_per_c)
     ]

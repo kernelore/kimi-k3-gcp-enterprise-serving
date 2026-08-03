@@ -59,13 +59,18 @@ Usage: $0 [OPTIONS]
 Execute Kimi K3 performance benchmarks against the GKE serving stack.
 
 Options:
-  --mode <standard|massive|soak|prefill|saturation|all>  Benchmark suite to run (default: all)
+  --mode <standard|massive|soak|prefill|saturation|realistic|all>  Benchmark suite to run (default: all)
                                    - standard:   8 concurrent requests, 128 tokens
                                    - massive:    20 concurrent requests, 256 tokens (stress test)
                                    - soak:       30-minute continuous stability endurance test
                                    - prefill:    8192 prompt tokens ingestion stress test
                                    - saturation: ISL/OSL x concurrency sweep (1k-128k input, c=1..128) throughput ceiling
-                                   - all:        Run all 5 benchmark suites sequentially
+                                   - realistic:  repeated-passage vs non-repetitive corpus at a matched ISL,
+                                                 to measure how much of the speculative-decoding gain survives
+                                                 unpredictable prompts. Not part of 'all': it is a diagnostic,
+                                                 its output is not one of the five audited suite files, and it
+                                                 needs --metrics-endpoint to report acceptance per verify step.
+                                   - all:        Run the 5 published benchmark suites sequentially
   --target <gateway|serving>     Target endpoint for benchmarking (default: gateway)
                                    - gateway: LiteLLM Enterprise Proxy (port 4000) with virtual keys & Redis auth
                                    - serving: Direct TensorRT-LLM Engine backend (port 8000) bypassing gateway
@@ -254,6 +259,7 @@ if [ "${IN_CLUSTER}" = "true" ]; then
     massive)    BENCH_SCRIPT="massive_benchmark_kimi_k3.py";      BENCH_LABEL="Massive Stress Suite" ;;
     prefill)    BENCH_SCRIPT="run_prefill_benchmark_kimi_k3.py";  BENCH_LABEL="Prefill Ingestion Suite" ;;
     saturation) BENCH_SCRIPT="run_saturation_sweep_kimi_k3.py";   BENCH_LABEL="Saturation Sweep" ;;
+    realistic)  BENCH_SCRIPT="run_realistic_sweep_kimi_k3.py";    BENCH_LABEL="Prompt Sensitivity Sweep" ;;
     *)
       echo "ERROR: Unsupported mode '${MODE}' for --in-cluster benchmark."
       exit 1
@@ -333,6 +339,10 @@ if [ "${IN_CLUSTER}" = "true" ]; then
   case "${MODE}" in
     soak)       TIMEOUT="3600s" ;;
     saturation) TIMEOUT="10800s" ;;
+    # Two arms over the same grid, so budget like a small saturation sweep.
+    # 10800s is the Job template's activeDeadlineSeconds, which is the real
+    # ceiling either way -- there is no point waiting past it.
+    realistic)  TIMEOUT="10800s" ;;
     *)          TIMEOUT="1200s" ;;
   esac
   echo "    Waiting for in-cluster benchmark Job to complete (timeout: ${TIMEOUT})..."
@@ -506,6 +516,56 @@ if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
   fi
 fi
 
+# Deliberately excluded from 'all'. This suite runs every cell twice, once per
+# prompt arm, and its output is not one of the five files the provenance audit
+# checks -- it exists to qualify the DSPARK numbers, not to add to them.
+if [ "${MODE}" = "realistic" ]; then
+  echo ""
+  echo "------------------------------------------------------------------------------"
+  sleep 1
+  echo "--> 7. Executing Prompt Sensitivity Sweep (repeated passage vs non-repetitive corpus)..."
+  echo "------------------------------------------------------------------------------"
+  sleep 1
+
+  REAL_ARGS=(
+    "--endpoint=${TARGET_URL}"
+    "--output=${RESULTS_DIR}/realistic_results.json"
+    "--api-key=${DEV_KEY}"
+    "--model=${SERVING_MODEL_NAME}"
+    "--engine=${ENGINE}"
+    "--metadata=$(get_metadata_json)"
+  )
+  [ -n "${SWEEP_METRICS_ENDPOINT:-}" ]    && REAL_ARGS+=("--metrics-endpoint=${SWEEP_METRICS_ENDPOINT}")
+  [ -n "${SWEEP_METRICS_NAMES:-}" ]       && REAL_ARGS+=("--metrics-names=${SWEEP_METRICS_NAMES}")
+  [ -n "${SWEEP_CONCURRENCY_LEVELS:-}" ]  && REAL_ARGS+=("--concurrency-levels=${SWEEP_CONCURRENCY_LEVELS}")
+  [ -n "${SWEEP_MAX_INFLIGHT:-}" ]        && REAL_ARGS+=("--max-inflight-prompt-tokens=${SWEEP_MAX_INFLIGHT}")
+  [ -n "${REALISTIC_ISL_OSL_GRID:-}" ]    && REAL_ARGS+=("--isl-osl-grid=${REALISTIC_ISL_OSL_GRID}")
+  [ -n "${REALISTIC_ARMS:-}" ]            && REAL_ARGS+=("--arms=${REALISTIC_ARMS}")
+  [ -n "${REALISTIC_ISSUANCE:-}" ]        && REAL_ARGS+=("--issuance=${REALISTIC_ISSUANCE}")
+  [ -n "${REALISTIC_CORPUS_SEED:-}" ]     && REAL_ARGS+=("--corpus-seed=${REALISTIC_CORPUS_SEED}")
+  [ -n "${REALISTIC_CORPUS_FILE:-}" ]     && REAL_ARGS+=("--corpus-file=${REALISTIC_CORPUS_FILE}")
+  [ -n "${REALISTIC_SPEC_VERIFY_METRIC:-}" ] && REAL_ARGS+=("--spec-verify-metric=${REALISTIC_SPEC_VERIFY_METRIC}")
+
+  if [ -z "${SWEEP_METRICS_ENDPOINT:-}" ]; then
+    echo "    NOTE: SWEEP_METRICS_ENDPOINT is unset, so accepted tokens per verify"
+    echo "          step cannot be measured and the headline result of this sweep"
+    echo "          will be null. Set it in scripts/config.env before spending GPU time."
+  fi
+
+  if [ -f "${PROJECT_ROOT}/benchmarks/run_realistic_sweep_kimi_k3.py" ]; then
+    echo "    Verifying the committed corpus is still non-repetitive before spending GPU time..."
+    if ! python3 "${PROJECT_ROOT}/benchmarks/run_realistic_sweep_kimi_k3.py" --self-check \
+         ${REALISTIC_ISL_OSL_GRID:+"--isl-osl-grid=${REALISTIC_ISL_OSL_GRID}"} \
+         ${SWEEP_CONCURRENCY_LEVELS:+"--concurrency-levels=${SWEEP_CONCURRENCY_LEVELS}"} \
+         ${REALISTIC_CORPUS_SEED:+"--corpus-seed=${REALISTIC_CORPUS_SEED}"} \
+         ${REALISTIC_CORPUS_FILE:+"--corpus-file=${REALISTIC_CORPUS_FILE}"}; then
+      echo "ERROR: Corpus self-check failed; refusing to run the sweep." >&2
+      exit 1
+    fi
+    python3 "${PROJECT_ROOT}/benchmarks/run_realistic_sweep_kimi_k3.py" "${REAL_ARGS[@]}" || echo "WARNING: Prompt sensitivity sweep reported errors or timeouts."
+  fi
+fi
+
 # 8. Display Benchmark Summary (with 16x B200 GPU normalization factor)
 echo ""
 echo "=============================================================================="
@@ -598,6 +658,32 @@ for r in results:
     ttft = r.get('ttft_ms', {}).get('p99', 0.0)
     per_gpu = float(tps) / 16.0
     print(f'  - c={c}: {float(tps):.2f} tok/s ({per_gpu:.2f} tok/s/GPU), P99 TTFT: {float(ttft):.2f} ms')
+" 2>/dev/null || true
+fi
+
+if [ -s "${RESULTS_DIR}/realistic_results.json" ]; then
+  echo "Prompt Sensitivity Results (${RESULTS_DIR}/realistic_results.json):"
+  python3 -c "
+import json
+with open('${RESULTS_DIR}/realistic_results.json') as f:
+    d = json.load(f)
+prof = d.get('corpus_profile') or {}
+if prof:
+    print('  - Corpus: {:.3f}% repeated 8-grams, longest repeated span {} words'.format(
+        float(prof.get('duplicate_8gram_fraction', 0.0)) * 100.0,
+        prof.get('longest_repeated_ngram_words', 0)))
+print('  - Acceptance source: {}'.format(d.get('acceptance_source')))
+for e in d.get('arm_comparison', []):
+    rep = e.get('repeated_passage', {})
+    nov = e.get('non_repetitive', {})
+    acc_r = rep.get('accepted_tok_per_step')
+    acc_n = nov.get('accepted_tok_per_step')
+    acc = 'n/a' if acc_r is None or acc_n is None else '{:.2f} -> {:.2f}'.format(float(acc_r), float(acc_n))
+    print('  - ISL={} c={}: accepted tok/step {} | tok/s {:.2f} -> {:.2f} (ratio {}) | prompt-token ratio {}'.format(
+        e.get('isl_target'), e.get('concurrency'), acc,
+        float(rep.get('aggregate_tok_s') or 0.0), float(nov.get('aggregate_tok_s') or 0.0),
+        e.get('non_repetitive_over_repeated_tok_s'), e.get('prompt_token_ratio')))
+print('  - Diagnostic only: not one of the five published suites.')
 " 2>/dev/null || true
 fi
 
