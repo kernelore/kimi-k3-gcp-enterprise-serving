@@ -33,7 +33,9 @@ t4_s02() {
   assert_match '--dist-init-addr' "${yaml_file}" "Missing dist-init-addr"
   assert_match '--nnodes 2|--nnodes=2' "${yaml_file}" "Missing nnodes 2"
   assert_match '--node-rank' "${yaml_file}" "Missing node-rank"
-  assert_no_match 'ray|6379|8265' "${yaml_file}" "Ray references found"
+  # Word-anchored: a bare 'ray' substring also matches "array", which the NVMe
+  # RAID-0 comments in the manifests use freely.
+  assert_no_match '(^|[^[:alnum:]_])[Rr]ay([^[:alnum:]_]|$)|RAY_[A-Z_]+|6379|8265' "${yaml_file}" "Ray references found"
   assert_match 'IPC_LOCK' "${yaml_file}" "Missing IPC_LOCK"
   assert_match '/dev/shm' "${yaml_file}" "Missing /dev/shm"
   assert_match 'ReadOnlyMany|ROX|rox' "${yaml_file}" "Missing ReadOnlyMany"

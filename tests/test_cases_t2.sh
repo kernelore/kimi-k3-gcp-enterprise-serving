@@ -99,7 +99,9 @@ t2_f4_03() {
   if [ ! -f "${sglang_yaml}" ]; then
     (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
   fi
-  assert_no_match 'ray|6379|8265' "${sglang_yaml}" "Ray references or ports in rendered SGLang manifest"
+  # Word-anchored: a bare 'ray' substring also matches "array", which the NVMe
+  # RAID-0 comments in the manifest use freely.
+  assert_no_match '(^|[^[:alnum:]_])[Rr]ay([^[:alnum:]_]|$)|RAY_[A-Z_]+|6379|8265' "${sglang_yaml}" "Ray references or ports in rendered SGLang manifest"
 }
 
 t2_f4_04() {

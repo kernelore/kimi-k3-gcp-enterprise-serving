@@ -23,7 +23,9 @@ t3_c02() {
   if [ ! -f "${sglang_yaml}" ]; then
     (cd "${PROJECT_ROOT}" && INFERENCE_ENGINE="sglang" scripts/03_deploy_workloads.sh --render-only >/dev/null 2>&1)
   fi
-  assert_no_match 'ray' "${sglang_yaml}" "Ray reference in SGLang manifest"
+  # Word-anchored: a bare 'ray' substring also matches "array", which the NVMe
+  # RAID-0 comments in the manifest use freely.
+  assert_no_match '(^|[^[:alnum:]_])[Rr]ay([^[:alnum:]_]|$)|RAY_[A-Z_]+' "${sglang_yaml}" "Ray reference in SGLang manifest"
   assert_match '--dist-init-addr' "${sglang_yaml}" "Missing dist-init-addr in SGLang manifest"
   assert_match 'ReadOnlyMany|ROX|rox' "${PROJECT_ROOT}/terraform/modules/storage/main.tf" "Missing ROX in storage module"
   assert_match '/dev/shm' "${sglang_yaml}" "Missing /dev/shm in SGLang manifest"
