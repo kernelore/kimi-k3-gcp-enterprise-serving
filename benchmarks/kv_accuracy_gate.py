@@ -69,6 +69,26 @@ except ImportError:  # invoked as benchmarks.kv_accuracy_gate
   from benchmarks.run_realistic_sweep_kimi_k3 import DEFAULT_CHARS_PER_TOKEN
   from benchmarks.run_realistic_sweep_kimi_k3 import SentenceSource
 
+try:
+  from telemetry_sanitizer import sanitize_telemetry as _sanitize_telemetry
+except ImportError:  # invoked as benchmarks.kv_accuracy_gate
+  from benchmarks.telemetry_sanitizer import sanitize_telemetry as _sanitize_telemetry
+
+
+def _sanitize(payload, out_path):
+  """Strip project-identifying strings before anything reaches disk.
+
+  Both artifacts this file writes echo the served model path back from
+  /get_server_info, and on GKE that is the Artifact Registry image -- which
+  contains the project ID. The sweep harness has sanitised its payload since it
+  was written; this one did not, and the 2026-08-03 window produced two result
+  files with a real project ID in them. Nothing leaked, because a pre-publish
+  grep caught it, but "a grep catches it" is not a property of the repo, it is a
+  property of whoever remembered to run the grep.
+  """
+  return _sanitize_telemetry(payload, out_path)
+
+
 DEFAULT_CORPUS_SEED = 20260803
 DEFAULT_CONTEXT_TOKENS = 8192
 DEFAULT_DEPTHS = "0.05,0.25,0.50,0.75,0.95"
@@ -516,6 +536,7 @@ def run_capture(args, probes):
   }
   summary = summarise_capture(capture)
   capture["summary"] = summary
+  capture = _sanitize(capture, args.output)
 
   os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
   with open(args.output, "w", encoding="utf-8") as handle:
@@ -594,6 +615,7 @@ def run_compare(args):
       },
   }
   verdict["timestamp_utc"] = datetime.now(timezone.utc).isoformat()
+  verdict = _sanitize(verdict, args.output)
 
   if args.output:
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)

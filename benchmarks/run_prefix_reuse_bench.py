@@ -1232,6 +1232,20 @@ def main(argv=None):
       "verdict": verdict,
   }
 
+  # The sweep harness has always routed its payload through the sanitizer; this
+  # file never did, and the metadata it captures from /get_server_info includes
+  # the served model path -- which on GKE is the Artifact Registry image, which
+  # carries the project ID. The 2026-08-03 window wrote two artifacts containing
+  # a real project ID in plaintext, and they were only caught by a pre-publish
+  # grep. A benchmark that cannot be committed is a benchmark that gets
+  # committed by hand, badly, so the redaction belongs here rather than in the
+  # operator's memory.
+  try:
+    from telemetry_sanitizer import sanitize_telemetry
+  except ImportError:
+    from benchmarks.telemetry_sanitizer import sanitize_telemetry
+  payload = sanitize_telemetry(payload, args.output)
+
   os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
   with open(args.output, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
