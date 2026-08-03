@@ -555,7 +555,7 @@ restart_with_env() {
   local engine="${INFERENCE_ENGINE:-sglang}"
   local template="${TEMPLATE_DIR}/09-kimi-k3-${engine}-mpi.yaml.template"
   local rendered="${GENERATED_DIR}/09-kimi-k3-${engine}-mpi.yaml"
-  local allowed previous_hash="" new_hash
+  local allowed gen_before gen_after
 
   [ -f "${template}" ] || { say "ERROR: ${template} not found"; return 1; }
   allowed="$(grep -m1 "^BASE_ALLOWED_VARS=" "${SCRIPT_DIR}/03_deploy_workloads.sh" \
@@ -566,18 +566,35 @@ restart_with_env() {
   # so image and hostPath rendered empty and the apply was refused.
   ensure_serving_render_env || { say "ERROR: ${label} render environment incomplete"; return 1; }
 
-  [ -f "${rendered}" ] && previous_hash="$(sha256sum "${rendered}" | cut -d' ' -f1)"
   mkdir -p "${GENERATED_DIR}"
   safe_envsubst "${allowed}" < "${template}" > "${rendered}"
   assert_manifest_valid "${rendered}" || { say "ERROR: ${label} rendered an invalid manifest"; return 1; }
-  new_hash="$(sha256sum "${rendered}" | cut -d' ' -f1)"
 
-  if [ "${previous_hash}" = "${new_hash}" ]; then
-    say "${label}: manifest unchanged, no restart needed"
+  # Whether a restart is needed is a question about the cluster, so ask the
+  # cluster. This used to hash the rendered file against its own previous
+  # contents, which silently assumed this script was the only writer of that
+  # path -- and it is not: 05_run_benchmarks.sh re-renders the same file during
+  # a capture. So kv-restore compared its bf16 render against the bf16 file 05
+  # had just written, concluded "unchanged", skipped the apply, and left the
+  # cluster on the fp8 KV cache the previous leg had deployed. The next arm then
+  # rendered a different value, applied, and restarted -- so the two arms of a
+  # supposedly one-variable experiment differed in two, one of which halves the
+  # KV footprint the experiment exists to measure.
+  #
+  # The apply is unconditional now. kubectl bumps .metadata.generation only when
+  # the spec actually changes, so the server decides whether anything moved and
+  # no local state has to be trusted to know it.
+  gen_before="$(kubectl get "statefulset/${STATEFULSET}" -n "${NAMESPACE}" \
+    -o jsonpath='{.metadata.generation}' 2>/dev/null || echo "")"
+  kubectl apply -f "${rendered}" >> "${LOG_DIR}/${label}.log" 2>&1
+  gen_after="$(kubectl get "statefulset/${STATEFULSET}" -n "${NAMESPACE}" \
+    -o jsonpath='{.metadata.generation}' 2>/dev/null || echo "")"
+
+  if [ -n "${gen_before}" ] && [ "${gen_before}" = "${gen_after}" ]; then
+    say "${label}: StatefulSet spec unchanged (generation ${gen_after}), no restart needed"
     return 0
   fi
-  say "${label}: applying manifest and waiting for the rollout"
-  kubectl apply -f "${rendered}" >> "${LOG_DIR}/${label}.log" 2>&1
+  say "${label}: spec changed (generation ${gen_before:-none} -> ${gen_after}), waiting for the rollout"
   if ! kubectl rollout status "statefulset/${STATEFULSET}" -n "${NAMESPACE}" \
        --timeout="${READY_TIMEOUT}s" >> "${LOG_DIR}/${label}.log" 2>&1; then
     say "ERROR: ${label} rollout did not complete within ${READY_TIMEOUT}s"
