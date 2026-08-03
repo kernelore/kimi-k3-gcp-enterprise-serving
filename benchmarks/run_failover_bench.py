@@ -286,7 +286,82 @@ def summarise(samples, t0, end_epoch):
     }
 
 
+# Shapes a kill command must not have. --kill-command is arbitrary shell aimed at a live
+# cluster during a metered window, so the blast radius is worth bounding in code rather
+# than in a comment. Everything here removes far more than one pod: the point of this test
+# is to lose a replica, not the cluster it runs on, and a typo that costs the weights
+# backup or the whole StatefulSet is not recoverable inside the window.
+FORBIDDEN_KILL_PATTERNS = [
+    ("delete namespace", "removes the namespace, not a pod"),
+    ("delete ns ", "removes the namespace, not a pod"),
+    ("delete statefulset", "removes the workload; nothing would come back to measure"),
+    ("delete sts", "removes the workload; nothing would come back to measure"),
+    ("delete node", "removes a node; the pods land elsewhere and the test is meaningless"),
+    ("--all", "deletes every matching object rather than one leader"),
+    ("terraform destroy", "tears down the stack mid-measurement"),
+    ("06_destroy_all", "tears down the stack mid-measurement"),
+    ("delete pvc", "destroys staged weights"),
+    ("gsutil rm", "touches durable storage, which no failover test needs"),
+    ("gcloud storage rm", "touches durable storage, which no failover test needs"),
+]
+
+
+def check_kill_command(command):
+    """Return a list of reasons this kill command should not run."""
+    lowered = " ".join(command.lower().split())
+    return [f"{pat.strip()!r}: {why}" for pat, why in FORBIDDEN_KILL_PATTERNS if pat in lowered]
+
+
+def cmd_self_check(args):
+    """Validate the run without issuing a single request or touching the cluster.
+
+    Same intent as the probe self-check on the KV gate: the cheapest moment to catch a
+    misconfigured run is before the GPUs are billing for it.
+    """
+    problems = []
+    if not args.kill_command.strip():
+        problems.append("--kill-command is empty; there would be nothing to fail over from")
+    problems.extend(f"unsafe --kill-command, matched {r}" for r in check_kill_command(args.kill_command))
+    if args.rps <= 0:
+        problems.append(f"--rps must be positive, got {args.rps}")
+    if args.baseline_seconds < 30:
+        problems.append(
+            f"--baseline-seconds={args.baseline_seconds} is too short to establish a p99 to"
+            " compare against; use at least 30")
+    if args.recovery_seconds <= RULE["max_blackout_seconds"]:
+        # Otherwise the run can end mid-outage and report a blackout bounded by its own
+        # duration, which would look like a pass for a service that never came back.
+        problems.append(
+            f"--recovery-seconds={args.recovery_seconds} must exceed the"
+            f" {RULE['max_blackout_seconds']}s blackout limit, or the run cannot observe"
+            " a failure of that rule")
+    if not args.endpoint.startswith(("http://", "https://")):
+        problems.append(f"--endpoint is not an http(s) URL: {args.endpoint}")
+    expected = args.rps * (args.baseline_seconds + args.recovery_seconds)
+    if expected < 100:
+        problems.append(
+            f"the run would issue about {expected:.0f} requests, too few for a stable p99")
+
+    if problems:
+        print("ERROR: failover run is misconfigured:", file=sys.stderr)
+        for p in problems:
+            print(f"  - {p}", file=sys.stderr)
+        return 1
+    print(f"    [OK] self-check: ~{expected:.0f} requests at {args.rps}/s, kill command bounded")
+    return 0
+
+
 def cmd_measure(args):
+    if args.self_check:
+        return cmd_self_check(args)
+    refusals = check_kill_command(args.kill_command)
+    if refusals:
+        # Belt and braces: self-check is advisory, this is not.
+        print("ERROR: refusing to run this kill command:", file=sys.stderr)
+        for r in refusals:
+            print(f"  - {r}", file=sys.stderr)
+        return 1
+
     samples = []
     lock = threading.Lock()
     stop_event = threading.Event()
@@ -493,6 +568,9 @@ def build_parser():
     m.add_argument("--rejoin-expect", default="true")
     m.add_argument("--label", default="failover")
     m.add_argument("--output", default="benchmarks/failover_results_kimi_k3.json")
+    m.add_argument("--self-check", action="store_true",
+                   help="Validate the configuration and the kill command, then exit without"
+                        " issuing a request. Run this before the cluster is up.")
     m.add_argument("--keep-samples", action="store_true",
                    help="Embed the per-request log. Large, but the only way to re-derive"
                         " a number without paying for the window again.")

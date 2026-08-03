@@ -59,7 +59,7 @@ Usage: $0 [OPTIONS]
 Execute Kimi K3 performance benchmarks against the GKE serving stack.
 
 Options:
-  --mode <standard|massive|soak|prefill|saturation|realistic|prefix-reuse|kv-accuracy|all>  Benchmark suite to run (default: all)
+  --mode <standard|massive|soak|prefill|saturation|realistic|prefix-reuse|kv-accuracy|failover|all>  Benchmark suite to run (default: all)
                                    - standard:   8 concurrent requests, 128 tokens
                                    - massive:    20 concurrent requests, 256 tokens (stress test)
                                    - soak:       30-minute continuous stability endurance test
@@ -82,6 +82,12 @@ Options:
                                                  then fp8 -- so set KV_ACCURACY_LABEL and KV_ACCURACY_DTYPE per
                                                  run and compare them offline afterwards with
                                                  'kv_accuracy_gate.py compare'. Also a diagnostic, not in 'all'.
+                                   - failover:   kills a serving replica's rank 0 under steady load and measures
+                                                 what the client saw: blackout, residual loss once service
+                                                 returns, degraded p99, and how long the replica took to rejoin.
+                                                 Needs a second replica to fail over to -- at DP=1 it measures
+                                                 restart time, not failover, and will report a blackout in the
+                                                 thousands of seconds. Destructive by design and not in 'all'.
                                    - all:        Run the 5 published benchmark suites sequentially
   --target <gateway|serving>     Target endpoint for benchmarking (default: gateway)
                                    - gateway: LiteLLM Enterprise Proxy (port 4000) with virtual keys & Redis auth
@@ -280,6 +286,17 @@ if [ "${IN_CLUSTER}" = "true" ]; then
       # Saying so is better than shipping one that dies after the pull.
       echo "ERROR: '--mode kv-accuracy' cannot run in-cluster: the Job template has no slot for the 'capture' subcommand." >&2
       echo "       Run it from the host against the gateway or serving endpoint instead." >&2
+      exit 1
+      ;;
+    failover)
+      # Two reasons, either one sufficient. The Job template has no slot for this mode's
+      # 'measure' subcommand, same as kv-accuracy above; and the benchmark ServiceAccount
+      # has no permission to delete pods, which is the entire point of the mode. A Job
+      # that fails on an RBAC denial after pulling a multi-gigabyte image is a worse
+      # outcome than refusing here.
+      echo "ERROR: '--mode failover' cannot run in-cluster: the Job template has no slot for the 'measure'" >&2
+      echo "       subcommand, and the benchmark ServiceAccount cannot delete pods." >&2
+      echo "       Run it from the host, where kubectl already has the credentials it needs." >&2
       exit 1
       ;;
     *)
@@ -696,6 +713,81 @@ if [ "${MODE}" = "kv-accuracy" ]; then
     echo "        --baseline ${RESULTS_DIR}/kv_accuracy_bf16-a.json \\"
     echo "        --repeat   ${RESULTS_DIR}/kv_accuracy_bf16-b.json \\"
     echo "        --candidate ${RESULTS_DIR}/kv_accuracy_fp8.json"
+  fi
+fi
+
+if [ "${MODE}" = "failover" ]; then
+  echo ""
+  echo "------------------------------------------------------------------------------"
+  sleep 1
+  echo "--> 10. Measuring replica failover under steady load..."
+  echo "------------------------------------------------------------------------------"
+  sleep 1
+
+  FAILOVER_LABEL="${FAILOVER_LABEL:-failover}"
+  FO_OUT="${RESULTS_DIR}/failover_${FAILOVER_LABEL}.json"
+  # Same reasoning as the KV captures: this one costs a replica restart to repeat, so an
+  # accidental second run must not quietly overwrite the first.
+  if [ -e "${FO_OUT}" ]; then
+    echo "ERROR: ${FO_OUT} already exists; refusing to overwrite. Use a different FAILOVER_LABEL." >&2
+    exit 1
+  fi
+
+  # Default to rank 0 of the primary replica. Rank 0 is the whole replica's serving surface
+  # because kimi-k3-serving-svc selects on apps.kubernetes.io/pod-index: "0", so this is the
+  # worst realistic single-pod loss rather than an arbitrary one.
+  FAILOVER_TARGET_POD="${FAILOVER_TARGET_POD:-kimi-k3-serving-0}"
+  FAILOVER_KILL_CMD="${FAILOVER_KILL_CMD:-kubectl delete pod ${FAILOVER_TARGET_POD} -n llm-serving --wait=false}"
+  # --wait=false matters: the harness needs the kill to return immediately so T0 is the
+  # instant the pod was told to go, not the instant Kubernetes finished reaping it.
+
+  # Report the replica as back only once it is Ready, not merely Running. A pod that has
+  # restarted but is still loading 2.8T of weights answers nothing.
+  FAILOVER_REJOIN_CMD="${FAILOVER_REJOIN_CMD:-kubectl get pod ${FAILOVER_TARGET_POD} -n llm-serving -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'}"
+
+  if [ "${TARGET}" != "gateway" ]; then
+    # Pointing this at a single replica measures that replica dying. The question is whether
+    # the *service* survives, and only the gateway can answer it.
+    echo "    WARNING: --target ${TARGET} bypasses the gateway, so there is nothing to fail over to."
+    echo "             The result will describe one replica restarting, not failover."
+  fi
+
+  FO_ARGS=(
+    "measure"
+    "--endpoint=${TARGET_URL}"
+    "--output=${FO_OUT}"
+    "--api-key=${DEV_KEY}"
+    "--model=${SERVING_MODEL_NAME}"
+    "--label=${FAILOVER_LABEL}"
+    "--kill-command=${FAILOVER_KILL_CMD}"
+    "--rejoin-command=${FAILOVER_REJOIN_CMD}"
+    "--rejoin-expect=True"
+    "--keep-samples"
+  )
+  [ -n "${FAILOVER_RPS:-}" ]               && FO_ARGS+=("--rps=${FAILOVER_RPS}")
+  [ -n "${FAILOVER_BASELINE_SECONDS:-}" ]  && FO_ARGS+=("--baseline-seconds=${FAILOVER_BASELINE_SECONDS}")
+  [ -n "${FAILOVER_RECOVERY_SECONDS:-}" ]  && FO_ARGS+=("--recovery-seconds=${FAILOVER_RECOVERY_SECONDS}")
+  [ -n "${FAILOVER_MAX_INFLIGHT:-}" ]      && FO_ARGS+=("--max-inflight=${FAILOVER_MAX_INFLIGHT}")
+
+  if [ -f "${PROJECT_ROOT}/benchmarks/run_failover_bench.py" ]; then
+    echo "    Validating the run and bounding the kill command before anything is deleted..."
+    if ! python3 "${PROJECT_ROOT}/benchmarks/run_failover_bench.py" measure --self-check \
+         "--endpoint=${TARGET_URL}" \
+         "--kill-command=${FAILOVER_KILL_CMD}" \
+         ${FAILOVER_RPS:+"--rps=${FAILOVER_RPS}"} \
+         ${FAILOVER_BASELINE_SECONDS:+"--baseline-seconds=${FAILOVER_BASELINE_SECONDS}"} \
+         ${FAILOVER_RECOVERY_SECONDS:+"--recovery-seconds=${FAILOVER_RECOVERY_SECONDS}"}; then
+      echo "ERROR: Failover self-check failed; refusing to kill anything." >&2
+      exit 1
+    fi
+    echo "    Kill target: ${FAILOVER_TARGET_POD}"
+    python3 "${PROJECT_ROOT}/benchmarks/run_failover_bench.py" "${FO_ARGS[@]}" || echo "WARNING: Failover measurement reported errors or timeouts."
+    echo ""
+    echo "    Apply the pre-registered rule with:"
+    echo "      python3 benchmarks/run_failover_bench.py verdict --input ${FO_OUT}"
+  else
+    echo "ERROR: benchmarks/run_failover_bench.py not found." >&2
+    exit 1
   fi
 fi
 
