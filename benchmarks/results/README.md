@@ -7,6 +7,11 @@ top-level `README.md`, and `tests/adv_audit_benchmark_integrity.py` audits it in
 Files are committed verbatim. They are never hand-edited — a number in this tree is a
 number the harness measured, which is the whole point of auditing it.
 
+One file is not like that and says so in its own `provenance` field:
+`sglang/dspark_prompt_sensitivity_c16.json` was assembled by hand from two sources, and
+no harness run produced it. It is the exception the rule is stated against, not a
+counter-example to it. See "The hand-assembled file" below.
+
 ## Which engine a file belongs to
 
 `metadata.engine` is authoritative. Read that, not the top-level `engine` key.
@@ -58,3 +63,61 @@ order `standard → massive → soak → saturation → prefill`, with each suit
 starting no earlier than the previous suite's end. The integrity audit independently checks
 the same thing using `metadata.run_timestamp` plus each suite's measured duration. A partial
 result set is a hard error in both — publish all five suites for an engine, or none.
+
+Those five are the whole of what is gated. Three later harnesses write into this tree and
+are **not** members of the set:
+
+| `scripts/05_run_benchmarks.sh --mode` | Harness | Writes into this tree | Gated |
+|---|---|---|---|
+| `realistic` | `run_realistic_sweep_kimi_k3.py` | `<engine>/realistic_results.json` | no |
+| `prefix-reuse` | `run_prefix_reuse_bench.py` | `<engine>/prefix_reuse_results.json` | no |
+| `kv-accuracy` | `kv_accuracy_gate.py` | `<engine>/kv_accuracy_<label>.json` | no |
+
+None of the three is a member of `--mode all` either, so a routine full run does not
+produce them.
+
+They are excluded deliberately, not by oversight. The gate exists to stop a partial
+publication of the comparison block in the top-level `README.md`, and none of these three
+feeds that block — they answer tuning questions (does a variant help, does prefix reuse pay
+for a third cache tier, does fp8 KV move the logits) rather than producing headline
+figures. The cost of that exclusion is real and worth stating plainly: nothing checks that
+a `realistic_results.json` in this tree was measured after the baseline it is being diffed
+against. `benchmarks/sweep_decision.py` compensates for the one comparison that matters by
+refusing any baseline/candidate pair whose two files came from different result shapes, but
+it cannot check ordering, and neither can anything else here.
+
+## The hand-assembled file
+
+`sglang/dspark_prompt_sensitivity_c16.json` is the one file in this tree that no harness
+produced. Its two arms come from two different sources measured at different times — the
+repeated-passage acceptance figure was read off engine decode-batch log lines, the
+non-repetitive one from a `spec_verify_calls_total` counter delta — and neither the
+provenance gate nor the integrity audit looks at it, because it carries no `metadata` or
+`grid` block for them to check. Its `provenance` field says all of this in the file itself,
+so the caveat travels with the data rather than living only here.
+
+It is kept because the finding is worth having: accepted tokens per verify step falls from
+~6.4 to ~2.2 when prompts stop being a repeated passage, which bounds how much of README
+Table 4's speculative speedup survives realistic traffic. It is a recorded observation, and
+the right weight to give it is that of a careful note rather than an audited measurement.
+
+`benchmarks/run_realistic_sweep_kimi_k3.py` was written to replace it with a file that has
+both arms from one run, a `metadata` block, and an `arm_comparison` computed by the harness
+instead of by hand. When that run happens, this file should be deleted rather than kept
+alongside it.
+
+## Where c=16 comes from
+
+`benchmarks/sweep_decision.py` anchors every throughput rule on concurrency 16, and
+`scripts/07_run_tuning_sweep.sh` refuses to start a sweep whose levels do not include it.
+That is not an arbitrary pick. Every A/B already in this tree that was run to compare two
+serving configurations — `saturation_c16_direct.json`,
+`saturation_dspark_direct.json`, `saturation_tp8pp2_direct.json` — carries
+`grid.sweep_levels: [8, 16, 32]` and `grid.MAX_INFLIGHT_PROMPT_TOKENS: 265000`, so c=16 is
+the band with the most comparable history, and c=8/c=32 are the two neighbours those same
+runs already cover, which is why they serve as the guard rails.
+
+Note that the `saturation` suite's own default levels are `1,8,32,128` and contain no c=16
+cell. A sweep left on that default cannot produce the number the decision rule reads, which
+is why the driver checks the levels before spending any GPU time rather than discovering it
+afterwards.

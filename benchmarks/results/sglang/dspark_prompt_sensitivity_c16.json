@@ -1,6 +1,7 @@
 {
   "engine": "sglang-0.5.16",
-  "profile": "TP16/PP1/EP16 + DSPARK (block size 8)",
+  "profile": "TP16/PP1/EP16 + DSPARK (block size 7)",
+  "provenance": "Hand-assembled, not harness output. Unlike every other file in this tree it carries no metadata or grid block, because no single harness run produced it: the repeated-passage arm's acceptance was read from engine decode-batch log lines and the non-repetitive arm's from a spec_verify_calls_total counter delta. It is covered by neither the provenance gate nor the integrity audit. benchmarks/run_realistic_sweep_kimi_k3.py exists to replace it with a file that is. Treat these numbers as a recorded observation, not an audited measurement.",
   "purpose": "Isolate the effect of prompt predictability on speculative-decoding gains, holding engine, hardware, concurrency and generated-token count constant.",
   "hardware": "2 x a4-highgpu-8g (16 x NVIDIA B200 HGX), RoCEv2, direct container port 8000",
   "shape": {
@@ -61,5 +62,5 @@
     }
   ],
   "finding": "Accepted tokens per verify step falls from 6.29-6.41 to 2.20-2.28 (~2.8x) when prompts stop being a repeated passage, stable across c=8/16/32. Table 4's speedups are a ceiling for repetitive or highly structured traffic.",
-  "caveat": "The non-speculative baseline could not be re-run on this prompt set before teardown, and these prompts are 46% longer, so 656.60 vs the 492.02 default-profile figure is indicative, not a controlled comparison."
+  "caveat": "The non-speculative baseline could not be re-run on this prompt set before teardown, and these prompts are 66% longer (1523.0 / 917.625 = 1.66; an earlier revision of this file said 46%, which was wrong), so 656.60 vs the 492.02 default-profile figure is indicative, not a controlled comparison."
 }
