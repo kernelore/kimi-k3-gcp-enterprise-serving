@@ -106,6 +106,48 @@ both arms from one run, a `metadata` block, and an `arm_comparison` computed by 
 instead of by hand. When that run happens, this file should be deleted rather than kept
 alongside it.
 
+That run happened on 2026-08-03 and produced `sglang/realistic_results.json`, and it does
+**not** supersede this file. It has both arms, the `metadata` block and the harness-computed
+`arm_comparison` as intended, but it was launched without `--metrics-endpoint`, so
+`acceptance_source` reads `not measured` and `accepted_tok_per_step` is `null` in every
+cell. The throughput half of the replacement exists; the acceptance half — the 6.4-to-2.2
+finding that is the only reason this file is kept — does not. Delete it when a realistic
+sweep runs with the metrics endpoint attached and reproduces or refutes that number, and
+not before.
+
+## The 2026-08-03 measurement window
+
+Seven files came out of one supervised window (`scripts/08_run_measurement_window.sh`,
+run label `phase2-20260803e`) against base digest `sha256:6d9594a4…`, so they are
+cross-image against everything above and like-for-like only with each other.
+
+| File | What it is |
+| :--- | :--- |
+| `kv_accuracy_bf16-a.json` / `-b.json` | Two bf16 captures. `-b` exists only to measure how much two identical configurations already disagree. |
+| `kv_accuracy_fp8.json` | The `fp8_e4m3` candidate capture. |
+| `kv_accuracy_verdict.json` | The gate's judgement over those three. `decision: pass`. |
+| `prefix_reuse_hicache-off.json` / `-on.json` | The two arms of the hierarchical-cache A/B. |
+| `realistic_results.json` | Variant `B0` — the no-delta control arm of the tuning sweep. |
+
+Two caveats travel with these, and neither is visible from inside a single file.
+
+**The prefix-reuse arms are cross-node.** A Spot node was preempted between them, so the
+`off` arm ran on the original node pair and the `on` arm on its replacement. The two arms
+are therefore not a clean A/B on their own: the cold arm is the control that makes them
+comparable, and it moved 3.5–8% between runs. Any evicted- or warm-arm delta smaller than
+that should be read against the cold arm's shift in the same direction, not taken at face
+value. A first `on` arm was lost outright to the same preemption — it recorded 0 successful
+requests out of 2 and out of 64 — and was discarded rather than repaired.
+
+**`realistic_results.json` is one variant of nine.** The sweep table in
+`scripts/07_run_tuning_sweep.sh` has nine rows; `B0` is the control and the only one that
+completed. `B1` exhausted its 1800 s rollout budget without serving traffic, which is a
+schedule failure rather than a result for `cutedsl`, and the window was stopped on cost
+after that. There is no accepted variant in this tree and therefore no measured tuning
+gain — the file is a baseline, and `sglang/checkpoint.tsv` is deliberately not committed
+because a checkpoint recording seven never-attempted rows would read as seven negative
+results.
+
 ## Where c=16 comes from
 
 `benchmarks/sweep_decision.py` anchors every throughput rule on concurrency 16, and
