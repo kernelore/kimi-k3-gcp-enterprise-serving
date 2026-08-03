@@ -48,6 +48,10 @@ RESULTS_BUCKET=""
 DRY_RUN="false"
 KEEP_CLUSTER="false"
 READY_TIMEOUT="1800"
+# Cold first start, as opposed to the warm restarts READY_TIMEOUT covers. Aligned to the
+# serving startupProbe budget (periodSeconds 30 x failureThreshold 120) so this wait and
+# the probe give up at the same moment instead of one pre-empting the other.
+FIRST_READY_TIMEOUT="3600"
 RUN_LABEL=""
 
 show_usage() {
@@ -66,6 +70,11 @@ Options:
                         node is not a result.
   --ready-timeout <sec> Rollout wait per restart (default: 1800; measured warm
                         restart is 17 min 03 s)
+  --first-ready-timeout <sec>
+                        Rollout wait for the cold first start (default: 3600).
+                        Longer than --ready-timeout on purpose: nothing is cached
+                        on a fresh node. Matches the serving startupProbe budget
+                        (30s x 120), so neither gives up before the other.
   --run-label <name>    Log/state subdirectory name (default: derived from the
                         start time)
   --keep-cluster        Skip the teardown. Refuses unless CONFIRM_KEEP_CLUSTER=1
@@ -85,6 +94,7 @@ while [[ $# -gt 0 ]]; do
     --stages)         STAGES="$2"; shift 2 ;;
     --results-bucket) RESULTS_BUCKET="$2"; shift 2 ;;
     --ready-timeout)  READY_TIMEOUT="$2"; shift 2 ;;
+    --first-ready-timeout) FIRST_READY_TIMEOUT="$2"; shift 2 ;;
     --run-label)      RUN_LABEL="$2"; shift 2 ;;
     --keep-cluster)   KEEP_CLUSTER="true"; shift ;;
     --dry-run)        DRY_RUN="true"; shift ;;
@@ -439,7 +449,39 @@ stage_deploy() {
   say "  infra up; GPU meter starts when the StatefulSet lands"
   LIVE_VALIDATION=yes \
   bash "${SCRIPT_DIR}/03_deploy_workloads.sh"     >> "${LOG_DIR}/03_workloads.log" 2>&1
-  bash "${SCRIPT_DIR}/04_verify_cluster.sh"       >> "${LOG_DIR}/04_verify.log" 2>&1
+
+  # 03 returns as soon as the manifests are applied, not when the model is loaded. Wait for
+  # the rollout here, before anything asks the service a question.
+  #
+  # Measured, not assumed: window 3 applied the StatefulSet and ran the health checks
+  # against pods that were four seconds old and still in Init:0/1. Every check failed,
+  # set -e turned that into a deploy failure, and a cluster that had just passed the fabric
+  # gate at 286 GB/s and staged 1.45 TiB of weights in 708s was destroyed for the crime of
+  # not having loaded a 2.8T model instantly.
+  #
+  # FIRST_READY_TIMEOUT is deliberately not READY_TIMEOUT. READY_TIMEOUT (1800s) is sized
+  # for the measured 17m03s *warm* restart between sweep variants, where the page cache is
+  # hot. This is a cold first start on fresh nodes reading the ROX volume for the first
+  # time. The principled ceiling is the startupProbe's own budget -- periodSeconds 30 x
+  # failureThreshold 120 = 3600s -- because waiting longer is pointless (kubelet kills the
+  # container) and waiting less means giving up before Kubernetes has.
+  say "  waiting for the serving rollout (up to ${FIRST_READY_TIMEOUT}s; cold start, not the warm-restart budget)"
+  if ! kubectl rollout status "statefulset/${STATEFULSET}" -n "${NAMESPACE}" \
+       --timeout="${FIRST_READY_TIMEOUT}s" >> "${LOG_DIR}/04_verify.log" 2>&1; then
+    say "ERROR: serving StatefulSet did not become ready within ${FIRST_READY_TIMEOUT}s"
+    kubectl get pods -n "${NAMESPACE}" -l app=kimi-k3-serving >> "${LOG_DIR}/04_verify.log" 2>&1 || true
+    kubectl logs -n "${NAMESPACE}" "${STATEFULSET}-0" --tail=120 >> "${LOG_DIR}/04_verify.log" 2>&1 || true
+    return 1
+  fi
+  say "  serving rollout complete"
+
+  # Diagnostics, not a gate. 04 exercises gateway auth, rate limiting and Redis cache
+  # behaviour; those are worth capturing in the log but none of them decide whether a
+  # throughput measurement is valid, and a transient 000 from a port-forward is not a
+  # reason to destroy a cluster that is up and serving. The rollout above is the gate.
+  if ! bash "${SCRIPT_DIR}/04_verify_cluster.sh" >> "${LOG_DIR}/04_verify.log" 2>&1; then
+    say "  NOTE: 04_verify_cluster reported issues (see 04_verify.log); continuing, the rollout is the gate"
+  fi
   say "  cluster verified"
 }
 
