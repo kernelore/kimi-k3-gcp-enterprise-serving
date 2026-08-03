@@ -195,6 +195,10 @@ ACTIVE_MARKER="${STATE_ROOT}/ACTIVE"
 # Written when a stage fails and the cluster is deliberately left up. Read by the
 # watchdog, which otherwise destroys the stack 300s after the runner dies.
 HOLD_MARKER="${STATE_ROOT}/HOLD"
+# The watchdog's own pid, so a later window can stop it rather than hope it works out
+# that it has been superseded. The watchdog also checks ownership itself; this is the
+# belt to that pair of braces, and the only one that also stops it burning a poll loop.
+WATCHDOG_MARKER="${STATE_ROOT}/WATCHDOG"
 RESULTS_DIR="${PROJECT_ROOT}/benchmarks/results/${INFERENCE_ENGINE:-sglang}"
 
 stage_wanted() { [[ ",${STAGES}," == *",$1,"* ]]; }
@@ -344,9 +348,24 @@ cluster_up() {
 # ACTIVE marker: this watchdog's runner removes its own on a clean exit, and any
 # other window's marker means the cluster is not ours to tear down.
 owns_cluster() {
-  local other
+  local other current
   if [ ! -f "${active}" ]; then
     log "own ACTIVE marker is gone -- runner cleaned up; not ours to destroy"
+    return 1
+  fi
+  # Path identity is not ownership, and assuming it was destroyed a live 16-GPU
+  # deployment mid-sweep on 2026-08-03. A later window that reuses the same run label
+  # writes *this same path* with its own runner pid, so a check that only compares
+  # paths reports "still ours" about a cluster somebody else is now sweeping. The
+  # marker's contents are the ownership record; the path is just where it is kept.
+  # Liveness matters as much as identity, and in the opposite direction. A *live*
+  # foreign pid means a successor window is running and the cluster is its business
+  # now. A *dead* foreign pid is just a stale marker nobody cleared, and standing down
+  # for it would leave 16 B200s billing with nothing left willing to tear them down --
+  # which is the failure this watchdog exists to prevent.
+  current="$(cat "${active}" 2>/dev/null || echo "")"
+  if [ -n "${current}" ] && [ "${current}" != "${runner_pid}" ] && kill -0 "${current}" 2>/dev/null; then
+    log "ACTIVE holds live pid ${current}, not our runner ${runner_pid}; another window owns this cluster"
     return 1
   fi
   for other in "$(dirname "$(dirname "${active}")")"/*/ACTIVE; do
@@ -373,6 +392,14 @@ while true; do
   now="$(date -u +%s)"
   if [ "${now}" -ge "${deadline}" ]; then
     log "wall-clock budget exhausted"
+    # Ownership is checked here for the same reason it is checked on the death path.
+    # An orphaned watchdog still counts down, and its deadline will arrive while the
+    # window that succeeded it is mid-sweep on a cluster it never authorised us to
+    # destroy. Our own budget is not a licence to spend someone else's.
+    if ! owns_cluster; then
+      log "deadline reached but another window owns the cluster; standing down"
+      exit 0
+    fi
     kill -TERM "${runner_pid}" 2>/dev/null
     sleep 120
     kill -KILL "${runner_pid}" 2>/dev/null
@@ -428,6 +455,7 @@ WATCHDOG
     "${LOG_DIR}" "${CLUSTER_NAME}" "${ACTIVE_MARKER}" "${HOLD_MARKER}" \
     < /dev/null > /dev/null 2>&1 &
   WATCHDOG_PID="$!"
+  echo "${WATCHDOG_PID}" > "${WATCHDOG_MARKER}"
   say "watchdog armed (pid ${WATCHDOG_PID}), deadline $(date -u -d "@${DEADLINE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
   if [ "${HOLD_ON_FAILURE}" = "true" ]; then
     say "  on failure the cluster is HELD, not destroyed -- it keeps billing until the deadline"
@@ -436,6 +464,25 @@ WATCHDOG
 
 # Refuse to start while another window still claims the cluster. Two runners
 # against one cluster name is not a race worth losing at $92/h.
+# A superseded window's watchdog is still running and still counting down. Clearing its
+# markers is not enough: with the HOLD gone it reads the situation as "my runner died
+# without cleaning up", waits out its grace period, and destroys the cluster the new
+# window is by then already sweeping. That is not a hypothetical -- it happened on
+# 2026-08-03 and took a live 16-GPU deployment with it. Stop the process, not just its
+# paperwork, and stop it before the paperwork goes.
+stop_stale_watchdog() {
+  local dir="$1" wpid
+  [ -f "${dir}/WATCHDOG" ] || return 0
+  wpid="$(cat "${dir}/WATCHDOG" 2>/dev/null || echo "")"
+  if [ -n "${wpid}" ] && kill -0 "${wpid}" 2>/dev/null; then
+    kill -TERM "${wpid}" 2>/dev/null
+    sleep 1
+    kill -KILL "${wpid}" 2>/dev/null
+    echo "NOTE: stopped the superseded watchdog from $(basename "${dir}") (pid ${wpid})"
+  fi
+  rm -f "${dir}/WATCHDOG"
+}
+
 assert_sole_owner() {
   local other
   # Our own label is checked too, not skipped. Re-running a label whose previous
@@ -467,11 +514,13 @@ assert_sole_owner() {
         exit 1
       fi
       echo "NOTE: taking over the cluster held by ${held_label} (RESUME_HELD_WINDOW=1)"
+      stop_stale_watchdog "$(dirname "${other}")"
       rm -f "$(dirname "${other}")/HOLD"
       rm -f "${other}"
       continue
     fi
     echo "NOTE: clearing stale ACTIVE marker from $(basename "$(dirname "${other}")") (pid ${pid:-?} is gone)"
+    stop_stale_watchdog "$(dirname "${other}")"
     rm -f "${other}"
   done
 }
