@@ -62,6 +62,11 @@ SERVING_MODEL_LABEL=$(printf '%s' "${SERVING_MODEL_NAME}" \
 export SERVING_MODEL_LABEL="${SERVING_MODEL_LABEL:-kimi-k3}"
 
 export FABRIC_GATE_TIMEOUT_SECONDS="${FABRIC_GATE_TIMEOUT_SECONDS:-900}"
+# Separate budget for getting the gate pods onto nodes at all. Keep it apart from
+# FABRIC_GATE_TIMEOUT_SECONDS above: that one is meant to bound the fabric test, and if
+# node provisioning is charged to the same clock then the gate reports a fabric fault
+# whenever GKE is merely slow to hand over spot capacity. See wait_for_fabric_pods_running.
+export FABRIC_POD_READY_TIMEOUT_SECONDS="${FABRIC_POD_READY_TIMEOUT_SECONDS:-1800}"
 export TRTLLM_TP_SIZE="${TRTLLM_TP_SIZE:-8}"
 export TRTLLM_PP_SIZE="${TRTLLM_PP_SIZE:-2}"
 export TRTLLM_EP_SIZE="${TRTLLM_EP_SIZE:-8}"
@@ -400,6 +405,68 @@ wait_for_fabric_pods_gone() {
   return 0
 }
 
+# Block until the gate's pods are actually Running, on their own clock, before anyone starts
+# timing the fabric.
+#
+# The marker poll that follows each gate is meant to answer "is the fabric good". Applying the
+# StatefulSet and immediately starting that poll makes it answer "is the fabric good AND did
+# GKE hand us two spot B200 nodes quickly" -- and it reports the compound failure as a fabric
+# fault. Measured, not assumed: window 2 of the measurement runs applied the gate at 13:07:28
+# and its nodes only reached Ready at 13:17:15. That is 587s of a 900s budget spent on
+# provisioning; the pods started at ~13:18:20 and the clock expired at 13:22:28, so an
+# 8M-512M all_reduce sweep got ~4 minutes and had not finished NCCL init. Not one size row
+# printed. The log said "marker absent from nccl-roce-test-0 at timeout (900s)", which reads
+# as a dead fabric and was nothing of the kind.
+#
+# Pending is deliberately NOT treated as an error here: it is the normal state while a node
+# pool scales from zero, which is exactly the case this gate runs in.
+wait_for_fabric_pods_running() {
+  local sts="$1" container="$2" replicas="${3:-2}"
+  local deadline=$(( $(date +%s) + FABRIC_POD_READY_TIMEOUT_SECONDS ))
+  local last_report running stuck now
+  last_report="$(date +%s)"
+  echo "    Waiting for ${replicas} ${sts} pod(s) to reach Running (timeout: ${FABRIC_POD_READY_TIMEOUT_SECONDS}s)."
+  echo "    This covers spot GPU node provisioning and image pull, not the fabric test itself."
+  while :; do
+    running="$(kubectl get pods -n llm-serving -l "app=${sts}" \
+      --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)"
+    if [ "${running}" -ge "${replicas}" ]; then
+      echo "    All ${replicas} ${sts} pod(s) Running; starting the ${FABRIC_GATE_TIMEOUT_SECONDS}s fabric clock now."
+      return 0
+    fi
+
+    # Fail fast on waiting states that never resolve by themselves. Spending the whole
+    # provisioning budget on a pod that cannot pull its image wastes GPU-hours that are
+    # already billing, and buries the real cause under a timeout message.
+    stuck="$(kubectl get pods -n llm-serving -l "app=${sts}" \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"="}{range .status.containerStatuses[*]}{.state.waiting.reason}{" "}{end}{"\n"}{end}' 2>/dev/null \
+      | grep -E 'ImagePullBackOff|ErrImagePull|CrashLoopBackOff|CreateContainerConfigError|InvalidImageName' || true)"
+    if [ -n "${stuck}" ]; then
+      echo "ERROR: ${sts} pod(s) are in a terminal waiting state and will not start:" >&2
+      printf '%s\n' "${stuck}" >&2
+      dump_fabric_diagnostics "${sts}" "${container}"
+      cleanup_fabric_pods
+      exit 1
+    fi
+
+    now="$(date +%s)"
+    if [ "${now}" -ge "${deadline}" ]; then
+      echo "ERROR: only ${running}/${replicas} ${sts} pod(s) reached Running within ${FABRIC_POD_READY_TIMEOUT_SECONDS}s." >&2
+      echo "       The fabric test never started, so this result says nothing about the fabric." >&2
+      echo "       Most likely spot B200 capacity in this zone, not the RDMA configuration." >&2
+      dump_fabric_diagnostics "${sts}" "${container}"
+      cleanup_fabric_pods
+      exit 1
+    fi
+    # A silent twenty-minute wait is indistinguishable from a hang to whoever is watching.
+    if [ $(( now - last_report )) -ge 60 ]; then
+      echo "    ... ${running}/${replicas} Running, $(( deadline - now ))s of provisioning budget left"
+      last_report="${now}"
+    fi
+    sleep 10
+  done
+}
+
 # Dump everything needed to diagnose a fabric gate failure without re-running it. These
 # gates only fail on a live GPU cluster, so a truncated dump means either paying to
 # reproduce or guessing. Both ranks, in full: a hang shows up as an absence in rank 0's
@@ -431,6 +498,10 @@ else
   # deadlocks permanently: two pods run, the other two stay Pending forever, and both gates
   # time out. That is why the RoCE bus-bandwidth number was never successfully captured.
   kubectl apply -f "${GENERATED_DIR}/00c-nccl-test-job.yaml"
+
+  # This StatefulSet is what causes the GPU node pool to scale off zero, so the wait below
+  # is the node-provisioning wait. It has to finish before the fabric clock starts.
+  wait_for_fabric_pods_running nccl-roce-test nccl-test 2
 
   echo "    Polling NCCL RoCEv2 rank-0 pod (nccl-roce-test-0) for machine marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   MARKER_LINE=""
@@ -486,6 +557,12 @@ else
   kubectl delete statefulset nccl-roce-test -n llm-serving --ignore-not-found=true >/dev/null 2>&1 || true
   wait_for_fabric_pods_gone "app=nccl-roce-test"
   kubectl apply -f "${GENERATED_DIR}/00d-serving-nccl-parity-job.yaml"
+
+  # Nodes already exist by this point and the serving image is warm in the local registry,
+  # so this normally returns in seconds. It is here because the flaw is structural, not
+  # specific to the first gate: any marker poll that also times scheduling can fail for
+  # reasons that have nothing to do with what it claims to measure.
+  wait_for_fabric_pods_running nccl-parity-check nccl-parity-check 2
 
   echo "    Polling NCCL parity check rank-0 pod (nccl-parity-check-0) for parity marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   PARITY_MARKER=""
