@@ -347,6 +347,37 @@ kubectl apply -f "${GENERATED_DIR}/10-scheduled-turndown-cronjob.yaml"
 echo "--> 4. Waiting for local-nvme-raid-formatter DaemonSet rollout..."
 kubectl rollout status daemonset/local-nvme-raid-formatter -n kube-system --timeout=180s || echo "WARNING: DaemonSet rollout timeout (may be waiting for spot nodes to register)."
 
+# The gIB installer stages the NCCL network plugin onto each GPU node: its init container
+# pulls a multi-gigabyte image and then `cp -r`s into /home/kubernetes/bin/gib, so that
+# directory exists and is incomplete for most of the operation. Everything below mounts it.
+#
+# This cannot be fully sequenced from here, and it is worth being explicit about why. The
+# GPU pool has a minimum of zero nodes and the cluster autoscaler does not scale up for
+# DaemonSet pods, so at this point there is usually no GPU node at all: the DaemonSet's
+# desired count is 0 and `kubectl rollout status` returns success immediately. The first
+# GPU node is created by the RoCE gate's own StatefulSet below, which means the gate pod
+# and the installer land on a brand-new node at the same moment and race.
+#
+# So this wait is opportunistic -- it only means anything on a re-run against a warm
+# cluster. The load-bearing guard is the bounded wait for set_nccl_env.sh inside the gate
+# pod itself (00c-nccl-test-job.yaml.template), which is on the node where the race is.
+GIB_DESIRED="$(kubectl get daemonset/nccl-gib-installer -n kube-system \
+  -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo 0)"
+if [ "${GIB_DESIRED:-0}" -gt 0 ]; then
+  echo "--> 4b. Waiting for nccl-gib-installer DaemonSet rollout (${GIB_DESIRED} GPU node(s) present)..."
+  if ! kubectl rollout status daemonset/nccl-gib-installer -n kube-system --timeout=600s; then
+    echo "ERROR: nccl-gib-installer DaemonSet did not become ready within 600s." >&2
+    echo "       Every NCCL collective below depends on the plugin it installs; continuing" >&2
+    echo "       would measure a TCP fallback and call it a fabric result." >&2
+    kubectl get pods -n kube-system -l app=nccl-gib-installer -o wide >&2 || true
+    kubectl describe daemonset/nccl-gib-installer -n kube-system >&2 || true
+    exit 1
+  fi
+else
+  echo "--> 4b. No GPU node registered yet, so nccl-gib-installer has nothing scheduled."
+  echo "        The gate pod waits for the plugin itself once its node exists."
+fi
+
 # 3b. Verify RoCEv2 Network Fabric and NCCL bus bandwidth floor (>= 100 GB/s)
 cleanup_fabric_pods() {
   kubectl delete statefulset nccl-roce-test nccl-parity-check -n llm-serving --ignore-not-found=true >/dev/null 2>&1 || true
@@ -367,6 +398,26 @@ wait_for_fabric_pods_gone() {
   done
   echo "    WARNING: pods matching '${selector}' still present after 180s; continuing anyway." >&2
   return 0
+}
+
+# Dump everything needed to diagnose a fabric gate failure without re-running it. These
+# gates only fail on a live GPU cluster, so a truncated dump means either paying to
+# reproduce or guessing. Both ranks, in full: a hang shows up as an absence in rank 0's
+# log, and it is rank 1 that says what it was waiting for. Preceded by pod state and
+# events, which is where scheduling and image-pull failures show up instead.
+dump_fabric_diagnostics() {
+  local sts="$1" container="$2"
+  echo "--- fabric diagnostics for ${sts} ---" >&2
+  kubectl get pods -n llm-serving -l "app=${sts}" -o wide >&2 2>&1 || true
+  kubectl get events -n llm-serving --sort-by=.lastTimestamp 2>/dev/null | tail -30 >&2 || true
+  local rank
+  for rank in 0 1; do
+    echo "--- full log: ${sts}-${rank} (container ${container}) ---" >&2
+    kubectl logs "${sts}-${rank}" -n llm-serving -c "${container}" >&2 2>&1 || true
+    echo "--- previous container log (if it restarted): ${sts}-${rank} ---" >&2
+    kubectl logs "${sts}-${rank}" -n llm-serving -c "${container}" --previous >&2 2>&1 || true
+  done
+  echo "--- end fabric diagnostics ---" >&2
 }
 
 if [ "${SKIP_FABRIC_CHECK:-false}" = "true" ]; then
@@ -400,14 +451,14 @@ else
 
   if [ -z "${MARKER_LINE}" ]; then
     echo "ERROR: NCCL RoCEv2 verification failed: marker absent from nccl-roce-test-0 at timeout (${FABRIC_GATE_TIMEOUT_SECONDS}s)!" >&2
-    kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test --tail=50 >&2 || true
+    dump_fabric_diagnostics nccl-roce-test nccl-test
     cleanup_fabric_pods
     exit 1
   fi
 
   if [ -n "${FAIL_SEEN}" ]; then
     echo "ERROR: NCCL RoCEv2 verification reported failure marker (${FAIL_SEEN})!" >&2
-    kubectl logs nccl-roce-test-0 -n llm-serving -c nccl-test --tail=50 >&2 || true
+    dump_fabric_diagnostics nccl-roce-test nccl-test
     cleanup_fabric_pods
     exit 1
   fi
@@ -454,19 +505,19 @@ else
 
   if [ -z "${PARITY_MARKER}" ]; then
     echo "ERROR: NCCL parity check failed: marker absent from nccl-parity-check-0 at timeout (${FABRIC_GATE_TIMEOUT_SECONDS}s)!" >&2
-    kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    dump_fabric_diagnostics nccl-parity-check nccl-parity-check
     cleanup_fabric_pods
     exit 1
   fi
   if [ -n "${FAIL_SEEN}" ]; then
     echo "ERROR: NCCL parity check failed: rank 0 emitted fail marker (${FAIL_SEEN})!" >&2
-    kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    dump_fabric_diagnostics nccl-parity-check nccl-parity-check
     cleanup_fabric_pods
     exit 1
   fi
   if ! echo "${PARITY_MARKER}" | grep -E -q "^NCCL_PARITY_RESULT pass$"; then
     echo "ERROR: NCCL parity check reported failure or invalid marker (${PARITY_MARKER})!" >&2
-    kubectl logs nccl-parity-check-0 -n llm-serving -c nccl-parity-check --tail=50 >&2 || true
+    dump_fabric_diagnostics nccl-parity-check nccl-parity-check
     cleanup_fabric_pods
     exit 1
   fi

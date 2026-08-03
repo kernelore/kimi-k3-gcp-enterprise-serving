@@ -88,7 +88,39 @@ spec:
           echo 'source /usr/local/gib/scripts/set_nccl_env.sh 2>/dev/null || true' >> /etc/profile
           echo 'source /usr/local/gib/scripts/set_nccl_env.sh 2>/dev/null || true' >> /root/.bashrc
           export LD_LIBRARY_PATH="/third_party/nccl/build/lib:/nccl-plugin-gib/build:/nccl-tuner/build:/nccl-shim/build:/usr/local/nvidia/lib64:/usr/local/gib/lib64:/usr/local/nvidia/lib:/usr/local/gib/lib"
-          source /usr/local/gib/scripts/set_nccl_env.sh 2>/dev/null || true
+          # Wait for the gIB plugin instead of sourcing it best-effort. This pod and the
+          # nccl-gib-installer DaemonSet are typically scheduled onto the same brand-new GPU
+          # node at the same moment -- this StatefulSet is what triggers the node to be
+          # created -- so the plugin is normally still being staged when we start. Without it
+          # NCCL falls back to TCP over eth0, and an 8M-512M all_reduce sweep at that speed
+          # does not finish inside the gate timeout, so the operator sees "marker absent at
+          # timeout" and has to guess. Waiting turns a race into a delay, and exhausting the
+          # wait turns a mystery into a named cause.
+          GIB_ENV="/usr/local/gib/scripts/set_nccl_env.sh"
+          GIB_WAIT_SECONDS="${GIB_WAIT_SECONDS:-600}"
+          gib_deadline=$(( $(date +%s) + GIB_WAIT_SECONDS ))
+          while [ ! -r "${GIB_ENV}" ]; do
+            if [ "$(date +%s)" -ge "${gib_deadline}" ]; then
+              echo "FATAL: gIB NCCL env script still not readable at ${GIB_ENV} after ${GIB_WAIT_SECONDS}s." >&2
+              echo "FATAL: nccl-gib-installer has not staged the plugin onto this node." >&2
+              echo "FATAL: Refusing to run -- NCCL would fall back to TCP sockets and the" >&2
+              echo "FATAL: resulting number would describe the socket path, not the fabric." >&2
+              ls -la /usr/local/gib /usr/local/gib/scripts >&2 2>&1 || true
+              # Emit the marker so the poller fails immediately with a reason, rather than
+              # spending its whole timeout waiting for a pod that has already given up.
+              if [ "${HOSTNAME##*-}" = "0" ]; then
+                echo "NCCL_GATE_RESULT fail"
+              fi
+              exit 1
+            fi
+            echo "Waiting for gIB plugin to be staged onto this node (${GIB_ENV})..."
+            sleep 5
+          done
+          # The installer copies with `cp -r`, which is not atomic: the script can be visible
+          # while the libraries it points at are still arriving. Settle briefly before use.
+          sleep 5
+          echo "gIB plugin present; sourcing NCCL environment."
+          source "${GIB_ENV}"
           export NCCL_CONF_FILE="/usr/local/gib/scripts/nccl.conf"
           export NCCL_DEBUG="INFO"
           export NCCL_DEBUG_SUBSYS="INIT,NET,GRAPH"
@@ -108,8 +140,21 @@ spec:
           if [ "${NODE_RANK}" = "0" ]; then
             trap 'echo "NCCL_GATE_RESULT fail"' ERR
             echo -e "nccl-roce-test-0 slots=8\nnccl-roce-test-1 slots=8" > /tmp/hostfile
-            echo "Waiting for worker node nccl-roce-test-1 sshd to start..."
-            sleep 15
+            # Poll for the worker's sshd rather than sleeping a fixed 15s. Both ranks now wait
+            # for the gIB plugin independently and can clear that wait minutes apart, so a
+            # fixed sleep would have rank 0 ssh into a worker that is still waiting and fail
+            # the gate on a connection refusal that means nothing.
+            echo "Waiting for worker node nccl-roce-test-1 sshd on port 2222..."
+            ssh_deadline=$(( $(date +%s) + 600 ))
+            until timeout 3 bash -c 'cat < /dev/null > /dev/tcp/nccl-roce-test-1/2222' 2>/dev/null; do
+              if [ "$(date +%s)" -ge "${ssh_deadline}" ]; then
+                echo "ERROR: worker nccl-roce-test-1 sshd unreachable on port 2222 after 600s." >&2
+                echo "NCCL_GATE_RESULT fail"
+                exit 1
+              fi
+              sleep 5
+            done
+            echo "Worker sshd is accepting connections."
             echo "Running 2-node all_reduce_perf over RoCEv2 fabric..."
             LOG_FILE=$(mktemp)
             if ! mpirun -n 16 --allow-run-as-root -x LD_LIBRARY_PATH -x PATH -x NCCL_CONF_FILE=/usr/local/gib/scripts/nccl.conf -x NCCL_DEBUG -x NCCL_DEBUG_SUBSYS -x NCCL_SOCKET_IFNAME -x GLOO_SOCKET_IFNAME --mca plm_rsh_args "-p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" --hostfile /tmp/hostfile /third_party/nccl-tests/build/all_reduce_perf -b 8M -e 512M -f 2 -g 1 2>&1 | tee "${LOG_FILE}"; then
