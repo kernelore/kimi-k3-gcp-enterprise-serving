@@ -1,0 +1,328 @@
+{
+  "engine": "sglang",
+  "metadata": {
+    "engine": "sglang",
+    "version": "0.5.16",
+    "engine_version": "0.5.16",
+    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/kimi-prod/sglang-blackwell:latest",
+    "run_timestamp": "2026-08-03T21:05:28Z",
+    "tp": 16,
+    "pp": 1,
+    "ep": 16,
+    "nodes": 2,
+    "gpus": 16
+  },
+  "token_count_source": "openai_usage",
+  "acceptance_source": "not measured (no --metrics-endpoint)",
+  "grid": {
+    "ISL_OSL_GRID": [
+      [
+        1536,
+        1024
+      ]
+    ],
+    "sweep_levels": [
+      8,
+      16,
+      32
+    ],
+    "arms": [
+      "repeated_passage",
+      "non_repetitive"
+    ],
+    "issuance": "pool",
+    "MAX_INFLIGHT_PROMPT_TOKENS": 2000000,
+    "MAX_CONTEXT_TOKENS": 131072,
+    "suite_start_ts": "2026-08-03T21:05:29Z",
+    "suite_end_ts": "2026-08-03T21:13:13Z",
+    "suite_duration_s": 463.5913
+  },
+  "corpus": {
+    "kind": "generated",
+    "seed": 20260803,
+    "chars_per_token_assumed": 4.5,
+    "frames": 9,
+    "pool_sizes": {
+      "adj": 43,
+      "adv": 37,
+      "conj": 13,
+      "noun": 61,
+      "prep": 23,
+      "sub": 14,
+      "vi": 31,
+      "vt": 41
+    },
+    "sentence_space": 757906360056878360856072935,
+    "sentences_emitted": 7118,
+    "draw_collisions_resolved": 0,
+    "sentence_uniqueness": "enforced"
+  },
+  "corpus_profile": {
+    "prompts": 112,
+    "words_analysed": 111548,
+    "analysis_truncated": false,
+    "sentences": 7118,
+    "duplicate_sentences": 0,
+    "longest_repeated_ngram_words": 8,
+    "ngram_cap": 32,
+    "duplicate_8gram_fraction": 3.6e-05,
+    "max_shared_prompt_prefix_words": 2
+  },
+  "arm_results": {
+    "repeated_passage": [
+      {
+        "isl_target": 1536,
+        "osl": 1024,
+        "concurrency": 8,
+        "prompt_tokens_observed": 1928.6875,
+        "status": "ok",
+        "requests": 16,
+        "successful": 16,
+        "error_rate_pct": 0.0,
+        "total_tokens": 16384,
+        "token_count_source": "openai_usage",
+        "total_duration_sec": 109.07781958580017,
+        "aggregate_tok_s": 150.20468929627268,
+        "per_gpu_tok_s": 9.387793081017042,
+        "per_user_tok_s": 18.775586162034084,
+        "ttft_ms": {
+          "mean": 42470.542564988136,
+          "p50": 61129.894495010376,
+          "p90": 67988.39974403381,
+          "p99": 69769.79374885559
+        },
+        "tpot_ms": {
+          "mean": 28.4469735126726,
+          "p50": 27.450084686279297,
+          "p90": 28.924226760864258,
+          "p99": 94.37823295593262
+        },
+        "peak_metrics": null,
+        "arm": "repeated_passage",
+        "issuance": "pool",
+        "spec_verify_calls": null,
+        "accepted_tok_per_step": null
+      },
+      {
+        "isl_target": 1536,
+        "osl": 1024,
+        "concurrency": 16,
+        "prompt_tokens_observed": 1928.3125,
+        "status": "ok",
+        "requests": 32,
+        "successful": 32,
+        "error_rate_pct": 0.0,
+        "total_tokens": 32768,
+        "token_count_source": "openai_usage",
+        "total_duration_sec": 66.275475025177,
+        "aggregate_tok_s": 494.4212016217455,
+        "per_gpu_tok_s": 30.901325101359095,
+        "per_user_tok_s": 30.901325101359095,
+        "ttft_ms": {
+          "mean": 20255.625694990158,
+          "p50": 20009.34934616089,
+          "p90": 29889.963150024414,
+          "p99": 33022.374868392944
+        },
+        "tpot_ms": {
+          "mean": 32.06526072777946,
+          "p50": 30.951976776123047,
+          "p90": 32.84335136413574,
+          "p99": 94.06232833862305
+        },
+        "peak_metrics": null,
+        "arm": "repeated_passage",
+        "issuance": "pool",
+        "spec_verify_calls": null,
+        "accepted_tok_per_step": null
+      },
+      {
+        "isl_target": 1536,
+        "osl": 1024,
+        "concurrency": 32,
+        "prompt_tokens_observed": 1928.328125,
+        "status": "ok",
+        "requests": 64,
+        "successful": 64,
+        "error_rate_pct": 0.0,
+        "total_tokens": 65536,
+        "token_count_source": "openai_usage",
+        "total_duration_sec": 75.08680701255798,
+        "aggregate_tok_s": 872.8031275725888,
+        "per_gpu_tok_s": 54.5501954732868,
+        "per_user_tok_s": 27.2750977366434,
+        "ttft_ms": {
+          "mean": 23292.26863756776,
+          "p50": 22662.132024765015,
+          "p90": 35553.82561683655,
+          "p99": 37572.43585586548
+        },
+        "tpot_ms": {
+          "mean": 35.924384740624895,
+          "p50": 34.295082092285156,
+          "p90": 36.35573387145996,
+          "p99": 136.80505752563477
+        },
+        "peak_metrics": null,
+        "arm": "repeated_passage",
+        "issuance": "pool",
+        "spec_verify_calls": null,
+        "accepted_tok_per_step": null
+      }
+    ],
+    "non_repetitive": [
+      {
+        "isl_target": 1536,
+        "osl": 1024,
+        "concurrency": 8,
+        "prompt_tokens_observed": 1653.5625,
+        "status": "ok",
+        "requests": 16,
+        "successful": 16,
+        "error_rate_pct": 0.0,
+        "total_tokens": 16384,
+        "token_count_source": "openai_usage",
+        "total_duration_sec": 57.93848943710327,
+        "aggregate_tok_s": 282.78265724870346,
+        "per_gpu_tok_s": 17.673916078043966,
+        "per_user_tok_s": 35.34783215608793,
+        "ttft_ms": {
+          "mean": 18294.020801782608,
+          "p50": 20883.353233337402,
+          "p90": 28974.100589752197,
+          "p99": 28975.077867507935
+        },
+        "tpot_ms": {
+          "mean": 28.406124351346644,
+          "p50": 27.534008026123047,
+          "p90": 28.927326202392578,
+          "p99": 60.327768325805664
+        },
+        "peak_metrics": null,
+        "arm": "non_repetitive",
+        "issuance": "pool",
+        "spec_verify_calls": null,
+        "accepted_tok_per_step": null
+      },
+      {
+        "isl_target": 1536,
+        "osl": 1024,
+        "concurrency": 16,
+        "prompt_tokens_observed": 1654.34375,
+        "status": "ok",
+        "requests": 32,
+        "successful": 32,
+        "error_rate_pct": 0.0,
+        "total_tokens": 32768,
+        "token_count_source": "openai_usage",
+        "total_duration_sec": 67.32511973381042,
+        "aggregate_tok_s": 486.71283659884875,
+        "per_gpu_tok_s": 30.419552287428047,
+        "per_user_tok_s": 30.419552287428047,
+        "ttft_ms": {
+          "mean": 20491.230964660645,
+          "p50": 18633.90064239502,
+          "p90": 33043.78843307495,
+          "p99": 34279.05535697937
+        },
+        "tpot_ms": {
+          "mean": 33.39940505763549,
+          "p50": 31.076908111572266,
+          "p90": 33.13302993774414,
+          "p99": 124.7854232788086
+        },
+        "peak_metrics": null,
+        "arm": "non_repetitive",
+        "issuance": "pool",
+        "spec_verify_calls": null,
+        "accepted_tok_per_step": null
+      },
+      {
+        "isl_target": 1536,
+        "osl": 1024,
+        "concurrency": 32,
+        "prompt_tokens_observed": 1655.234375,
+        "status": "ok",
+        "requests": 64,
+        "successful": 64,
+        "error_rate_pct": 0.0,
+        "total_tokens": 65536,
+        "token_count_source": "openai_usage",
+        "total_duration_sec": 75.81111192703247,
+        "aggregate_tok_s": 864.4643025824212,
+        "per_gpu_tok_s": 54.02901891140132,
+        "per_user_tok_s": 27.01450945570066,
+        "ttft_ms": {
+          "mean": 22911.60359978676,
+          "p50": 18944.127082824707,
+          "p90": 38039.04581069946,
+          "p99": 38050.124645233154
+        },
+        "tpot_ms": {
+          "mean": 38.66897619177022,
+          "p50": 34.48820114135742,
+          "p90": 36.99755668640137,
+          "p99": 141.92628860473633
+        },
+        "peak_metrics": null,
+        "arm": "non_repetitive",
+        "issuance": "pool",
+        "spec_verify_calls": null,
+        "accepted_tok_per_step": null
+      }
+    ]
+  },
+  "arm_comparison": [
+    {
+      "isl_target": 1536,
+      "osl": 1024,
+      "concurrency": 8,
+      "repeated_passage": {
+        "prompt_tokens_observed": 1928.6875,
+        "aggregate_tok_s": 150.20468929627268,
+        "accepted_tok_per_step": null
+      },
+      "non_repetitive": {
+        "prompt_tokens_observed": 1653.5625,
+        "aggregate_tok_s": 282.78265724870346,
+        "accepted_tok_per_step": null
+      },
+      "non_repetitive_over_repeated_tok_s": 1.8826,
+      "prompt_token_ratio": 0.8574
+    },
+    {
+      "isl_target": 1536,
+      "osl": 1024,
+      "concurrency": 16,
+      "repeated_passage": {
+        "prompt_tokens_observed": 1928.3125,
+        "aggregate_tok_s": 494.4212016217455,
+        "accepted_tok_per_step": null
+      },
+      "non_repetitive": {
+        "prompt_tokens_observed": 1654.34375,
+        "aggregate_tok_s": 486.71283659884875,
+        "accepted_tok_per_step": null
+      },
+      "non_repetitive_over_repeated_tok_s": 0.9844,
+      "prompt_token_ratio": 0.8579
+    },
+    {
+      "isl_target": 1536,
+      "osl": 1024,
+      "concurrency": 32,
+      "repeated_passage": {
+        "prompt_tokens_observed": 1928.328125,
+        "aggregate_tok_s": 872.8031275725888,
+        "accepted_tok_per_step": null
+      },
+      "non_repetitive": {
+        "prompt_tokens_observed": 1655.234375,
+        "aggregate_tok_s": 864.4643025824212,
+        "accepted_tok_per_step": null
+      },
+      "non_repetitive_over_repeated_tok_s": 0.9904,
+      "prompt_token_ratio": 0.8584
+    }
+  ]
+}

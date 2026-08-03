@@ -1,0 +1,340 @@
+{
+  "benchmark": "prefix_reuse",
+  "engine": "sglang",
+  "model": "moonshotai/Kimi-K3",
+  "timestamp_utc": "2026-08-03T19:08:25.797858+00:00",
+  "metadata": {
+    "engine": "sglang",
+    "version": "0.5.16",
+    "engine_version": "0.5.16",
+    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/kimi-prod/sglang-blackwell:latest",
+    "run_timestamp": "2026-08-03T18:26:58Z",
+    "tp": 16,
+    "pp": 1,
+    "ep": 16,
+    "nodes": 2,
+    "gpus": 16
+  },
+  "shape": {
+    "prefix_tokens": [
+      1024,
+      4096,
+      16384
+    ],
+    "suffix_tokens": 256,
+    "osl": 32,
+    "repeats": 4,
+    "arms": [
+      "cold",
+      "warm",
+      "evicted",
+      "mixed"
+    ],
+    "kv_pool_tokens": 927808,
+    "eviction_overshoot": 1.25
+  },
+  "server_info": {
+    "schedule_policy": "lpm",
+    "enable_hierarchical_cache": false,
+    "hicache_storage_backend": null,
+    "hicache_ratio": 2.0,
+    "disable_radix_cache": false,
+    "max_total_num_tokens": 927808,
+    "kv_cache_dtype": "auto",
+    "speculative_algorithm": null
+  },
+  "layer_split": {
+    "total_layers": 93,
+    "full_attention_layers": 24,
+    "linear_attention_layers": 69,
+    "note": "Reuse limited to the full-attention layers alone would show a reuse efficiency near full_attention_layers/total_layers."
+  },
+  "corpus_profile": {
+    "kind": "generated",
+    "seed": 20260803,
+    "chars_per_token_assumed": 4.5,
+    "frames": 9,
+    "pool_sizes": {
+      "adj": 43,
+      "adv": 37,
+      "conj": 13,
+      "noun": 61,
+      "prep": 23,
+      "sub": 14,
+      "vi": 31,
+      "vt": 41
+    },
+    "sentence_space": 757906360056878360856072935,
+    "sentences_emitted": 80536,
+    "draw_collisions_resolved": 0,
+    "sentence_uniqueness": "enforced",
+    "distinct_prefixes_built": 1062,
+    "suffixes_issued": 192
+  },
+  "slope_points": [
+    {
+      "arm": "cold",
+      "prefix_tokens": 1024,
+      "suffix_tokens": 256,
+      "osl": 32,
+      "repeats": 4,
+      "status": "run",
+      "reason": "",
+      "flush_tokens": 0,
+      "samples": 4,
+      "successful": 4,
+      "ttft_ms": {
+        "min": 1120.581,
+        "median": 1688.116,
+        "max": 7454.212
+      },
+      "prompt_tokens_observed": 1463.0,
+      "cached_tokens_reported": null,
+      "effective_prefill_tok_s": 866.65
+    },
+    {
+      "arm": "cold",
+      "prefix_tokens": 4096,
+      "suffix_tokens": 256,
+      "osl": 32,
+      "repeats": 4,
+      "status": "run",
+      "reason": "",
+      "flush_tokens": 0,
+      "samples": 4,
+      "successful": 4,
+      "ttft_ms": {
+        "min": 1126.64,
+        "median": 1175.6,
+        "max": 43132.34
+      },
+      "prompt_tokens_observed": 4460.2,
+      "cached_tokens_reported": null,
+      "effective_prefill_tok_s": 3794.02
+    },
+    {
+      "arm": "cold",
+      "prefix_tokens": 16384,
+      "suffix_tokens": 256,
+      "osl": 32,
+      "repeats": 4,
+      "status": "run",
+      "reason": "",
+      "flush_tokens": 0,
+      "samples": 4,
+      "successful": 4,
+      "ttft_ms": {
+        "min": 1873.947,
+        "median": 1881.77,
+        "max": 3332.759
+      },
+      "prompt_tokens_observed": 16606.8,
+      "cached_tokens_reported": null,
+      "effective_prefill_tok_s": 8825.07
+    },
+    {
+      "arm": "warm",
+      "prefix_tokens": 1024,
+      "suffix_tokens": 256,
+      "osl": 32,
+      "repeats": 4,
+      "status": "run",
+      "reason": "",
+      "flush_tokens": 0,
+      "samples": 4,
+      "successful": 4,
+      "ttft_ms": {
+        "min": 1105.183,
+        "median": 1109.71,
+        "max": 1133.652
+      },
+      "prompt_tokens_observed": 1409.2,
+      "cached_tokens_reported": null,
+      "effective_prefill_tok_s": 1269.93
+    },
+    {
+      "arm": "warm",
+      "prefix_tokens": 4096,
+      "suffix_tokens": 256,
+      "osl": 32,
+      "repeats": 4,
+      "status": "run",
+      "reason": "",
+      "flush_tokens": 0,
+      "samples": 4,
+      "successful": 4,
+      "ttft_ms": {
+        "min": 1112.024,
+        "median": 1122.041,
+        "max": 1130.942
+      },
+      "prompt_tokens_observed": 4493.5,
+      "cached_tokens_reported": null,
+      "effective_prefill_tok_s": 4004.76
+    },
+    {
+      "arm": "warm",
+      "prefix_tokens": 16384,
+      "suffix_tokens": 256,
+      "osl": 32,
+      "repeats": 4,
+      "status": "run",
+      "reason": "",
+      "flush_tokens": 0,
+      "samples": 4,
+      "successful": 4,
+      "ttft_ms": {
+        "min": 1132.069,
+        "median": 1209.99,
+        "max": 1893.51
+      },
+      "prompt_tokens_observed": 16749.0,
+      "cached_tokens_reported": null,
+      "effective_prefill_tok_s": 13842.26
+    },
+    {
+      "arm": "evicted",
+      "prefix_tokens": 1024,
+      "suffix_tokens": 256,
+      "osl": 32,
+      "repeats": 2,
+      "status": "run",
+      "reason": "",
+      "flush_tokens": 1159760,
+      "samples": 2,
+      "successful": 2,
+      "ttft_ms": {
+        "min": 1092.812,
+        "median": 1097.901,
+        "max": 1102.989
+      },
+      "prompt_tokens_observed": 1433.5,
+      "cached_tokens_reported": null,
+      "effective_prefill_tok_s": 1305.67,
+      "flush_requests": 999,
+      "flush_tokens_issued": 1160194
+    },
+    {
+      "arm": "evicted",
+      "prefix_tokens": 4096,
+      "suffix_tokens": 256,
+      "osl": 32,
+      "repeats": 2,
+      "status": "run",
+      "reason": "",
+      "flush_tokens": 1159760,
+      "samples": 2,
+      "successful": 2,
+      "ttft_ms": {
+        "min": 1106.085,
+        "median": 1109.028,
+        "max": 1111.97
+      },
+      "prompt_tokens_observed": 4509.0,
+      "cached_tokens_reported": null,
+      "effective_prefill_tok_s": 4065.72,
+      "flush_requests": 999,
+      "flush_tokens_issued": 1160194
+    },
+    {
+      "arm": "evicted",
+      "prefix_tokens": 16384,
+      "suffix_tokens": 256,
+      "osl": 32,
+      "repeats": 2,
+      "status": "run",
+      "reason": "",
+      "flush_tokens": 1159760,
+      "samples": 2,
+      "successful": 2,
+      "ttft_ms": {
+        "min": 1869.843,
+        "median": 1872.733,
+        "max": 1875.622
+      },
+      "prompt_tokens_observed": 16647.5,
+      "cached_tokens_reported": null,
+      "effective_prefill_tok_s": 8889.42,
+      "flush_requests": 999,
+      "flush_tokens_issued": 1160194
+    }
+  ],
+  "mixed_arm": [
+    {
+      "arm": "mixed",
+      "status": "run",
+      "target_hit_rate": 0.5,
+      "concurrency": 16,
+      "requests": 64,
+      "successful": 64,
+      "prefix_tokens": 16384,
+      "suffix_tokens": 256,
+      "osl": 32,
+      "duration_s": 37.52,
+      "request_level_hit_rate_planned": 0.5,
+      "token_level_hit_rate_expected": 0.4923,
+      "token_level_hit_rate_observed": null,
+      "hit_rate_source": "not measured",
+      "ttft_ms": {
+        "p50": 8566.592,
+        "p99": 12768.583,
+        "max": 12768.782
+      },
+      "aggregate_output_tok_s": 54.58
+    },
+    {
+      "arm": "mixed",
+      "status": "run",
+      "target_hit_rate": 0.8,
+      "concurrency": 16,
+      "requests": 64,
+      "successful": 64,
+      "prefix_tokens": 16384,
+      "suffix_tokens": 256,
+      "osl": 32,
+      "duration_s": 18.118,
+      "request_level_hit_rate_planned": 0.7969,
+      "token_level_hit_rate_expected": 0.7846,
+      "token_level_hit_rate_observed": null,
+      "hit_rate_source": "not measured",
+      "ttft_ms": {
+        "p50": 4322.935,
+        "p99": 5800.985,
+        "max": 5801.401
+      },
+      "aggregate_output_tok_s": 113.04
+    }
+  ],
+  "verdict": {
+    "slopes": {
+      "cold": {
+        "points": 3,
+        "ms_per_prefix_token": 0.025425,
+        "intercept_ms": 1399.582,
+        "note": ""
+      },
+      "warm": {
+        "points": 3,
+        "ms_per_prefix_token": 0.006708,
+        "intercept_ms": 1099.162,
+        "note": ""
+      },
+      "evicted": {
+        "points": 3,
+        "ms_per_prefix_token": 0.053789,
+        "intercept_ms": 974.326,
+        "note": ""
+      }
+    },
+    "full_attention_layer_fraction": 0.2581,
+    "reuse_efficiency": {
+      "warm": 0.7362,
+      "evicted": -1.1156
+    },
+    "interpretation": [
+      "warm: reuse efficiency 0.736 exceeds the full-attention-only bound of 0.258, so more than the MLA KV is being carried across requests.",
+      "evicted: TTFT still scales with prefix length at 0.053789 ms/token against cold's 0.025425. The prefix is being recomputed. Prefix caching is not paying for itself in this configuration.",
+      "Tier 2 verdict: the evicted arm retains only -152% of the warm arm's benefit, so a flushed prefix is largely recomputed. Hierarchical cache on local NVMe is not justified by this measurement."
+    ]
+  }
+}

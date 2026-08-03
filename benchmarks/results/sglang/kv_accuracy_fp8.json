@@ -1,0 +1,786 @@
+{
+  "capture_label": "fp8",
+  "kv_cache_dtype_declared": "fp8_e4m3",
+  "engine": "sglang",
+  "model": "moonshotai/Kimi-K3",
+  "timestamp_utc": "2026-08-03T18:04:03.578400+00:00",
+  "probe_set": {
+    "corpus_seed": 20260803,
+    "context_tokens": 8192,
+    "depths": [
+      0.05,
+      0.25,
+      0.5,
+      0.75,
+      0.95
+    ],
+    "probes_per_depth": 10,
+    "max_tokens": 256,
+    "chars_per_token": 4.5
+  },
+  "results": [
+    {
+      "probe_id": "d0.05-n0",
+      "depth": 0.05,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "FL-AD39EB15"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "FL-AD39EB15",
+      "finish_reason": "stop",
+      "latency_ms": 51598.89
+    },
+    {
+      "probe_id": "d0.05-n1",
+      "depth": 0.05,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "DF-2102B1C2"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "DF-2102B1C2",
+      "finish_reason": "stop",
+      "latency_ms": 4454.19
+    },
+    {
+      "probe_id": "d0.05-n2",
+      "depth": 0.05,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "BJ-E21043E4"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "BJ-E21043E4",
+      "finish_reason": "stop",
+      "latency_ms": 2311.2
+    },
+    {
+      "probe_id": "d0.05-n3",
+      "depth": 0.05,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "HN-080690E4"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "HN-080690E4",
+      "finish_reason": "stop",
+      "latency_ms": 2269.78
+    },
+    {
+      "probe_id": "d0.05-n4",
+      "depth": 0.05,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "MN-C7D767A4"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "MN-C7D767A4",
+      "finish_reason": "stop",
+      "latency_ms": 2312.69
+    },
+    {
+      "probe_id": "d0.05-n5",
+      "depth": 0.05,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "MJ-3D680D59"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "MJ-3D680D59",
+      "finish_reason": "stop",
+      "latency_ms": 2278.18
+    },
+    {
+      "probe_id": "d0.05-n6",
+      "depth": 0.05,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "FF-24E8C300"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "FF-24E8C300",
+      "finish_reason": "stop",
+      "latency_ms": 2005.97
+    },
+    {
+      "probe_id": "d0.05-n7",
+      "depth": 0.05,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "GP-920781CC"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "GP-920781CC",
+      "finish_reason": "stop",
+      "latency_ms": 1919.07
+    },
+    {
+      "probe_id": "d0.05-n8",
+      "depth": 0.05,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "MI-78411CD6"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "MI-78411CD6",
+      "finish_reason": "stop",
+      "latency_ms": 2255.96
+    },
+    {
+      "probe_id": "d0.05-n9",
+      "depth": 0.05,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "FP-57324CF2"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "FP-57324CF2",
+      "finish_reason": "stop",
+      "latency_ms": 2248.48
+    },
+    {
+      "probe_id": "d0.25-n0",
+      "depth": 0.25,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "DE-54C06531"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "DE-54C06531",
+      "finish_reason": "stop",
+      "latency_ms": 2249.32
+    },
+    {
+      "probe_id": "d0.25-n1",
+      "depth": 0.25,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "DG-CC2CAB46"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "DG-CC2CAB46",
+      "finish_reason": "stop",
+      "latency_ms": 2322.48
+    },
+    {
+      "probe_id": "d0.25-n2",
+      "depth": 0.25,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "KO-EC7204F9"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "KO-EC7204F9",
+      "finish_reason": "stop",
+      "latency_ms": 2275.87
+    },
+    {
+      "probe_id": "d0.25-n3",
+      "depth": 0.25,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "ME-AE31B4E7"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "ME-AE31B4E7",
+      "finish_reason": "stop",
+      "latency_ms": 2125.06
+    },
+    {
+      "probe_id": "d0.25-n4",
+      "depth": 0.25,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "HI-BB9A1B0F"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "HI-BB9A1B0F",
+      "finish_reason": "stop",
+      "latency_ms": 2467.51
+    },
+    {
+      "probe_id": "d0.25-n5",
+      "depth": 0.25,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "CI-8B6AE6F2"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "CI-8B6AE6F2",
+      "finish_reason": "stop",
+      "latency_ms": 2540.1
+    },
+    {
+      "probe_id": "d0.25-n6",
+      "depth": 0.25,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "CN-313E8B38"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "CN-313E8B38",
+      "finish_reason": "stop",
+      "latency_ms": 2368.2
+    },
+    {
+      "probe_id": "d0.25-n7",
+      "depth": 0.25,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "LJ-4CF088CE"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "LJ-4CF088CE",
+      "finish_reason": "stop",
+      "latency_ms": 2277.45
+    },
+    {
+      "probe_id": "d0.25-n8",
+      "depth": 0.25,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "AP-BAFB5449"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "AP-BAFB5449",
+      "finish_reason": "stop",
+      "latency_ms": 2211.7
+    },
+    {
+      "probe_id": "d0.25-n9",
+      "depth": 0.25,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "PE-0F1A50F0"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "PE-0F1A50F0",
+      "finish_reason": "stop",
+      "latency_ms": 2376.33
+    },
+    {
+      "probe_id": "d0.50-n0",
+      "depth": 0.5,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "GL-D59F2865"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "GL-D59F2865",
+      "finish_reason": "stop",
+      "latency_ms": 2250.18
+    },
+    {
+      "probe_id": "d0.50-n1",
+      "depth": 0.5,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "BH-78A5D8DD"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "BH-78A5D8DD",
+      "finish_reason": "stop",
+      "latency_ms": 2302.27
+    },
+    {
+      "probe_id": "d0.50-n2",
+      "depth": 0.5,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "HE-88F78871"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "HE-88F78871",
+      "finish_reason": "stop",
+      "latency_ms": 2207.08
+    },
+    {
+      "probe_id": "d0.50-n3",
+      "depth": 0.5,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "GB-30017718"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "GB-30017718",
+      "finish_reason": "stop",
+      "latency_ms": 2181.44
+    },
+    {
+      "probe_id": "d0.50-n4",
+      "depth": 0.5,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "CK-1018035B"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "CK-1018035B",
+      "finish_reason": "stop",
+      "latency_ms": 2319.82
+    },
+    {
+      "probe_id": "d0.50-n5",
+      "depth": 0.5,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "IK-AE116E9A"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "IK-AE116E9A",
+      "finish_reason": "stop",
+      "latency_ms": 2010.41
+    },
+    {
+      "probe_id": "d0.50-n6",
+      "depth": 0.5,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "AI-6088BC0A"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "AI-6088BC0A",
+      "finish_reason": "stop",
+      "latency_ms": 2323.73
+    },
+    {
+      "probe_id": "d0.50-n7",
+      "depth": 0.5,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "GP-D2E288BC"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "GP-D2E288BC",
+      "finish_reason": "stop",
+      "latency_ms": 2397.68
+    },
+    {
+      "probe_id": "d0.50-n8",
+      "depth": 0.5,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "EC-C8C13732"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "EC-C8C13732",
+      "finish_reason": "stop",
+      "latency_ms": 2199.68
+    },
+    {
+      "probe_id": "d0.50-n9",
+      "depth": 0.5,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "CB-64CCF053"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "CB-64CCF053",
+      "finish_reason": "stop",
+      "latency_ms": 2244.29
+    },
+    {
+      "probe_id": "d0.75-n0",
+      "depth": 0.75,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "LJ-F29F2260"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "LJ-F29F2260",
+      "finish_reason": "stop",
+      "latency_ms": 2271.8
+    },
+    {
+      "probe_id": "d0.75-n1",
+      "depth": 0.75,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "HA-E76B5BF1"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "HA-E76B5BF1",
+      "finish_reason": "stop",
+      "latency_ms": 2274.81
+    },
+    {
+      "probe_id": "d0.75-n2",
+      "depth": 0.75,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "IH-EDDDFBED"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "IH-EDDDFBED",
+      "finish_reason": "stop",
+      "latency_ms": 2142.2
+    },
+    {
+      "probe_id": "d0.75-n3",
+      "depth": 0.75,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "OE-62CDDBC1"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "OE-62CDDBC1",
+      "finish_reason": "stop",
+      "latency_ms": 2431.9
+    },
+    {
+      "probe_id": "d0.75-n4",
+      "depth": 0.75,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "KJ-F1F2C4C9"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "KJ-F1F2C4C9",
+      "finish_reason": "stop",
+      "latency_ms": 2437.82
+    },
+    {
+      "probe_id": "d0.75-n5",
+      "depth": 0.75,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "MA-8B11385B"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "MA-8B11385B",
+      "finish_reason": "stop",
+      "latency_ms": 2273.18
+    },
+    {
+      "probe_id": "d0.75-n6",
+      "depth": 0.75,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "AP-3AFC928C"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "AP-3AFC928C",
+      "finish_reason": "stop",
+      "latency_ms": 2274.04
+    },
+    {
+      "probe_id": "d0.75-n7",
+      "depth": 0.75,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "HM-455BD870"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "HM-455BD870",
+      "finish_reason": "stop",
+      "latency_ms": 2137.53
+    },
+    {
+      "probe_id": "d0.75-n8",
+      "depth": 0.75,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "EE-A5E72A2F"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "EE-A5E72A2F",
+      "finish_reason": "stop",
+      "latency_ms": 2393.66
+    },
+    {
+      "probe_id": "d0.75-n9",
+      "depth": 0.75,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "PO-061746B7"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "PO-061746B7",
+      "finish_reason": "stop",
+      "latency_ms": 2245.76
+    },
+    {
+      "probe_id": "d0.95-n0",
+      "depth": 0.95,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "GB-9D4F4BE8"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "GB-9D4F4BE8",
+      "finish_reason": "stop",
+      "latency_ms": 2537.68
+    },
+    {
+      "probe_id": "d0.95-n1",
+      "depth": 0.95,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "CO-2CFA9651"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "CO-2CFA9651",
+      "finish_reason": "stop",
+      "latency_ms": 2056.63
+    },
+    {
+      "probe_id": "d0.95-n2",
+      "depth": 0.95,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "BB-73C33CC0"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "BB-73C33CC0",
+      "finish_reason": "stop",
+      "latency_ms": 2273.54
+    },
+    {
+      "probe_id": "d0.95-n3",
+      "depth": 0.95,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "OK-261D0FF9"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "OK-261D0FF9",
+      "finish_reason": "stop",
+      "latency_ms": 2080.85
+    },
+    {
+      "probe_id": "d0.95-n4",
+      "depth": 0.95,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "HK-56DE645C"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "HK-56DE645C",
+      "finish_reason": "stop",
+      "latency_ms": 2370.38
+    },
+    {
+      "probe_id": "d0.95-n5",
+      "depth": 0.95,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "EI-946F9BE1"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "EI-946F9BE1",
+      "finish_reason": "stop",
+      "latency_ms": 2251.86
+    },
+    {
+      "probe_id": "d0.95-n6",
+      "depth": 0.95,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "BP-D19304BA"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "BP-D19304BA",
+      "finish_reason": "stop",
+      "latency_ms": 2160.91
+    },
+    {
+      "probe_id": "d0.95-n7",
+      "depth": 0.95,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "AC-C3608C58"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "AC-C3608C58",
+      "finish_reason": "stop",
+      "latency_ms": 2216.85
+    },
+    {
+      "probe_id": "d0.95-n8",
+      "depth": 0.95,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "LK-A7277694"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "LK-A7277694",
+      "finish_reason": "stop",
+      "latency_ms": 2185.99
+    },
+    {
+      "probe_id": "d0.95-n9",
+      "depth": 0.95,
+      "correct": true,
+      "wrong_code_returned": false,
+      "codes_returned": [
+        "DF-774EB0A6"
+      ],
+      "output_chars": 11,
+      "degenerate_tail_chars": 0,
+      "success": true,
+      "output_text": "DF-774EB0A6",
+      "finish_reason": "stop",
+      "latency_ms": 2324.45
+    }
+  ],
+  "summary": {
+    "probes_succeeded": 50,
+    "retrieval_accuracy": 1.0,
+    "wrong_code_rate": 0.0,
+    "degenerate_rate": 0.0,
+    "retrieval_accuracy_by_depth": {
+      "0.05": 1.0,
+      "0.25": 1.0,
+      "0.50": 1.0,
+      "0.75": 1.0,
+      "0.95": 1.0
+    }
+  }
+}
