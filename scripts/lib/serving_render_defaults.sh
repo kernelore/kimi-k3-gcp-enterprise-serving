@@ -9,10 +9,10 @@
 # variable added in one place should not silently render empty in another.
 #
 # That was half of what it needed to be. The allow-list controls which names may
-# be substituted; it says nothing about their values. Three of them are derived
-# by 03 at deploy time rather than read from config.env, so every other renderer
-# produced them empty -- and an empty image or hostPath is not a degraded
-# manifest, it is one the API server refuses outright.
+# be substituted; it says nothing about their values. Some are derived by 03 at
+# deploy time rather than read from config.env, so every other renderer produced
+# them empty -- and an empty image or hostPath is not a degraded manifest, it is
+# one the API server refuses outright.
 #
 # The first live sweep failed all nine variants inside a minute for exactly this
 # reason, against a cluster that was up and answering inference correctly:
@@ -25,6 +25,22 @@
 # its own inline defaults: it derives them amongst a good deal of other deploy
 # logic, and rewriting the one script whose deploy path is known to work was not
 # worth the risk of fixing the two that did not.
+#
+# The first fix listed only the three variables that had actually broken, which
+# left the same trap armed for every other value 03 defaults and config.env does
+# not carry. SGLANG_PORT is one: config.env.example ships it commented out,
+# because the port is fixed at 8000 everywhere it matters, so a real config.env
+# is unlikely to set it and 03 supplies the 8000 itself. The measurement window's
+# fp8-KV leg rendered `--port ""`, the API server accepted that manifest without
+# complaint -- an empty flag value is perfectly valid YAML -- and both pods then
+# crash-looped on `argument --port: invalid int value: ''`, eighteen minutes of
+# rollout later. Structural validity is not the same property as a usable
+# manifest, and it was the only one being checked.
+#
+# Hence both halves below: every default 03 derives is mirrored here, and
+# assert_manifest_valid additionally refuses any manifest that renders a CLI flag
+# with an empty value. The mirrored list stops the known cases; the flag check
+# stops the class, including whatever gets added to the template next.
 #
 # Callers must define NAMESPACE and STATEFULSET, and have config.env sourced.
 # ==============================================================================
@@ -60,8 +76,42 @@ ensure_serving_render_env() {
   export SGLANG_HOST_SCRATCH_PATH="${SGLANG_HOST_SCRATCH_PATH:-/mnt/disks/local-scratch}"
   export SGLANG_LOCAL_SCRATCH_MOUNT="${SGLANG_LOCAL_SCRATCH_MOUNT:-/mnt/scratch}"
 
+  # Every remaining value 03 defaults rather than reads from config.env. Each is
+  # ${VAR:-default}, so a caller deliberately overriding one -- a sweep variant
+  # setting mem-fraction, the window's fp8 leg setting the KV dtype -- still wins.
+  # Values that 03 defaults to empty are not repeated here: empty is their correct
+  # rendering, and it makes the template omit the flag rather than pass it blank.
+  export SGLANG_PORT="${SGLANG_PORT:-8000}"
+  export SGLANG_CONTEXT_LENGTH="${SGLANG_CONTEXT_LENGTH:-131072}"
+  export SGLANG_MEM_FRACTION_STATIC="${SGLANG_MEM_FRACTION_STATIC:-0.85}"
+  export SGLANG_SCHEDULE_POLICY="${SGLANG_SCHEDULE_POLICY:-lpm}"
+  export SGLANG_ENABLE_TORCH_COMPILE="${SGLANG_ENABLE_TORCH_COMPILE:-false}"
+  export SGLANG_ENABLE_HIERARCHICAL_CACHE="${SGLANG_ENABLE_HIERARCHICAL_CACHE:-false}"
+  export MIN_WEIGHTS_GIB="${MIN_WEIGHTS_GIB:-1000}"
+  export LEADER_ADDR="${LEADER_ADDR:-kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local}"
+  export TRTLLM_VIP="${TRTLLM_VIP:-kimi-k3-serving-svc.llm-serving.svc.cluster.local}"
+  export INFERENCE_ENGINE="${INFERENCE_ENGINE:-sglang}"
+  export INFERENCE_SERVER_LABEL="${INFERENCE_SERVER_LABEL:-${INFERENCE_ENGINE}}"
+
+  # The parallel geometry, including the tp8pp2 profile's fixed triple. 03
+  # validates TP*PP against the node count and rejects an EP that is neither 1
+  # nor TP; a re-render inherits an already-validated geometry, so this mirrors
+  # the values without repeating the guards.
+  export SGLANG_PARALLEL_PROFILE="${SGLANG_PARALLEL_PROFILE:-tp16}"
+  if [ "${SGLANG_PARALLEL_PROFILE}" = "tp8pp2" ]; then
+    export SGLANG_TP_SIZE="8" SGLANG_PP_SIZE="2" SGLANG_EP_SIZE="8"
+  else
+    export SGLANG_TP_SIZE="${SGLANG_TP_SIZE:-16}"
+    export SGLANG_PP_SIZE="${SGLANG_PP_SIZE:-1}"
+    export SGLANG_EP_SIZE="${SGLANG_EP_SIZE:-16}"
+  fi
+
   local v
-  for v in SERVING_IMAGE SGLANG_HOST_SCRATCH_PATH SGLANG_LOCAL_SCRATCH_MOUNT; do
+  for v in SERVING_IMAGE SGLANG_HOST_SCRATCH_PATH SGLANG_LOCAL_SCRATCH_MOUNT \
+           SGLANG_PORT SGLANG_CONTEXT_LENGTH SGLANG_MEM_FRACTION_STATIC \
+           SGLANG_SCHEDULE_POLICY MIN_WEIGHTS_GIB LEADER_ADDR TRTLLM_VIP \
+           INFERENCE_ENGINE INFERENCE_SERVER_LABEL SGLANG_PARALLEL_PROFILE \
+           SGLANG_TP_SIZE SGLANG_PP_SIZE SGLANG_EP_SIZE; do
     if [ -z "${!v:-}" ]; then
       echo "ERROR: ${v} is empty; the rendered StatefulSet would be rejected" >&2
       return 1
@@ -72,8 +122,29 @@ ensure_serving_render_env() {
 
 # Reject a rendered manifest the API server would reject, before it costs a
 # variant and a restart cycle to find out on a metered cluster.
+#
+# "Valid" here means two separate things, because checking only the first one is
+# what let `--port ""` through. The API server validates structure: required
+# fields present, types right. It has no opinion on the contents of a container's
+# command, so a flag rendered with an empty value passes the dry run and fails
+# eighteen minutes later in a crash loop, which is the most expensive place on
+# this cluster to discover a substitution bug.
 assert_manifest_valid() {
-  local rendered="$1"
+  local rendered="$1" empty_flags
+
+  # No template contains a literal `--flag ""`; every occurrence is a
+  # substitution that came out empty, so this needs no allow-list of exceptions.
+  # It deliberately does not try to know which flags matter: the engine rejects
+  # `--port ""` and quietly misreads others, and neither is worth a restart.
+  empty_flags="$(grep -cE -- '--[a-z0-9-]+ +""' "${rendered}" 2>/dev/null || true)"
+  if [ "${empty_flags:-0}" -gt 0 ]; then
+    echo "ERROR: rendered manifest ${rendered} passes CLI flags with empty values:" >&2
+    grep -nE -- '--[a-z0-9-]+ +""' "${rendered}" | sed 's/^/       /' >&2
+    echo "       A variable in the render environment is unset. The API server would" >&2
+    echo "       accept this manifest and the engine would crash-loop on it." >&2
+    return 1
+  fi
+
   if kubectl apply --dry-run=client -f "${rendered}" >/dev/null 2>&1; then
     return 0
   fi
