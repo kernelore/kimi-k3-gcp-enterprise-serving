@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="975" viewBox="0 0 1600 975" font-family="DejaVu Sans, Helvetica, Arial, sans-serif">
-<rect width="1600" height="975" fill="#fbfcfd"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1115" viewBox="0 0 1600 1115" font-family="DejaVu Sans, Helvetica, Arial, sans-serif">
+<rect width="1600" height="1115" fill="#fbfcfd"/>
 <text x="800.0" y="30" font-size="25" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central" font-weight="bold">Kimi K3 Enterprise Serving on GKE Blackwell</text>
 <text x="800.0" y="58" font-size="13" fill="#6b7280" text-anchor="middle" dominant-baseline="central">One multi-node serving replica  ·  2 x a4-highgpu-8g  ·  16x NVIDIA B200 HGX (2,880 GB HBM3e)  ·  TP=16 / PP=1 / EP=16  ·  SGLang 0.5.16</text>
 <rect x="28" y="86" width="1544" height="214" rx="12" fill="#eef0f3" stroke="#dcdfe4" stroke-width="1.2"/>
@@ -133,5 +133,31 @@
 <text x="1406" y="839.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">never fed by Tier 0.</text>
 <text x="1406" y="856.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">MPI / engine shared memory is /dev/shm —</text>
 <text x="1406" y="869.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">a 512 GiB RAM-backed emptyDir, not Tier 2.</text>
-<text x="800.0" y="945" font-size="10.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">Shipped default — SGLANG_PARALLEL_PROFILE=tp16, mem-fraction-static 0.85, schedule-policy lpm, 131,072 ctx, engine-dispatched kernels, no speculative decoding.</text>
+<rect x="28" y="926" width="1544" height="128" rx="12" fill="#eef0f3" stroke="#c9ced6" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="112" y="958.0" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Optional</text>
+<text x="112" y="977.0" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Speculative</text>
+<text x="112" y="996.0" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Decoding</text>
+<text x="112" y="1018.0" font-size="10" fill="#8a93a0" text-anchor="middle" dominant-baseline="central">off in the shipped default</text>
+<rect x="196" y="946" width="360" height="92" rx="10" fill="#ffffff" stroke="#c9ced6" stroke-width="1.2"/>
+<text x="376" y="962.0" font-size="10.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central" font-weight="bold">Enable in scripts/config.env</text>
+<text x="376" y="980.0" font-size="8.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans Mono, monospace">SGLANG_SPECULATIVE_ALGORITHM=DSPARK</text>
+<text x="376" y="992.0" font-size="8.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans Mono, monospace">DSPARK_DRAFT_DIR_NAME=Kimi-K3-DSpark</text>
+<text x="376" y="1004.0" font-size="8.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans Mono, monospace">SERVING_POD_SERVICE_ACCOUNT=kimi-k3-serving-sa</text>
+<text x="376" y="1018.0" font-size="8.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">All three. The draft lives in GCS, so the pods</text>
+<text x="376" y="1029.0" font-size="8.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">need a KSA that can read it.</text>
+<polyline points="556,992 596,992" fill="none" stroke="#8e97a8" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="596,992 589.0,995.85 589.0,988.15" fill="#8e97a8"/>
+<rect x="596" y="946" width="470" height="92" rx="10" fill="#ffffff" stroke="#c9ced6" stroke-width="1.2"/>
+<text x="831" y="962.0" font-size="10.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central" font-weight="bold">What the pod then does</text>
+<text x="831" y="980.0" font-size="9.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central">dspark-draft-fetch rsyncs the 4.19 GiB draft from Tier 3 GCS into</text>
+<text x="831" y="993.0" font-size="9.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central">/mnt/draft on the Tier 2 NVMe array — not the ROX volume, which is</text>
+<text x="831" y="1006.0" font-size="9.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central">read-only once hydrated — and copies in the base generation_config.json</text>
+<text x="831" y="1024.0" font-size="8.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans Mono, monospace">--speculative-dspark-block-size 7   --enable-linear-replayssm-spec</text>
+<rect x="1096" y="946" width="476" height="92" rx="10" fill="#f4f5f7" stroke="#d6dae1" stroke-width="1.2"/>
+<text x="1334" y="962.0" font-size="10.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central" font-weight="bold">What it buys — and the catch</text>
+<text x="1334" y="980.0" font-size="9.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">2.00x - 3.82x aggregate throughput over the TP16 default, measured</text>
+<text x="1334" y="993.0" font-size="9.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">on the harness's repeated-passage prompts (README Table 4).</text>
+<text x="1334" y="1011.0" font-size="9.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">Acceptance collapses from ~6.4 to ~2.2 accepted tokens per verify</text>
+<text x="1334" y="1024.0" font-size="9.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">step on non-repetitive text. Plan capacity from that column.</text>
+<text x="800.0" y="1085" font-size="10.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">Shipped default — SGLANG_PARALLEL_PROFILE=tp16, mem-fraction-static 0.85, schedule-policy lpm, 131,072 ctx, engine-dispatched kernels, no speculative decoding.</text>
 </svg>
