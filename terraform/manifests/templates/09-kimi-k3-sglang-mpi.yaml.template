@@ -65,13 +65,48 @@ spec:
     app: kimi-k3-serving
     apps.kubernetes.io/pod-index: "0"
 ---
+# Serving replica B's leader.
+#
+# A Service selector is an equality map, so kimi-k3-serving-svc above cannot be widened
+# to "pod-index 0 OR pod-index 2" -- every additional replica needs its own Service on
+# its own leader ordinal, and the gateway fronts them as two deployments of one model.
+#
+# ClusterIP rather than an internal LoadBalancer: the only client is the in-cluster
+# gateway, and a second forwarding rule would be billed for nothing.
+#
+# Rendered unconditionally. At SERVING_REPLICAS=1 the ordinal it selects does not exist,
+# so the Service simply has no endpoints and nothing points at it -- which makes turning
+# the second replica on a config change rather than a manifest change. Endpoints here are
+# readiness-gated on purpose (no publishNotReadyAddresses, unlike the headless service
+# above): a leader that has restarted but is still 17 minutes into loading 2.8T of
+# weights must not be routable, or failover would be measured against a black hole.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kimi-k3-serving-b-svc
+  namespace: llm-serving
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http-api
+  selector:
+    app: kimi-k3-serving
+    apps.kubernetes.io/pod-index: "${REPLICA_B_LEADER_POD_INDEX}"
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: kimi-k3-serving
   namespace: llm-serving
 spec:
-  replicas: 2
+  # SERVING_REPLICAS x NODES_PER_REPLICA. One StatefulSet holds every serving replica:
+  # replica R owns the consecutive ordinals [R*NODES_PER_REPLICA, (R+1)*NODES_PER_REPLICA)
+  # and runs its own NCCL world with its own leader. Two StatefulSets would have made the
+  # Service selectors trivial, at the cost of every script that scales, patches or waits
+  # on `statefulset/kimi-k3-serving` having to learn about a second name.
+  replicas: ${SERVING_PODS}
   serviceName: kimi-k3-workers-headless
   podManagementPolicy: Parallel
   selector:
@@ -287,12 +322,18 @@ spec:
           capabilities:
             add:
             - IPC_LOCK
+        # Only a replica leader answers HTTP; the other ranks of that replica are
+        # schedulers with no API surface, so they are probed for the process instead.
+        # The leader test is "my ordinal is the first of my replica", not "my ordinal is
+        # zero" -- with SERVING_REPLICAS=2 the leaders are ordinals 0 and 2, and an
+        # ordinal-zero test would have marked replica B's leader Ready as soon as the
+        # process existed, i.e. seventeen minutes before it could serve a request.
         startupProbe:
           exec:
             command:
             - /bin/bash
             - -c
-            - "if [ \"${HOSTNAME##*-}\" = \"0\" ]; then curl -sf http://localhost:8000/health; else pgrep -f sglang.launch_server >/dev/null; fi"
+            - "if [ $(( ${HOSTNAME##*-} % ${NODES_PER_REPLICA} )) -eq 0 ]; then curl -sf http://localhost:8000/health; else pgrep -f sglang.launch_server >/dev/null; fi"
           periodSeconds: 30
           failureThreshold: 120
           timeoutSeconds: 10
@@ -301,7 +342,7 @@ spec:
             command:
             - /bin/bash
             - -c
-            - "if [ \"${HOSTNAME##*-}\" = \"0\" ]; then curl -sf http://localhost:8000/health; else pgrep -f sglang.launch_server >/dev/null; fi"
+            - "if [ $(( ${HOSTNAME##*-} % ${NODES_PER_REPLICA} )) -eq 0 ]; then curl -sf http://localhost:8000/health; else pgrep -f sglang.launch_server >/dev/null; fi"
           periodSeconds: 15
           failureThreshold: 4
           timeoutSeconds: 5
@@ -364,17 +405,45 @@ spec:
               print(f'FATAL: config.json not found in {dest}; cannot verify model architecture.', file=sys.stderr)
               sys.exit(1)
           "
+          # Pod ordinals are global across the StatefulSet; NCCL ranks are per replica.
+          # Replica R owns ordinals [R*NODES_PER_REPLICA, (R+1)*NODES_PER_REPLICA), so a
+          # pod's rank is its ordinal modulo the replica width and its leader is the first
+          # ordinal of its own block. At SERVING_REPLICAS=1 this collapses to the original
+          # rank == ordinal, leader == ordinal 0.
+          #
+          # Getting this wrong does not fail loudly: every pod would join ONE world of
+          # SERVING_PODS ranks against a --nnodes that says otherwise, and hang in
+          # dist-init until the 3600s timeout.
+          POD_ORDINAL=${POD_INDEX:-${HOSTNAME##*-}}
+          NODE_RANK=$(( POD_ORDINAL % ${NODES_PER_REPLICA} ))
+          REPLICA_INDEX=$(( POD_ORDINAL / ${NODES_PER_REPLICA} ))
+          LEADER_ORDINAL=$(( REPLICA_INDEX * ${NODES_PER_REPLICA} ))
+          # LEADER_ADDR is replica 0's leader FQDN. Everything after the first dot is the
+          # headless-service domain every serving pod shares, so replica R's leader is that
+          # same domain under a different ordinal. Deriving it here keeps the render
+          # surface at one variable rather than one per replica.
+          REPLICA0_LEADER="${LEADER_ADDR}"
+          PEER_DOMAIN="${REPLICA0_LEADER#*.}"
+          echo "Pod ordinal ${POD_ORDINAL} is rank ${NODE_RANK} of serving replica ${REPLICA_INDEX} (leader ordinal ${LEADER_ORDINAL}, domain ${PEER_DOMAIN})."
           echo "Populating peer short hostnames in /etc/hosts..."
-          while ! getent hosts kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local >/dev/null || ! getent hosts kimi-k3-serving-1.kimi-k3-workers-headless.llm-serving.svc.cluster.local >/dev/null; do
-            echo "Waiting for peer DNS A-records..."
-            sleep 2
+          PEERS=""
+          for offset in $(seq 0 $(( ${NODES_PER_REPLICA} - 1 ))); do
+            PEERS="${PEERS} kimi-k3-serving-$(( LEADER_ORDINAL + offset ))"
           done
-          IP0=$(getent hosts kimi-k3-serving-0.kimi-k3-workers-headless.llm-serving.svc.cluster.local | awk '{print $1}')
-          IP1=$(getent hosts kimi-k3-serving-1.kimi-k3-workers-headless.llm-serving.svc.cluster.local | awk '{print $1}')
-          echo -e "${IP0}\tkimi-k3-serving-0\n${IP1}\tkimi-k3-serving-1" >> /etc/hosts
-          cat /etc/hosts | tail -n 2
-          NODE_RANK=${POD_INDEX:-${HOSTNAME##*-}}
-          LEADER_HOST="${LEADER_ADDR}:5000"
+          # Wait only on this replica's own peers. Waiting on every pod in the StatefulSet
+          # would couple the two replicas' startups, so a single unschedulable node would
+          # hold both of them at the DNS loop instead of one.
+          for PEER_NAME in ${PEERS}; do
+            while ! getent hosts "${PEER_NAME}.${PEER_DOMAIN}" >/dev/null; do
+              echo "Waiting for peer DNS A-record: ${PEER_NAME}"
+              sleep 2
+            done
+          done
+          for PEER_NAME in ${PEERS}; do
+            printf '%s\t%s\n' "$(getent hosts "${PEER_NAME}.${PEER_DOMAIN}" | awk '{print $1}')" "${PEER_NAME}" >> /etc/hosts
+          done
+          tail -n ${NODES_PER_REPLICA} /etc/hosts
+          LEADER_HOST="kimi-k3-serving-${LEADER_ORDINAL}.${PEER_DOMAIN}:5000"
           echo "Starting SGLang worker node rank ${NODE_RANK} connecting to leader ${LEADER_HOST}..."
           # --trust-remote-code makes transformers materialise the Kimi K3 modelling code
           # under HF_MODULES_CACHE. Give each rank its own directory: the default lives on
@@ -569,7 +638,7 @@ spec:
             --served-model-name moonshotai/Kimi-K3 \
             --dist-init-addr "${LEADER_HOST}" \
             --dist-timeout 3600 \
-            --nnodes 2 \
+            --nnodes "${NODES_PER_REPLICA}" \
             --node-rank "${NODE_RANK}" \
             --port "${SGLANG_PORT}" \
             --host 0.0.0.0 \

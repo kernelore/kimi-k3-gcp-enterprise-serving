@@ -2,9 +2,16 @@
 # 00d-serving-nccl-parity-job.yaml.template
 # ==============================================================================
 # Serving-Image NCCL Parity Gate (A7)
-# Verifies 2-node NCCL all_reduce over RoCEv2 fabric using the actual runtime
+# Verifies NCCL all_reduce over the RoCEv2 fabric using the actual runtime
 # serving image (${SERVING_IMAGE}) and identical gIB/NCCL environment as the
 # serving workload.
+#
+# The world is ${SERVING_PODS} ranks: every node that will host a serving pod, not
+# just one replica's worth. Serving replicas each form their own smaller world and
+# never communicate across replicas, so this tests more of the fabric than
+# production uses -- which is the point. Gating only the first two nodes would let
+# a node with a dead RDMA NIC into replica B, where the fault surfaces seventeen
+# minutes later as a dist-init hang with sixteen more B200s already on the meter.
 #
 # NOTE: In accordance with Kubernetes requirements for StatefulSet pod specs,
 # restartPolicy is set to Always. After the parity check completes with exit 0,
@@ -30,7 +37,7 @@ metadata:
   name: nccl-parity-check
   namespace: llm-serving
 spec:
-  replicas: 2
+  replicas: ${SERVING_PODS}
   serviceName: nccl-parity-svc
   podManagementPolicy: Parallel
   selector:
@@ -106,6 +113,11 @@ spec:
           value: "eth0"
         - name: SGLANG_TP_SIZE
           value: "${SGLANG_TP_SIZE}"
+        # The parity world spans every serving node at once, so this is SERVING_PODS
+        # rather than one replica's NODES_PER_REPLICA. Read by parity_test.py, which is
+        # written from a quoted heredoc and therefore cannot be rendered into.
+        - name: PARITY_WORLD_SIZE
+          value: "${SERVING_PODS}"
         securityContext:
           capabilities:
             add:
@@ -126,15 +138,22 @@ spec:
           echo "---------------------------------"
           NODE_RANK=${POD_INDEX:-${HOSTNAME##*-}}
           export NODE_RANK
-          echo "Resolving pod IPs for /etc/hosts..."
-          while ! getent hosts nccl-parity-check-0.nccl-parity-svc.llm-serving.svc.cluster.local >/dev/null || ! getent hosts nccl-parity-check-1.nccl-parity-svc.llm-serving.svc.cluster.local >/dev/null; do
-            sleep 2
+          PARITY_DOMAIN="nccl-parity-svc.llm-serving.svc.cluster.local"
+          echo "Resolving ${PARITY_WORLD_SIZE} pod IPs for /etc/hosts..."
+          PARITY_PEERS=""
+          for PARITY_RANK in $(seq 0 $(( PARITY_WORLD_SIZE - 1 ))); do
+            PARITY_PEERS="${PARITY_PEERS} nccl-parity-check-${PARITY_RANK}"
           done
-          IP0=$(getent hosts nccl-parity-check-0.nccl-parity-svc.llm-serving.svc.cluster.local | awk '{print $1}')
-          IP1=$(getent hosts nccl-parity-check-1.nccl-parity-svc.llm-serving.svc.cluster.local | awk '{print $1}')
-          echo -e "${IP0}\tnccl-parity-check-0\n${IP1}\tnccl-parity-check-1" >> /etc/hosts
+          for PEER_NAME in ${PARITY_PEERS}; do
+            while ! getent hosts "${PEER_NAME}.${PARITY_DOMAIN}" >/dev/null; do
+              sleep 2
+            done
+          done
+          for PEER_NAME in ${PARITY_PEERS}; do
+            printf '%s\t%s\n' "$(getent hosts "${PEER_NAME}.${PARITY_DOMAIN}" | awk '{print $1}')" "${PEER_NAME}" >> /etc/hosts
+          done
           echo "/etc/hosts populated successfully:"
-          cat /etc/hosts | tail -n 2
+          tail -n "${PARITY_WORLD_SIZE}" /etc/hosts
 
           cat << 'EOF' | sed 's/^          //' > /tmp/parity_test.py
           import os, sys
@@ -142,11 +161,12 @@ spec:
           import torch.distributed as dist
 
           rank = int(os.environ.get("NODE_RANK", os.environ.get("HOSTNAME", "").split("-")[-1]))
-          print(f"[Rank {rank}] Initializing process group with NCCL backend...")
+          world_size = int(os.environ["PARITY_WORLD_SIZE"])
+          print(f"[Rank {rank}] Initializing process group of {world_size} with NCCL backend...")
           dist.init_process_group(
               backend="nccl",
               init_method="tcp://nccl-parity-check-0.nccl-parity-svc.llm-serving.svc.cluster.local:29500",
-              world_size=2,
+              world_size=world_size,
               rank=rank
           )
 
@@ -157,7 +177,9 @@ spec:
           dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
 
           print(f"[Rank {rank}] Verifying tensor values after all_reduce...")
-          expected_val = 2.0
+          # Every rank contributes ones, so a correct SUM is the world size. Hardcoding 2.0
+          # here would have passed a four-node gate only if the fabric were broken.
+          expected_val = float(world_size)
           if not torch.allclose(tensor, torch.full_like(tensor, expected_val)):
               print(f"[Rank {rank}] ERROR: Tensor all_reduce verification failed! Min={tensor.min().item()}, Max={tensor.max().item()}")
               sys.exit(1)
@@ -172,7 +194,7 @@ spec:
             trap 'echo "NCCL_PARITY_RESULT fail"' ERR
           fi
           LOG_FILE=$(mktemp)
-          echo "Running 2-node NCCL parity check..."
+          echo "Running ${PARITY_WORLD_SIZE}-node NCCL parity check..."
           if ! python3 /tmp/parity_test.py 2>&1 | tee "${LOG_FILE}"; then
             if [ "${NODE_RANK}" = "0" ]; then
               echo "NCCL SERVING-IMAGE PARITY: FAIL" >&2

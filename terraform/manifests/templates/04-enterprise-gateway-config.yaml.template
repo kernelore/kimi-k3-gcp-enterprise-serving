@@ -23,6 +23,16 @@ stringData:
   BIGQUERY_TABLE_ID: "trajectories"
   BIGQUERY_TABLE_NAME: "${PROJECT_ID}.kimi_k3_enterprise_audit.trajectories"
 ---
+# GATEWAY_EXTRA_MODEL_ENTRIES and GATEWAY_ROUTER_FAILOVER_SETTINGS below are built by
+# 03_deploy_workloads.sh and are the empty string at SERVING_REPLICAS=1, where they occupy
+# the blank lines that already separated these blocks -- so the single-replica ConfigMap
+# contents are byte-for-byte what they were before data parallelism existed, and turning
+# the second replica on is a config change rather than a gateway fork.
+#
+# At SERVING_REPLICAS=2 the extra entry is a second LiteLLM *deployment* of the same
+# model_name, pointed at replica B's leader Service. Two deployments under one name is
+# what makes the router treat them as interchangeable: it load-balances across both, and
+# on failure cools the dead one down and sends everything to the survivor.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -46,10 +56,10 @@ data:
         model_info:
           input_cost_per_token: 0.0000008
           output_cost_per_token: 0.0000024
-
+${GATEWAY_EXTRA_MODEL_ENTRIES}
     router_settings:
       routing_strategy: usage-based-routing-v2
-
+${GATEWAY_ROUTER_FAILOVER_SETTINGS}
     general_settings:
       master_key: os.environ/GATEWAY_MASTER_KEY
       database_url: os.environ/DATABASE_URL

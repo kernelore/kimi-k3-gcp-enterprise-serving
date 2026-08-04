@@ -93,6 +93,45 @@ ensure_serving_render_env() {
   export INFERENCE_ENGINE="${INFERENCE_ENGINE:-sglang}"
   export INFERENCE_SERVER_LABEL="${INFERENCE_SERVER_LABEL:-${INFERENCE_ENGINE}}"
 
+  # Serving topology. NODES_PER_REPLICA sizes one replica's NCCL world; SERVING_PODS
+  # is the StatefulSet's replica count across every serving replica.
+  export NODES_PER_REPLICA="${NODES_PER_REPLICA:-2}"
+  export SERVING_REPLICAS="${SERVING_REPLICAS:-1}"
+
+  # Prefer the deployed pod count, for the same reason SERVING_IMAGE does, but with
+  # sharper teeth: a sweep re-render that recomputed this from a SERVING_REPLICAS the
+  # operator passed to 03 on the command line -- and therefore not present in
+  # config.env -- would render `replicas: 2` against a four-pod StatefulSet and delete
+  # a whole serving replica between variants. Reading the live object cannot make that
+  # mistake. Anything other than a positive integer (absent object, or a turndown
+  # CronJob having scaled it to 0) falls through to the derived value.
+  if [ -z "${SERVING_PODS:-}" ] && [ -n "${STATEFULSET:-}" ] && [ -n "${NAMESPACE:-}" ]; then
+    local deployed_pods
+    deployed_pods="$(kubectl get "statefulset/${STATEFULSET}" -n "${NAMESPACE}" \
+      -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+    case "${deployed_pods}" in
+      ''|*[!0-9]*|0) : ;;
+      *) SERVING_PODS="${deployed_pods}" ;;
+    esac
+  fi
+  export SERVING_PODS="${SERVING_PODS:-$(( SERVING_REPLICAS * NODES_PER_REPLICA ))}"
+
+  # A partial trailing replica is not a smaller deployment, it is a replica whose
+  # NCCL world never forms: its ranks wait on peers that do not exist until the
+  # 3600s dist-init timeout expires, with every GPU in the pool billed throughout.
+  if [ $(( SERVING_PODS % NODES_PER_REPLICA )) -ne 0 ]; then
+    echo "ERROR: SERVING_PODS (${SERVING_PODS}) is not a multiple of NODES_PER_REPLICA (${NODES_PER_REPLICA});" >&2
+    echo "       the trailing replica would hang in dist-init waiting for peers that do not exist." >&2
+    return 1
+  fi
+  # Keep the derived count consistent with whatever SERVING_PODS ended up being, so a
+  # value read from the cluster does not leave a stale SERVING_REPLICAS beside it.
+  export SERVING_REPLICAS=$(( SERVING_PODS / NODES_PER_REPLICA ))
+
+  # Replica B's leader is the first ordinal after replica A's block. Rendered even at
+  # one replica: the Service that selects it then simply has no endpoints.
+  export REPLICA_B_LEADER_POD_INDEX="${NODES_PER_REPLICA}"
+
   # The parallel geometry, including the tp8pp2 profile's fixed triple. 03
   # validates TP*PP against the node count and rejects an EP that is neither 1
   # nor TP; a re-render inherits an already-validated geometry, so this mirrors
@@ -111,7 +150,8 @@ ensure_serving_render_env() {
            SGLANG_PORT SGLANG_CONTEXT_LENGTH SGLANG_MEM_FRACTION_STATIC \
            SGLANG_SCHEDULE_POLICY MIN_WEIGHTS_GIB LEADER_ADDR TRTLLM_VIP \
            INFERENCE_ENGINE INFERENCE_SERVER_LABEL SGLANG_PARALLEL_PROFILE \
-           SGLANG_TP_SIZE SGLANG_PP_SIZE SGLANG_EP_SIZE; do
+           SGLANG_TP_SIZE SGLANG_PP_SIZE SGLANG_EP_SIZE \
+           NODES_PER_REPLICA SERVING_REPLICAS SERVING_PODS REPLICA_B_LEADER_POD_INDEX; do
     if [ -z "${!v:-}" ]; then
       echo "ERROR: ${v} is empty; the rendered StatefulSet would be rejected" >&2
       return 1

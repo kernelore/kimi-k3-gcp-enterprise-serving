@@ -113,8 +113,30 @@ While **1x 2-Node Replica (DP=1, 16x B200 GPUs) serves as the turnkey MVP baseli
 
 > **Per-GPU Normalization Rule:** In all benchmark normalization calculations and performance reporting, aggregate cluster throughput must be divided by **`16.0`** (for a 1-replica 2-node pool) rather than 8.0, reflecting the 16x B200 GPUs required to host Kimi K3's 2.8T parameter footprint.
 
+#### What `DP=2` Actually Deploys
+
+`SERVING_REPLICAS=2` is a config flip, not a manifest fork. Setting it in `scripts/config.env` (or in the environment of `01`/`03`) produces:
+
+| Object | `DP=1` (default) | `DP=2` |
+| :--- | :--- | :--- |
+| `statefulset/kimi-k3-serving` | `replicas: 2` | `replicas: 4` |
+| NCCL worlds | one, ordinals 0–1 | **two independent worlds**, ordinals 0–1 and 2–3 |
+| `--nnodes` per pod | `2` | `2` (unchanged — it sizes one replica, not the pool) |
+| Leader Services | `kimi-k3-serving-svc` → ordinal 0 | plus `kimi-k3-serving-b-svc` → ordinal 2 |
+| LiteLLM `model_list` | 1 deployment | 2 deployments of the *same* `model_name` |
+| Router settings | `usage-based-routing-v2` | plus `num_retries: 2`, `allowed_fails: 2`, `cooldown_time: 60` |
+| Serving-image NCCL parity gate | 2 ranks | 4 ranks (all four nodes gated before any weight load) |
+| `gpu_pool_max_nodes` | 2 | 4 (raised automatically by `01_setup_and_check.sh`) |
+
+A pod derives its rank and its leader from its own StatefulSet ordinal (`rank = ordinal % NODES_PER_REPLICA`, `leader = ordinal - rank`), so the two replicas never exchange a packet and a fault in one does not stall the other. The replica-B Service is rendered at `DP=1` as well, selecting an ordinal that does not exist — it simply has no endpoints, which is what keeps enabling the second replica a config change.
+
+`SERVING_REPLICAS≥3` is **rejected at render time**: replica C onwards has no leader Service and no gateway entry, so it would hydrate 2.8T of weights onto two more nodes and never receive a request. The `DP=4`/`DP=N` rows above describe the architecture, not a supported flag value.
+
+> [!WARNING]
+> `DP=2` doubles the B200 spot bill for as long as it is deployed. It has been rendered, gated and unit-tested, but **not yet exercised on live hardware** — see the failover section below.
+
 > [!NOTE]
-> **Horizontal Autoscaling Absence:** Unlike reference stacks such as GLM, Kimi K3 serves as a single 2-node MPI replica across 16 B200s (`SERVING_REPLICAS=1`, `NODES_PER_REPLICA=2`, and `GPU_MAX_NODES=2`), leaving no spare GPU capacity in the cluster to scale into. Furthermore, dynamic pod scale-out events would require re-hydrating 1,453.7 GiB of model weights from GCS or local disk. Horizontal Pod Autoscaling (HPA) is therefore intentionally not implemented in this repository.
+> **Horizontal Autoscaling Absence:** At the shipped default, and unlike reference stacks such as GLM, Kimi K3 serves as a single 2-node MPI replica across 16 B200s (`SERVING_REPLICAS=1`, `NODES_PER_REPLICA=2`, and `GPU_MAX_NODES=2`), leaving no spare GPU capacity in the cluster to scale into. Furthermore, dynamic pod scale-out events would require re-hydrating 1,453.7 GiB of model weights from GCS or local disk. Horizontal Pod Autoscaling (HPA) is therefore intentionally not implemented in this repository. `SERVING_REPLICAS=2` changes the *fixed* replica count, not this conclusion: the second replica is provisioned up-front and stays provisioned.
 
 > [!NOTE]
 > **Spot Provisioning Resilience:** Reclamation of ANY GPU in the 2-node TP16/EP16 group takes down the whole serving replica until a replacement joins; spot suits benchmarking, on-demand is recommended for production.
@@ -222,10 +244,12 @@ networking configurations:
     -   *Gate sequencing*: the two fabric gates run strictly one after the other.
         Each gate pod claims all eight `networking.gke.io.networks/rdma-0..7`
         interfaces and a node advertises exactly one of each, so a node hosts at
-        most one gate pod irrespective of its GPU request. Applying both
-        2-replica StatefulSets concurrently deadlocks permanently on the
-        documented 2-node topology — two pods run and two stay `Pending` until
-        both gates time out.
+        most one gate pod irrespective of its GPU request. Applying both gate
+        StatefulSets concurrently deadlocks permanently — the two gates between
+        them ask for twice the nodes the pool has, so half the pods run and half
+        stay `Pending` until both gates time out. This holds at any
+        `SERVING_REPLICAS`: the parity gate widens to `SERVING_PODS` ranks and the
+        pool widens with it, so the two always contend for the same nodes.
 
 #### Engine Feature & Architecture Comparison Table
 
@@ -567,7 +591,7 @@ kimi-k3-gcp-enterprise-serving/
 │   ├── kv_accuracy_gate.py        # Needle-in-haystack accuracy gate for fp8 KV, with a bf16-vs-bf16 self-consistency floor
 │   ├── massive_benchmark_kimi_k3.py # High-concurrency stress test simulating 20 agent streams
 │   ├── results/README.md          # Provenance rules for every result file: what each field means and what invalidates a set
-│   ├── run_failover_bench.py      # Replica-failover harness with a pre-registered pass rule (Phase 3; needs DP>=2, unexercised)
+│   ├── run_failover_bench.py      # Replica-failover harness with a pre-registered pass rule (Phase 3; needs SERVING_REPLICAS=2, unexercised)
 │   ├── run_prefill_benchmark_kimi_k3.py # Empirical prompt-ingestion prefill benchmark (8k-in/16-out)
 │   ├── run_prefix_reuse_bench.py  # Prefix-reuse benchmark; measures whether a third cache tier helps a 69/93 linear-attention model
 │   ├── run_realistic_sweep_kimi_k3.py # Two-arm sweep: repeated-passage vs non-repetitive corpus (default c=8,16,32)
@@ -613,7 +637,7 @@ kimi-k3-gcp-enterprise-serving/
 The Tier 1 Enterprise AI Gateway and Kubernetes infrastructure utilize active health probing via readiness probes and LiteLLM router retries. If a serving pod experiences GPU ECC faults, NVLink lockups, or network drops, Kubernetes readiness probes fail and eject the pod from the upstream ClusterIP routing pool, and LiteLLM retries the failed request.
 
 > [!WARNING]
-> **At the shipped default this provides no redundancy.** The stack deploys a single 2-node replica (`SERVING_REPLICAS=1`, `GPU_MAX_NODES=2`), so there is no second healthy replica to retry against — readiness ejection simply empties the routing pool and requests fail until the replica recovers. Retry-to-a-healthy-peer only becomes meaningful at `DP≥2` (4+ GPU nodes). Failover has not been exercised on a live deployment.
+> **At the shipped default this provides no redundancy.** The stack deploys a single 2-node replica (`SERVING_REPLICAS=1`, `GPU_MAX_NODES=2`), so there is no second healthy replica to retry against — readiness ejection simply empties the routing pool and requests fail until the replica recovers. Retry-to-a-healthy-peer only becomes meaningful at `DP≥2` (4 GPU nodes), which `SERVING_REPLICAS=2` now deploys. **Failover has still not been exercised on a live deployment** — the two-replica topology, the second gateway upstream and the router's cooldown are covered by render-time and unit tests only, and `run_failover_bench.py` has never run against real hardware. Treat every failover claim here as designed-and-gated, not measured.
 
 ### 2. Dynamic Spot Preemption Priorities (P0 > P1 > P2)
 

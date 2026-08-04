@@ -76,6 +76,26 @@ export GPU_MAX_NODES="${GPU_MAX_NODES:-2}"
 export SERVING_REPLICAS="${SERVING_REPLICAS:-1}"
 export NODES_PER_REPLICA="${NODES_PER_REPLICA:-2}"
 
+# One StatefulSet holds every serving replica: replica R owns the consecutive ordinals
+# [R*NODES_PER_REPLICA, (R+1)*NODES_PER_REPLICA) and runs its own NCCL world behind its
+# own leader Service. SERVING_PODS is that total; the pods themselves derive their rank
+# and their leader from their ordinal.
+case "${SERVING_REPLICAS}" in
+  1|2) : ;;
+  *)
+    # Not an arbitrary cap on ambition: each additional replica needs its own leader
+    # Service (a selector is an equality map and cannot say "ordinal 0 or 2") and its own
+    # gateway deployment entry, and only the second one is rendered. Three replicas would
+    # scale the StatefulSet to six pods and route to two of them.
+    echo "ERROR: SERVING_REPLICAS must be 1 or 2, got '${SERVING_REPLICAS}'." >&2
+    echo "       Replica C onwards would have no leader Service and no gateway entry;" >&2
+    echo "       its pods would load 2.8T of weights and never receive a request." >&2
+    exit 1
+    ;;
+esac
+export SERVING_PODS=$(( SERVING_REPLICAS * NODES_PER_REPLICA ))
+export REPLICA_B_LEADER_POD_INDEX="${NODES_PER_REPLICA}"
+
 if [ -n "${GCS_WEIGHTS_BUCKET:-}" ] && [[ "${GCS_WEIGHTS_BUCKET}" != gs://* ]]; then
   export GCS_WEIGHTS_BUCKET="gs://${GCS_WEIGHTS_BUCKET}"
 fi
@@ -282,10 +302,68 @@ fi
 export SERVING_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/kimi-prod/${IMAGE_NAME}:${IMAGE_TAG}"
 export INFERENCE_ENGINE INFERENCE_SERVER_LABEL SERVING_IMAGE
 
+# ------------------------------------------------------------------------------
+# Gateway's view of the serving topology
+# ------------------------------------------------------------------------------
+# Replica B's leader is a plain ClusterIP Service, not a second internal load balancer:
+# the only client is the in-cluster gateway, and a second forwarding rule would be billed
+# for nothing. It is readiness-gated, unlike the headless service the pods use for
+# dist-init, so a leader that is 17 minutes into loading 2.8T of weights has no endpoints
+# and cannot be routed to.
+export REPLICA_B_VIP="${REPLICA_B_VIP:-kimi-k3-serving-b-svc.llm-serving.svc.cluster.local}"
+
+# Both of the following are empty at SERVING_REPLICAS=1, where the template's placeholders
+# occupy lines that were already blank -- so the one-replica ConfigMap contents render
+# byte-for-byte as they did before data parallelism existed.
+GATEWAY_EXTRA_MODEL_ENTRIES=""
+GATEWAY_ROUTER_FAILOVER_SETTINGS=""
+if [ "${SERVING_REPLICAS}" -ge 2 ]; then
+  # A second *deployment* of the same model_name, not a second model. LiteLLM balances
+  # across deployments sharing a name and cools a failing one down, which is what makes
+  # replica B a failover target rather than just another addressable endpoint.
+  #
+  # model_info is duplicated from the template's entry A because LiteLLM prices per
+  # deployment: omit it and every request replica B serves is billed at zero, so the audit
+  # table would show spend halving whenever the router balanced away from A. The costs
+  # being in two places is the price of the template staying declarative;
+  # tests/test_gateway_dp2_config.py fails if they ever diverge.
+  GATEWAY_EXTRA_MODEL_ENTRIES="$(cat <<EOF
+      - model_name: ${SERVING_MODEL_NAME}
+        litellm_params:
+          model: openai/${SERVING_MODEL_NAME}
+          api_base: http://${REPLICA_B_VIP}:8000/v1
+          api_key: fake-key
+          rpm: 1000
+          tpm: 100000
+          drop_params: false
+        model_info:
+          input_cost_per_token: 0.0000008
+          output_cost_per_token: 0.0000024
+EOF
+)"
+  GATEWAY_EXTRA_MODEL_ENTRIES="${GATEWAY_EXTRA_MODEL_ENTRIES}"$'\n'
+
+  # Retry and cooldown only earn their keep once there is somewhere else to send the
+  # request, hence the guard: at one replica these would turn a dead engine into a slow
+  # dead engine. cooldown_time bounds how long a replica stays out of rotation after it
+  # trips allowed_fails -- it is not sized to the 17-minute weight load, because the
+  # readiness-gated leader Service already withholds the endpoint until the engine can
+  # actually answer. 60s is long enough that a flapping replica is not immediately
+  # re-tried, short enough that a recovered one is not stranded.
+  GATEWAY_ROUTER_FAILOVER_SETTINGS="$(cat <<'EOF'
+      num_retries: 2
+      allowed_fails: 2
+      cooldown_time: 60
+EOF
+)"
+  GATEWAY_ROUTER_FAILOVER_SETTINGS="${GATEWAY_ROUTER_FAILOVER_SETTINGS}"$'\n'
+fi
+export GATEWAY_EXTRA_MODEL_ENTRIES GATEWAY_ROUTER_FAILOVER_SETTINGS
+
 # 1. Render manifest templates (excluding HF_TOKEN from substitution to prevent plaintext baking)
 echo "--> 1. Rendering manifest templates from ${TEMPLATE_DIR} to ${GENERATED_DIR}..."
 # shellcheck disable=SC2016
-BASE_ALLOWED_VARS='${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${SERVING_MODEL_NAME} ${SERVING_MODEL_LABEL} ${TRTLLM_TP_SIZE} ${TRTLLM_PP_SIZE} ${TRTLLM_EP_SIZE} ${TRTLLM_MAX_SEQ_LEN} ${SGLANG_PARALLEL_PROFILE} ${SGLANG_TP_SIZE} ${SGLANG_PP_SIZE} ${SGLANG_PP_LAYER_PARTITION} ${SGLANG_EP_SIZE} ${SGLANG_PORT} ${SGLANG_MEM_FRACTION_STATIC} ${SGLANG_SCHEDULE_POLICY} ${SGLANG_CHUNKED_PREFILL_SIZE} ${SGLANG_MAX_RUNNING_REQUESTS} ${SGLANG_DISABLE_CUSTOM_ALL_REDUCE} ${SGLANG_SPECULATIVE_ALGORITHM} ${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH} ${SGLANG_SPECULATIVE_DSPARK_BLOCK_SIZE} ${SGLANG_ENABLE_LINEAR_REPLAYSSM_SPEC} ${DSPARK_DRAFT_DIR_NAME} ${SERVING_POD_SERVICE_ACCOUNT} ${SGLANG_QUANTIZATION} ${SGLANG_ENABLE_TORCH_COMPILE} ${SGLANG_PREFILL_ATTENTION_BACKEND} ${SGLANG_DECODE_ATTENTION_BACKEND} ${SGLANG_LINEAR_ATTN_PREFILL_BACKEND} ${SGLANG_MOE_RUNNER_BACKEND} ${SGLANG_KV_CACHE_DTYPE} ${SGLANG_ENABLE_HIERARCHICAL_CACHE} ${SGLANG_HICACHE_STORAGE_BACKEND} ${SGLANG_HICACHE_RATIO} ${SGLANG_HICACHE_SIZE} ${SGLANG_HICACHE_WRITE_POLICY} ${SGLANG_HICACHE_IO_BACKEND} ${SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE} ${SGLANG_HOST_SCRATCH_PATH} ${SGLANG_LOCAL_SCRATCH_MOUNT} ${SGLANG_CONTEXT_LENGTH} ${SGLANG_REASONING_PARSER} ${SGLANG_TOOL_CALL_PARSER} ${EXPECTED_MODEL_ARCHITECTURE} ${MIN_WEIGHTS_GIB} ${LEADER_ADDR} ${HYPERDISK_ML_SIZE_GB} ${GCS_WEIGHTS_BUCKET} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${TRTLLM_VIP} ${GPU_MAX_NODES} ${SERVING_REPLICAS} ${NODES_PER_REPLICA} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${SERVING_IMAGE}'
+BASE_ALLOWED_VARS='${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${SERVING_MODEL_NAME} ${SERVING_MODEL_LABEL} ${TRTLLM_TP_SIZE} ${TRTLLM_PP_SIZE} ${TRTLLM_EP_SIZE} ${TRTLLM_MAX_SEQ_LEN} ${SGLANG_PARALLEL_PROFILE} ${SGLANG_TP_SIZE} ${SGLANG_PP_SIZE} ${SGLANG_PP_LAYER_PARTITION} ${SGLANG_EP_SIZE} ${SGLANG_PORT} ${SGLANG_MEM_FRACTION_STATIC} ${SGLANG_SCHEDULE_POLICY} ${SGLANG_CHUNKED_PREFILL_SIZE} ${SGLANG_MAX_RUNNING_REQUESTS} ${SGLANG_DISABLE_CUSTOM_ALL_REDUCE} ${SGLANG_SPECULATIVE_ALGORITHM} ${SGLANG_SPECULATIVE_DRAFT_MODEL_PATH} ${SGLANG_SPECULATIVE_DSPARK_BLOCK_SIZE} ${SGLANG_ENABLE_LINEAR_REPLAYSSM_SPEC} ${DSPARK_DRAFT_DIR_NAME} ${SERVING_POD_SERVICE_ACCOUNT} ${SGLANG_QUANTIZATION} ${SGLANG_ENABLE_TORCH_COMPILE} ${SGLANG_PREFILL_ATTENTION_BACKEND} ${SGLANG_DECODE_ATTENTION_BACKEND} ${SGLANG_LINEAR_ATTN_PREFILL_BACKEND} ${SGLANG_MOE_RUNNER_BACKEND} ${SGLANG_KV_CACHE_DTYPE} ${SGLANG_ENABLE_HIERARCHICAL_CACHE} ${SGLANG_HICACHE_STORAGE_BACKEND} ${SGLANG_HICACHE_RATIO} ${SGLANG_HICACHE_SIZE} ${SGLANG_HICACHE_WRITE_POLICY} ${SGLANG_HICACHE_IO_BACKEND} ${SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE} ${SGLANG_HOST_SCRATCH_PATH} ${SGLANG_LOCAL_SCRATCH_MOUNT} ${SGLANG_CONTEXT_LENGTH} ${SGLANG_REASONING_PARSER} ${SGLANG_TOOL_CALL_PARSER} ${EXPECTED_MODEL_ARCHITECTURE} ${MIN_WEIGHTS_GIB} ${LEADER_ADDR} ${HYPERDISK_ML_SIZE_GB} ${GCS_WEIGHTS_BUCKET} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${TRTLLM_VIP} ${GPU_MAX_NODES} ${SERVING_REPLICAS} ${NODES_PER_REPLICA} ${SERVING_PODS} ${REPLICA_B_LEADER_POD_INDEX} ${GATEWAY_EXTRA_MODEL_ENTRIES} ${GATEWAY_ROUTER_FAILOVER_SETTINGS} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${SERVING_IMAGE}'
 for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
   if [ -f "${template_file}" ]; then
     basename=$(basename "${template_file}" .template)
@@ -316,6 +394,31 @@ if [ "${1:-}" = "--render-only" ] || [ "${1:-}" = "--stage-only" ]; then
     echo "    Render-only mode complete."
     exit 0
   fi
+fi
+
+# The GPU pool has to be able to hold every serving pod: podAntiAffinity puts one pod per
+# node, so a pool capped below SERVING_PODS does not degrade gracefully. The surplus pods
+# sit Pending, the StatefulSet's ordered rollout never reaches them, and the entire
+# FABRIC_POD_READY_TIMEOUT_SECONDS budget is spent waiting for a node the autoscaler was
+# told it may not create.
+#
+# Checked against what terraform applied rather than against GPU_MAX_NODES from config.env.
+# 01_setup_and_check.sh raises gpu_pool_max_nodes to the serving floor without writing the
+# raised number back to config.env, so reading config here would reject a cluster that is
+# in fact correctly provisioned. Checked after the render-only exit for the same reason:
+# rendering manifests provisions nothing, and CI renders from a clean checkout that has no
+# terraform.tfvars at all.
+POOL_MAX_NODES=""
+if [ -r "${TF_DIR}/terraform.tfvars" ]; then
+  POOL_MAX_NODES="$(sed -n 's/^[[:space:]]*gpu_pool_max_nodes[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+    "${TF_DIR}/terraform.tfvars" | tail -n 1)"
+fi
+if [ -n "${POOL_MAX_NODES}" ] && [ "${POOL_MAX_NODES}" -lt "${SERVING_PODS}" ]; then
+  echo "ERROR: the GPU pool tops out at ${POOL_MAX_NODES} nodes, but this deploy needs ${SERVING_PODS}" >&2
+  echo "       (SERVING_REPLICAS=${SERVING_REPLICAS} x NODES_PER_REPLICA=${NODES_PER_REPLICA}), one pod per node." >&2
+  echo "       Re-run scripts/01_setup_and_check.sh and scripts/02_deploy_infra.sh with" >&2
+  echo "       SERVING_REPLICAS=${SERVING_REPLICAS} exported, so the pool is resized first." >&2
+  exit 1
 fi
 
 # 2. Check and self-heal container image in Artifact Registry (seeding via Cloud Build from docker/${DOCKERFILE} if missing)
@@ -562,7 +665,7 @@ else
   # so this normally returns in seconds. It is here because the flaw is structural, not
   # specific to the first gate: any marker poll that also times scheduling can fail for
   # reasons that have nothing to do with what it claims to measure.
-  wait_for_fabric_pods_running nccl-parity-check nccl-parity-check 2
+  wait_for_fabric_pods_running nccl-parity-check nccl-parity-check "${SERVING_PODS}"
 
   echo "    Polling NCCL parity check rank-0 pod (nccl-parity-check-0) for parity marker (timeout: ${FABRIC_GATE_TIMEOUT_SECONDS}s)..."
   PARITY_MARKER=""

@@ -137,7 +137,9 @@ t1_f4_04() {
   # RAID-0 comments in the manifest use freely.
   assert_no_match '(^|[^[:alnum:]_])[Rr]ay([^[:alnum:]_]|$)|RAY_[A-Z_]+' "${sglang_yaml}" "Ray references in SGLang manifest"
   assert_match '--dist-init-addr' "${sglang_yaml}" "Missing --dist-init-addr in SGLang manifest"
-  assert_match '--nnodes 2|--nnodes=2' "${sglang_yaml}" "Missing nnodes 2 in SGLang manifest"
+  # Quoted form accepted: --nnodes now interpolates NODES_PER_REPLICA rather than being
+  # a literal. The value still has to be 2 -- it sizes one replica, not the whole pool.
+  assert_match '--nnodes "?2"?|--nnodes="?2"?' "${sglang_yaml}" "Missing nnodes 2 in SGLang manifest"
 }
 
 t1_f4_05() {

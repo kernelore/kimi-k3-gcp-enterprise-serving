@@ -733,6 +733,39 @@ if [ "${MODE}" = "failover" ]; then
     exit 1
   fi
 
+  # Failover is only observable if there is a second replica to fail over to, and that is a
+  # property of the cluster rather than of the configuration this script was handed. Both
+  # checks below read the live objects on purpose: a SERVING_REPLICAS=2 in config.env
+  # describes what someone intended to deploy, and an hour of four-node time is too
+  # expensive a way to discover that the deploy landed as one replica.
+  FAILOVER_NODES_PER_REPLICA="${NODES_PER_REPLICA:-2}"
+  LIVE_SERVING_PODS="$(kubectl get statefulset/kimi-k3-serving -n llm-serving \
+    -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+  if [ -z "${LIVE_SERVING_PODS}" ]; then
+    echo "ERROR: statefulset/kimi-k3-serving not found in llm-serving; nothing to fail over." >&2
+    exit 1
+  fi
+  if [ "${LIVE_SERVING_PODS}" -le "${FAILOVER_NODES_PER_REPLICA}" ]; then
+    echo "ERROR: the deployed StatefulSet has ${LIVE_SERVING_PODS} pods, which is one replica" >&2
+    echo "       of ${FAILOVER_NODES_PER_REPLICA}. Killing its leader measures a restart, not a failover:" >&2
+    echo "       the blackout would run for the full weight load and the verdict would fail a" >&2
+    echo "       rule that was never given anything to satisfy it." >&2
+    echo "       Redeploy with SERVING_REPLICAS=2 (scripts/01 then scripts/03) first." >&2
+    exit 1
+  fi
+  # Pods existing is not the same as the gateway having a second upstream. Replica B's
+  # Service is readiness-gated, so empty endpoints here means B is still loading weights --
+  # start the run now and the "survivor" is a 503.
+  REPLICA_B_ENDPOINTS="$(kubectl get endpoints kimi-k3-serving-b-svc -n llm-serving \
+    -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)"
+  if [ -z "${REPLICA_B_ENDPOINTS}" ]; then
+    echo "ERROR: kimi-k3-serving-b-svc has no ready endpoints, so the gateway currently has" >&2
+    echo "       exactly one upstream. Wait for replica B's leader to become Ready:" >&2
+    echo "         kubectl get pod -n llm-serving -l app=kimi-k3-serving -o wide" >&2
+    exit 1
+  fi
+  echo "    Second replica is serving (kimi-k3-serving-b-svc -> ${REPLICA_B_ENDPOINTS})."
+
   # Default to rank 0 of the primary replica. Rank 0 is the whole replica's serving surface
   # because kimi-k3-serving-svc selects on apps.kubernetes.io/pod-index: "0", so this is the
   # worst realistic single-pod loss rather than an arbitrary one.

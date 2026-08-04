@@ -31,7 +31,7 @@ t4_s02() {
   assert_file_exists "${yaml_file}"
   assert_match 'sglang\.launch_server' "${yaml_file}" "Missing sglang.launch_server"
   assert_match '--dist-init-addr' "${yaml_file}" "Missing dist-init-addr"
-  assert_match '--nnodes 2|--nnodes=2' "${yaml_file}" "Missing nnodes 2"
+  assert_match '--nnodes "?2"?|--nnodes="?2"?' "${yaml_file}" "Missing nnodes 2"
   assert_match '--node-rank' "${yaml_file}" "Missing node-rank"
   # Word-anchored: a bare 'ray' substring also matches "array", which the NVMe
   # RAID-0 comments in the manifests use freely.
