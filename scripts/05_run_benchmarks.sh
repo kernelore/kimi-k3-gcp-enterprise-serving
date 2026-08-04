@@ -771,12 +771,12 @@ if [ "${MODE}" = "failover" ]; then
 
   if [ -f "${PROJECT_ROOT}/benchmarks/run_failover_bench.py" ]; then
     echo "    Validating the run and bounding the kill command before anything is deleted..."
-    if ! python3 "${PROJECT_ROOT}/benchmarks/run_failover_bench.py" measure --self-check \
-         "--endpoint=${TARGET_URL}" \
-         "--kill-command=${FAILOVER_KILL_CMD}" \
-         ${FAILOVER_RPS:+"--rps=${FAILOVER_RPS}"} \
-         ${FAILOVER_BASELINE_SECONDS:+"--baseline-seconds=${FAILOVER_BASELINE_SECONDS}"} \
-         ${FAILOVER_RECOVERY_SECONDS:+"--recovery-seconds=${FAILOVER_RECOVERY_SECONDS}"}; then
+    # Validate the arguments the run will actually use, not a subset of them. An earlier
+    # revision omitted --rejoin-command here, so the self-check passed on a configuration
+    # that differed from the measured one in exactly the field that decides whether the
+    # rejoin rule can be evaluated at all.
+    # FO_ARGS[0] is the 'measure' subcommand, so --self-check has to follow it.
+    if ! python3 "${PROJECT_ROOT}/benchmarks/run_failover_bench.py" "${FO_ARGS[@]}" --self-check; then
       echo "ERROR: Failover self-check failed; refusing to kill anything." >&2
       exit 1
     fi

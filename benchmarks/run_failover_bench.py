@@ -335,6 +335,23 @@ def cmd_self_check(args):
             f"--recovery-seconds={args.recovery_seconds} must exceed the"
             f" {RULE['max_blackout_seconds']}s blackout limit, or the run cannot observe"
             " a failure of that rule")
+    if args.recovery_seconds < RULE["max_rejoin_seconds"]:
+        # The same reasoning as the blackout guard above, one bound higher. poll_rejoin is
+        # stopped when the recovery phase ends, so a window shorter than the limit it is
+        # judged against cannot tell "never rejoined" from "not watched long enough" --
+        # and verdict fails a null rejoin, so the run's outcome is decided before it starts.
+        problems.append(
+            f"--recovery-seconds={args.recovery_seconds} is below the"
+            f" {RULE['max_rejoin_seconds']}s rejoin limit; the poller would stop before a"
+            " rejoin could be observed and the verdict would fail a rule it never measured")
+    if not args.rejoin_command.strip():
+        # Every other check here asks whether the run can measure what it claims to. This
+        # one asks the same of rejoin: without a command to poll, rejoin_seconds is null by
+        # construction and verdict scores that as a failure regardless of what the fabric
+        # did. Cheaper to say so now than after the replica has been killed.
+        problems.append(
+            "--rejoin-command is empty; rejoin_seconds would be null by construction and"
+            " the verdict would fail on it no matter how well the failover went")
     if not args.endpoint.startswith(("http://", "https://")):
         problems.append(f"--endpoint is not an http(s) URL: {args.endpoint}")
     expected = args.rps * (args.baseline_seconds + args.recovery_seconds)
@@ -557,7 +574,12 @@ def build_parser():
                    help="Bound on outstanding requests. Attempts beyond it are recorded as"
                         " losses rather than queued, which is what a bounded client pool does.")
     m.add_argument("--baseline-seconds", type=int, default=120)
-    m.add_argument("--recovery-seconds", type=int, default=900)
+    # Must outlast RULE["max_rejoin_seconds"], because poll_rejoin is stopped the instant
+    # this elapses. The previous default of 900 shut the poller off two minutes before the
+    # measured 17 min 03 s warm ROX restart could plausibly finish, so rejoin_seconds came
+    # back null and verdict scored the rejoin check as a failure -- a FAIL describing the
+    # clock rather than the fabric, bought at four-node prices.
+    m.add_argument("--recovery-seconds", type=int, default=1600)
     m.add_argument("--request-timeout", type=int, default=60)
     m.add_argument("--kill-command", required=True,
                    help="Shell command that removes the leader pod, e.g."
