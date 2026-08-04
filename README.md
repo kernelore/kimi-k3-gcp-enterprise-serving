@@ -651,200 +651,76 @@ Teardown automation (`06_destroy_all.sh`) incorporates proactive self-healing gu
 
 ## 🔭 Supervised Measurement Windows & Tuning Sweeps
 
-A 2-node B200 replica is metered by the second, so every measurement on this
-stack runs inside a window that owns the cluster, bounds its own spend, and
-tears the stack down whether or not the run succeeds. Two scripts implement
-that: `07_run_tuning_sweep.sh` measures one configuration change at a time, and
-`08_run_measurement_window.sh` wraps a whole session of them.
+A 2-node B200 replica is metered by the second, so measurements run inside a
+window that owns the cluster, bounds its own spend, and tears the stack down
+whether or not the run succeeds. `07_run_tuning_sweep.sh` measures one
+configuration change at a time, `08_run_measurement_window.sh` wraps a session
+of them, and `scripts/lib/serving_render_defaults.sh` is the render they share
+with `03_deploy_workloads.sh`. What the last window returned is in
+`benchmarks/results/sglang/`, with its provenance and caveats in
+`benchmarks/results/README.md`.
 
 ### 1. `07_run_tuning_sweep.sh` — one variant at a time, resumably
 
 The sweep walks a table of single-variable deltas against a controlled baseline
-(`B0`, no delta), re-rendering and rolling the StatefulSet for each one. Every
-variant is judged by `benchmarks/sweep_decision.py`, a **pre-registered** rule —
-written and committed before any live measurement, so the accept threshold
-cannot be chosen after seeing the numbers. It exits `0` to accept, `1` to back
-out, `2` for undecidable.
+(`B0`, no delta), re-rendering and rolling the StatefulSet for each. Every
+variant is judged by `benchmarks/sweep_decision.py`, a **pre-registered** rule
+committed before any live measurement so the accept threshold cannot be chosen
+after seeing the numbers — exit `0` accept, `1` back out, `2` undecidable.
 
-Each variant's outcome is checkpointed to `checkpoint.tsv` as it completes.
-`accepted`, `backed_out`, `failed` and `skipped` are terminal: a resumed sweep
-re-runs only what is genuinely unfinished, which matters when a single restart
-costs about 17 minutes of the budget.
-
-> [!NOTE]
-> A sweep that measures *nothing* exits nonzero. Silence and success are not
-> the same result, and an earlier revision returned `0` after all nine variants
-> failed — which let the caller record the stage as complete and move on.
+Outcomes land in `checkpoint.tsv` as they complete, and `accepted`,
+`backed_out`, `failed` and `skipped` are terminal, so a resume re-runs only what
+is genuinely unfinished — worth having when one restart costs ~17 minutes of
+budget. A sweep that measures *nothing* exits nonzero; an earlier revision
+returned `0` after all nine variants failed, which let the caller record the
+stage as complete and move on.
 
 ### 2. `08_run_measurement_window.sh` — the spend wrapper
 
-Stages are `deploy`, `sweep`, `kv`, `prefix` and `collect`, selectable with
+Stages `deploy`, `sweep`, `kv`, `prefix` and `collect` are selectable with
 `--stages` and individually resumable through per-stage `.done` markers.
 
-* **Single ownership.** The window writes its runner pid to an `ACTIVE` marker.
-  Only the window holding it may tear the cluster down.
+* **Single ownership, by pid — not by path.** The window writes its runner pid
+  to an `ACTIVE` marker and only the holder may destroy the cluster. An earlier
+  revision compared marker *paths*, so a second window reusing a `--run-label`
+  wrote the same path with its own pid and the superseded watchdog tore down a
+  live 16-GPU deployment mid-sweep. A watchdog now stands down for a live
+  foreign pid — but still destroys on a dead one, since deferring there would
+  leave 16 B200s billing with nothing willing to stop them.
 * **Dead-man's switch.** A detached watchdog destroys the stack if the runner
-  dies without cleaning up, or when `--budget-hours` expires — the spend stays
+  dies without cleaning up, or when `--budget-hours` expires, so the spend stays
   bounded even if the runner is killed outright.
-* **Hold on failure.** When a stage fails, the cluster is deliberately *kept* so
-  the failure can be diagnosed on the hardware that produced it. The budget
-  deadline remains the backstop, so a hold cannot become an open-ended bill.
-* **Readiness is measured, not inferred.** Whether a leg needs a restart is
-  decided by `.metadata.generation` — the API server bumps it only when the spec
-  actually changed — and the readiness wait then runs *regardless of the
-  answer*. "No restart is needed" and "the cluster is serving" are different
-  claims, and a leg that conflates them will benchmark a cluster that is still
-  converging.
-
-> [!NOTE]
-> **The B200 pool is Spot, and a preemption mid-leg is a normal event.** On
-> 2026-08-03 a node was reclaimed partway through the hicache-on prefix arm.
-> The cold and warm arms had already been measured; the evicted and mixed arms
-> recorded 0 successful requests out of 2 and out of 64. The harness wrote that
-> down as it happened and the verdict simply omitted the slope it could not
-> compute, so no wrong conclusion was reachable from the artifact — the leg just
-> had to be paid for twice. Per-variant checkpointing exists for the same
-> reason: a preemption costs one variant, not a four-hour sweep.
-
-> [!WARNING]
-> **Ownership is the marker's contents, not its path.** An earlier revision
-> compared marker paths, so a second window reusing the same `--run-label`
-> wrote *the same path* with its own pid — and the superseded watchdog, seeing a
-> marker where it expected one, destroyed a live 16-GPU deployment mid-sweep on
-> 2026-08-03. A watchdog now stands down when `ACTIVE` holds a **live** pid that
-> is not its own runner, on both the death and deadline paths, and a window
-> stops any superseded watchdog before clearing the markers that watchdog reads.
-> A *dead* foreign pid is treated as a stale marker and still torn down —
-> deferring to it would leave 16 B200s billing with nothing willing to stop them.
+* **Hold on failure.** A failed stage deliberately keeps the cluster so it can
+  be diagnosed on the hardware that produced it. The budget deadline is still
+  the backstop, so a hold cannot become an open-ended bill.
+* **Readiness is measured, not inferred.** `.metadata.generation` decides
+  whether a leg needs a restart — the API server bumps it only on a real spec
+  change — and the readiness wait then runs *regardless of the answer*. "No
+  restart is needed" and "the cluster is serving" are different claims, and a
+  leg that conflates them benchmarks a cluster that is still converging.
+* **Preemption is routine.** The B200 pool is Spot. A reclaimed node is written
+  down as it happened — the affected arm records zero successful requests and
+  the verdict omits the slope it could not compute — so no wrong conclusion is
+  reachable from the artifact. Per-variant checkpointing keeps the loss to one
+  variant rather than a four-hour sweep.
 
 ### 3. `scripts/lib/serving_render_defaults.sh` — one render, three callers
 
-`03_deploy_workloads.sh` is not the only script that renders the serving
-StatefulSet; the sweep and the window both re-render it. Sharing 03's variable
-*allow-list* was not enough, because the allow-list governs which names may be
-substituted and says nothing about their values. Values 03 derives at deploy
-time rendered empty everywhere else, and empty is not "absent":
+Sharing 03's variable *allow-list* was not enough: it governs which names may be
+substituted and says nothing about their values, and values 03 derives at deploy
+time rendered empty everywhere else. Empty is not "absent":
 
 | Rendered as | Caught by | Symptom |
 | :--- | :--- | :--- |
 | `image: ""`, `hostPath.path: ""` | API server | Manifest rejected; all 9 variants failed inside a minute |
 | `--port ""` | *nothing* | Manifest **accepted**; both pods crash-looped ~18 min later |
 
-The second row is why the shared library validates twice. A `kubectl apply
---dry-run` checks structure and has no opinion on the contents of a container's
-command, so a flag with an empty value passes it and fails only once sixteen
-GPUs have finished loading weights. The library therefore mirrors 03's defaults
-*and* refuses any rendered manifest that passes a CLI flag with an empty value —
-the first stops the known cases, the second stops the class.
-
-### 4. What the 2026-08-03 window actually measured
-
-Three questions went to live hardware. Two came back with an answer; the third
-was stopped on cost after one of nine variants. Raw artifacts are in
-`benchmarks/results/sglang/` — everything below is re-derivable from them.
-
-> [!IMPORTANT]
-> **No throughput improvement was demonstrated by this window.** The sweep is
-> the only instrument that can produce one, and it completed its control arm
-> and nothing else. The baseline below is a reference point, not a gain.
-
-#### fp8 KV cache — accuracy gate: **PASS**
-
-`kv_accuracy_verdict.json`. 50 probes per leg, 8192-token context, planted at
-depths 0.05 / 0.25 / 0.50 / 0.75 / 0.95.
-
-| Leg | Retrieval acc. | Wrong-code | Degenerate | Exact match vs `bf16-a` |
-| :--- | ---: | ---: | ---: | ---: |
-| `bf16-a` (baseline) | 1.000 | 0.000 | 0.000 | — |
-| `bf16-b` (self-consistency floor) | 1.000 | 0.000 | 0.000 | 1.000 |
-| `fp8_e4m3` (candidate) | 1.000 | 0.000 | 0.000 | 1.000 |
-
-The floor leg is what makes the candidate leg readable. Two bf16 runs agreeing
-perfectly means the gate has no slack in it — a regression would have had
-nowhere to hide. Retrieval held at 1.000 at every depth, including 0.95, which
-is where KV quantisation error accumulates.
-
-This retires the *accuracy* risk on `--kv-cache-dtype fp8_e4m3`. It does not
-measure the benefit: no fp8 arm was ever in the sweep table, so what halving
-the 23.89 GB KV pool buys in served throughput remains unknown.
-
-#### Hierarchical cache on NVMe — **not justified; keep it off**
-
-`prefix_reuse_hicache-{off,on}.json`. Both arms 3/3 slope points and 2/2 mixed
-points, identical 927,808-token KV pool, `--schedule-policy lpm`, radix cache
-on in both.
-
-| | hicache **off** | hicache **on** |
-| :--- | ---: | ---: |
-| cold slope (ms / prefix-token) | 0.025425 | 0.027187 |
-| warm slope | 0.006708 | 0.001786 |
-| evicted slope | 0.053789 | 0.051663 |
-| warm reuse efficiency | 0.7362 | 0.9343 |
-| evicted reuse efficiency | −1.1156 | −0.9003 |
-| mixed arm, 50% hit rate | 54.58 tok/s | 62.61 tok/s |
-| mixed arm, 80% hit rate | **113.04 tok/s** | **85.89 tok/s** |
-
-The 80%-hit mixed arm is the closest thing here to a production shape, and the
-NVMe tier makes it **24% slower**. The one metric that moved the right way —
-evicted slope, −4% — moved less than its own control did: a spot preemption
-forced the second arm onto a replacement node pair, and the cold arm shifted
-3.5–8% in the same direction between the two. Normalised against that control
-the evicted/cold ratio goes 2.12 → 1.90, where a tier that was working at all
-would sit below 1.0. A flushed prefix is still being recomputed.
-
-> [!NOTE]
-> **The warm arm is the unplanned result, and it cuts the other way.** Reuse
-> efficiency of 0.736 with the tier off sits far above the 0.258 bound implied
-> by 24 full-attention layers out of 93 — roughly **2.85× more than the layer
-> arithmetic predicts**. K3's 69 KDA layers carry recurrent state rather than a
-> per-token KV cache, so the expectation going in was that prefix caching could
-> not save much. In-GPU it saves a great deal; it simply does not survive
-> eviction to disk. Prompt-prefix design is worth engineering effort on this
-> model. A third cache tier is not.
-
-#### Throughput baseline `B0` — one of nine variants
-
-`realistic_results.json`. Non-repetitive arm, ISL 1536 / OSL 1024, suite
-463.59 s, zero errors at every level.
-
-| Concurrency | Aggregate | Per GPU | Per user | TTFT p50 | TPOT p50 | Successful |
-| ---: | ---: | ---: | ---: | ---: | ---: | :--- |
-| 8 | 282.78 tok/s | 17.67 | 35.35 | 20,883 ms | 27.53 ms | 16 / 16 |
-| **16** | **486.71 tok/s** | **30.42** | 30.42 | 18,634 ms | 31.08 ms | 32 / 32 |
-| 32 | 864.46 tok/s | 54.03 | 27.01 | 18,944 ms | 34.49 ms | 64 / 64 |
-
-Corpus provenance, which is the point of running this arm at all: 7,118
-sentences, **zero duplicates**, duplicate-8gram fraction 3.6e-05, longest shared
-prompt prefix **2 words**, token counts from `openai_usage` rather than
-estimated. At the c=16 decision band the non-repetitive and repeated-passage
-arms land within **1.6%** of each other (ratio 0.9844) — so this number is not
-inflated by prefix-cache hits.
-
-Variant `B1` (`--linear-attn-prefill-backend cutedsl`) exhausted its 1800 s
-rollout budget. Cluster logs show the backend loading and allocating normally
-on the retry, so that is a schedule failure and **not** a verdict on cutedsl.
-`B2`–`C2b` never ran.
-
-> [!CAUTION]
-> **The TTFT column above is not a prefill measurement, and it is easy to read
-> as one.** This suite issues from a pool at `requests = 2 x concurrency`, so
-> half of every cell waits for the first wave to finish generating all 1024
-> output tokens — about 1024 x 31 ms ≈ 32 s — before it is even dispatched. The
-> p50 lands between the first wave's real TTFT and the second wave's queue wait,
-> which is exactly where 18–23 s comes from. What prefill actually costs is in
-> `prefix_reuse_hicache-off.json`: a cold intercept of 1399 ms plus 0.025425 ms
-> per prefix token, so a 1536-token prompt ingests in roughly **1.4 s**. Use the
-> cold arm or `prefill_results.json` for ingestion latency; use this column only
-> to compare variants issued the same way.
-
-> [!NOTE]
-> The real unprompted signal is in the logs, not the table: every TP rank emits
-> `BatchMLAPagedAttentionWrapper: backend='auto' selected 'fa2' on SM100, which
-> is not Blackwell-native and gives poor MLA decode performance` — in the
-> **baseline** configuration. MLA decode is running on a non-Blackwell path on
-> Blackwell hardware, and no variant in the nine-row table changes it. Nothing
-> here measures what a Blackwell-native MLA decode backend would be worth, which
-> makes it the strongest untested candidate on the list.
+The second row is why the library validates twice. `kubectl apply --dry-run`
+checks structure and has no opinion on the contents of a container's command, so
+an empty flag value passes it and fails only once sixteen GPUs have finished
+loading weights. The library mirrors 03's defaults *and* rejects any rendered
+manifest that passes a CLI flag with an empty value — the first stops the known
+cases, the second stops the class.
 
 ---
 
