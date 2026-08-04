@@ -3,23 +3,27 @@
 <text x="800.0" y="30" font-size="25" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central" font-weight="bold">Kimi K3 Enterprise Serving on GKE Blackwell</text>
 <text x="800.0" y="58" font-size="13" fill="#6b7280" text-anchor="middle" dominant-baseline="central">One multi-node serving replica  ·  2 x a4-highgpu-8g  ·  16x NVIDIA B200 HGX (2,880 GB HBM3e)  ·  TP=16 / PP=1 / EP=16  ·  SGLang 0.5.16</text>
 <rect x="28" y="86" width="1544" height="214" rx="12" fill="#eef0f3" stroke="#dcdfe4" stroke-width="1.2"/>
-<text x="112" y="174.0" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Tier 1</text>
-<text x="112" y="193.0" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Enterprise</text>
-<text x="112" y="212.0" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">AI Gateway</text>
+<text x="112" y="168.0" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Tier 1</text>
+<text x="112" y="187.0" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Enterprise</text>
+<text x="112" y="206.0" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">AI Gateway</text>
+<text x="112" y="228.0" font-size="10" fill="#8a93a0" text-anchor="middle" dominant-baseline="central">on GKE · CPU node pool</text>
 <rect x="28" y="312" width="1544" height="404" rx="12" fill="#eef0f3" stroke="#dcdfe4" stroke-width="1.2"/>
 <text x="112" y="485.5" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Horizontally</text>
 <text x="112" y="504.5" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Scalable GKE</text>
 <text x="112" y="523.5" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Blackwell</text>
 <text x="112" y="542.5" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Node Pool</text>
+<text x="112" y="564.5" font-size="10" fill="#8a93a0" text-anchor="middle" dominant-baseline="central">same cluster, GPU pool</text>
 <rect x="28" y="728" width="1544" height="186" rx="12" fill="#eef0f3" stroke="#dcdfe4" stroke-width="1.2"/>
 <text x="112" y="802.0" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Storage</text>
 <text x="112" y="821.0" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Subsystem</text>
 <text x="112" y="840.0" font-size="13.5" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">(Tier 0 + Tier 3)</text>
 <rect x="772" y="100" width="216" height="42" rx="8" fill="#e9dcf2" stroke="#b49ccd" stroke-width="1.2"/>
-<text x="880" y="121.0" font-size="12.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central" font-weight="bold">Private ILB  ·  Port 4000</text>
+<text x="880" y="116.0" font-size="12.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central" font-weight="bold">Private ILB  ·  Port 4000</text>
+<text x="880" y="131.0" font-size="9" fill="#4a5568" text-anchor="middle" dominant-baseline="central">GKE internal LoadBalancer Service</text>
 <rect x="752" y="176" width="256" height="62" rx="10" fill="#fdf3c9" stroke="#dcc264" stroke-width="1.2"/>
-<text x="880" y="197.5" font-size="14" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central" font-weight="bold">LiteLLM Enterprise Gateway</text>
-<text x="880" y="216.5" font-size="10.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">virtual keys · TPM/RPM budgets · routing</text>
+<text x="880" y="193.0" font-size="14" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central" font-weight="bold">LiteLLM Enterprise Gateway</text>
+<text x="880" y="209.5" font-size="10.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">virtual keys · TPM/RPM budgets · routing</text>
+<text x="880" y="224.5" font-size="9" fill="#4a5568" text-anchor="middle" dominant-baseline="central">GKE Deployment x2 — same cluster as serving</text>
 <polyline points="880,142 880,176" fill="none" stroke="#c3c7cd" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
 <polygon points="880,176 876.15,169.0 883.85,169.0" fill="#c3c7cd"/>
 <rect x="300" y="100" width="240" height="64" rx="9" fill="#dae6f7" stroke="#9cb7dc" stroke-width="1.2"/>
@@ -66,7 +70,7 @@
 <rect x="224" y="520" width="432" height="58" rx="8" fill="#fbe1c9" stroke="#dfae7e" stroke-width="1.2"/>
 <text x="440" y="535.0" font-size="11" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central" font-weight="bold">Tier 2  —  Local NVMe SSD RAID 0</text>
 <text x="440" y="549.0" font-size="9.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">/mnt/scratch  ·  32 x 375 GiB = 11.7 TiB per node</text>
-<text x="440" y="563.0" font-size="9.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">MPI shared-memory exchange &amp; runtime staging</text>
+<text x="440" y="563.0" font-size="9.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">Node-local scratch: hicache L3 + DSPARK draft — both off by default</text>
 <text x="440" y="592.0" font-size="10" fill="#4a5568" text-anchor="middle" dominant-baseline="central">Intra-node NVLink 1.8 TB/s  ·  8 of the 16 TP ranks</text>
 <text x="440" y="606.0" font-size="10" fill="#4a5568" text-anchor="middle" dominant-baseline="central">~780 GB MXFP4 weight shard  ·  ~443 GB KV / recurrent-state pool</text>
 <text x="440" y="620.0" font-size="10" fill="#4a5568" text-anchor="middle" dominant-baseline="central">weights read-only from the Tier 0 ROX volume</text>
@@ -79,7 +83,7 @@
 <rect x="702" y="520" width="432" height="58" rx="8" fill="#fbe1c9" stroke="#dfae7e" stroke-width="1.2"/>
 <text x="918" y="535.0" font-size="11" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central" font-weight="bold">Tier 2  —  Local NVMe SSD RAID 0</text>
 <text x="918" y="549.0" font-size="9.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">/mnt/scratch  ·  32 x 375 GiB = 11.7 TiB per node</text>
-<text x="918" y="563.0" font-size="9.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">MPI shared-memory exchange &amp; runtime staging</text>
+<text x="918" y="563.0" font-size="9.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">Node-local scratch: hicache L3 + DSPARK draft — both off by default</text>
 <text x="918" y="592.0" font-size="10" fill="#4a5568" text-anchor="middle" dominant-baseline="central">Intra-node NVLink 1.8 TB/s  ·  8 of the 16 TP ranks</text>
 <text x="918" y="606.0" font-size="10" fill="#4a5568" text-anchor="middle" dominant-baseline="central">~780 GB MXFP4 weight shard  ·  ~443 GB KV / recurrent-state pool</text>
 <text x="918" y="620.0" font-size="10" fill="#4a5568" text-anchor="middle" dominant-baseline="central">weights read-only from the Tier 0 ROX volume</text>
@@ -87,13 +91,18 @@
 <polygon points="688,494 682.0,497.3 682.0,490.7" fill="#8e97a8"/>
 <polygon points="670,494 676.0,490.7 676.0,497.3" fill="#8e97a8"/>
 <rect x="1178" y="378" width="394" height="268" rx="12" fill="#f4f5f7" stroke="#c9ced6" stroke-width="1.2" stroke-dasharray="6 4"/>
-<text x="1375" y="443.0" font-size="15" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Replica 2 … N</text>
-<text x="1375" y="479.0" font-size="11" fill="#4a5568" text-anchor="middle" dominant-baseline="central">Each additional replica is a further</text>
-<text x="1375" y="497.0" font-size="11" fill="#4a5568" text-anchor="middle" dominant-baseline="central">2-node pair — never a single node.</text>
-<rect x="1198" y="546" width="354" height="82" rx="8" fill="#ffffff" stroke="#d6dae1" stroke-width="1.2"/>
-<text x="1375" y="572.0" font-size="10.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central" font-weight="bold">Shipped default caps this at one replica:</text>
-<text x="1375" y="587.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">node pool min = 0, max = gpu_pool_max_nodes</text>
-<text x="1375" y="602.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">(default 2)  →  2 nodes  =  1 replica</text>
+<text x="1375" y="405.0" font-size="15" fill="#4a5568" text-anchor="middle" dominant-baseline="central" font-weight="bold">Replica 2 … N</text>
+<text x="1375" y="431.0" font-size="11" fill="#4a5568" text-anchor="middle" dominant-baseline="central">Each additional replica is a further</text>
+<text x="1375" y="448.0" font-size="11" fill="#4a5568" text-anchor="middle" dominant-baseline="central">2-node pair — never a single node.</text>
+<rect x="1198" y="472" width="354" height="152" rx="8" fill="#ffffff" stroke="#d6dae1" stroke-width="1.2"/>
+<text x="1375" y="492.0" font-size="10.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central" font-weight="bold">Scaling out is one variable</text>
+<text x="1375" y="511.0" font-size="9" fill="#6b7280" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans Mono, monospace">SERVING_REPLICAS=2  →  01_setup_and_check.sh</text>
+<text x="1375" y="524.0" font-size="9.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">raises gpu_pool_max_nodes from 2 to 4 on its own</text>
+<text x="1375" y="543.0" font-size="9.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">Each extra leader gets its own ClusterIP Service</text>
+<text x="1375" y="556.0" font-size="9.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">(kimi-k3-serving-b-svc) and joins the gateway</text>
+<text x="1375" y="569.0" font-size="9.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">as a second upstream under one model_name</text>
+<text x="1375" y="589.0" font-size="9.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central" font-weight="bold">Exercised at DP=2 — killing a replica leader:</text>
+<text x="1375" y="603.0" font-size="9" fill="#6b7280" text-anchor="middle" dominant-baseline="central">2.38 s blackout, 0.06% errors; README has the caveats</text>
 <polyline points="620,752 620,634" fill="none" stroke="#a9b0bb" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
 <polygon points="620,634 623.85,641.0 616.15,641.0" fill="#a9b0bb"/>
 <polyline points="1120,752 1120,634" fill="none" stroke="#a9b0bb" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
@@ -105,7 +114,7 @@
 <text x="321" y="792.0" font-size="11.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central" font-weight="bold">Tier 3  —  GCS Weight Backup</text>
 <text x="321" y="822.0" font-size="9" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">gs://&lt;project&gt;-kimi-k3-weights-backup</text>
 <text x="321" y="837.0" font-size="9.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">1,458 GiB = 1,453.7 base + 4.19 draft</text>
-<text x="321" y="852.0" font-size="9.5" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">~$29 / month, outside Terraform state</text>
+<text x="321" y="852.0" font-size="9" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">outside Terraform state — survives teardown</text>
 <polyline points="446,822 530,822" fill="none" stroke="#8e97a8" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
 <polygon points="530,822 523.0,825.85 523.0,818.15" fill="#8e97a8"/>
 <text x="488" y="802" font-size="9.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central" font-weight="bold">hydrate</text>
@@ -117,10 +126,12 @@
 <text x="870" y="839.0" font-size="11" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">96 pre-staged MXFP4 safetensors shards (1,453.7 GiB)</text>
 <text x="870" y="856.0" font-size="11" fill="#1b2a4a" text-anchor="middle" dominant-baseline="central">Warm pod ROX recovery measured 17 min 03 s — no weight transfer on restart</text>
 <rect x="1240" y="764" width="332" height="116" rx="10" fill="#ffffff" stroke="#d6dae1" stroke-width="1.2"/>
-<text x="1406" y="787.0" font-size="11.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central" font-weight="bold">Not a cache hierarchy</text>
-<text x="1406" y="815.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">Tier 3 hydrates Tier 0 once. Tier 0 is</text>
-<text x="1406" y="829.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">mounted straight into the serving pods.</text>
-<text x="1406" y="843.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">Tier 2 NVMe is node-local scratch and is</text>
-<text x="1406" y="857.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">never fed by Tier 0.</text>
+<text x="1406" y="781.0" font-size="11.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central" font-weight="bold">Not a cache hierarchy</text>
+<text x="1406" y="800.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">Tier 3 hydrates Tier 0 once. Tier 0 is</text>
+<text x="1406" y="813.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">mounted straight into the serving pods.</text>
+<text x="1406" y="826.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">Tier 2 NVMe is node-local scratch and is</text>
+<text x="1406" y="839.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">never fed by Tier 0.</text>
+<text x="1406" y="856.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">MPI / engine shared memory is /dev/shm —</text>
+<text x="1406" y="869.0" font-size="10" fill="#6b7280" text-anchor="middle" dominant-baseline="central">a 512 GiB RAM-backed emptyDir, not Tier 2.</text>
 <text x="800.0" y="945" font-size="10.5" fill="#6b7280" text-anchor="middle" dominant-baseline="central">Shipped default — SGLANG_PARALLEL_PROFILE=tp16, mem-fraction-static 0.85, schedule-policy lpm, 131,072 ctx, engine-dispatched kernels, no speculative decoding.</text>
 </svg>
