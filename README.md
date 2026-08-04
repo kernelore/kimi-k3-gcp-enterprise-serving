@@ -133,7 +133,7 @@ A pod derives its rank and its leader from its own StatefulSet ordinal (`rank = 
 `SERVING_REPLICAS≥3` is **rejected at render time**: replica C onwards has no leader Service and no gateway entry, so it would hydrate 2.8T of weights onto two more nodes and never receive a request. The `DP=4`/`DP=N` rows above describe the architecture, not a supported flag value.
 
 > [!WARNING]
-> `DP=2` doubles the B200 spot bill for as long as it is deployed. It has been rendered, gated and unit-tested, but **not yet exercised on live hardware** — see the failover section below.
+> `DP=2` doubles the B200 spot bill for as long as it is deployed. It has now been exercised once on live hardware and passed the pre-registered failover rule — see the failover section below for the numbers and the two caveats that come with them.
 
 > [!NOTE]
 > **Horizontal Autoscaling Absence:** At the shipped default, and unlike reference stacks such as GLM, Kimi K3 serves as a single 2-node MPI replica across 16 B200s (`SERVING_REPLICAS=1`, `NODES_PER_REPLICA=2`, and `GPU_MAX_NODES=2`), leaving no spare GPU capacity in the cluster to scale into. Furthermore, dynamic pod scale-out events would require re-hydrating 1,453.7 GiB of model weights from GCS or local disk. Horizontal Pod Autoscaling (HPA) is therefore intentionally not implemented in this repository. `SERVING_REPLICAS=2` changes the *fixed* replica count, not this conclusion: the second replica is provisioned up-front and stays provisioned.
@@ -591,7 +591,7 @@ kimi-k3-gcp-enterprise-serving/
 │   ├── kv_accuracy_gate.py        # Needle-in-haystack accuracy gate for fp8 KV, with a bf16-vs-bf16 self-consistency floor
 │   ├── massive_benchmark_kimi_k3.py # High-concurrency stress test simulating 20 agent streams
 │   ├── results/README.md          # Provenance rules for every result file: what each field means and what invalidates a set
-│   ├── run_failover_bench.py      # Replica-failover harness with a pre-registered pass rule (Phase 3; needs SERVING_REPLICAS=2, unexercised)
+│   ├── run_failover_bench.py      # Replica-failover harness with a pre-registered pass rule (Phase 3; needs SERVING_REPLICAS=2)
 │   ├── run_prefill_benchmark_kimi_k3.py # Empirical prompt-ingestion prefill benchmark (8k-in/16-out)
 │   ├── run_prefix_reuse_bench.py  # Prefix-reuse benchmark; measures whether a third cache tier helps a 69/93 linear-attention model
 │   ├── run_realistic_sweep_kimi_k3.py # Two-arm sweep: repeated-passage vs non-repetitive corpus (default c=8,16,32)
@@ -637,7 +637,41 @@ kimi-k3-gcp-enterprise-serving/
 The Tier 1 Enterprise AI Gateway and Kubernetes infrastructure utilize active health probing via readiness probes and LiteLLM router retries. If a serving pod experiences GPU ECC faults, NVLink lockups, or network drops, Kubernetes readiness probes fail and eject the pod from the upstream ClusterIP routing pool, and LiteLLM retries the failed request.
 
 > [!WARNING]
-> **At the shipped default this provides no redundancy.** The stack deploys a single 2-node replica (`SERVING_REPLICAS=1`, `GPU_MAX_NODES=2`), so there is no second healthy replica to retry against — readiness ejection simply empties the routing pool and requests fail until the replica recovers. Retry-to-a-healthy-peer only becomes meaningful at `DP≥2` (4 GPU nodes), which `SERVING_REPLICAS=2` now deploys. **Failover has still not been exercised on a live deployment** — the two-replica topology, the second gateway upstream and the router's cooldown are covered by render-time and unit tests only, and `run_failover_bench.py` has never run against real hardware. Treat every failover claim here as designed-and-gated, not measured.
+> **At the shipped default this provides no redundancy.** The stack deploys a single 2-node replica (`SERVING_REPLICAS=1`, `GPU_MAX_NODES=2`), so there is no second healthy replica to retry against — readiness ejection simply empties the routing pool and requests fail until the replica recovers. Retry-to-a-healthy-peer only becomes meaningful at `DP≥2` (4 GPU nodes), which `SERVING_REPLICAS=2` deploys.
+
+#### Measured: killing a replica leader at `DP=2`
+
+`run_failover_bench.py` has been run once against live hardware — four `a4-highgpu-8g` spot
+nodes in `europe-north1-b`, two 2-node SGLang `tp16` replicas behind one gateway, with
+`kimi-k3-serving-0` (replica A's leader, and therefore that replica's entire serving
+surface) deleted under a steady 2 req/s load. The pre-registered rule returned **pass** on
+all six clauses.
+
+| Metric | Measured | Rule limit |
+| :--- | :--- | :--- |
+| Blackout | 2.38 s | 60 s |
+| First success after kill | 0.06 s | — |
+| Error rate after kill | 0.06 % (2 × HTTP 500 of 3,201) | — |
+| Residual error rate | 0.00 % over 1,029 requests | 2 % |
+| Recovery p99 / baseline p99 | 0.24× | 3× |
+
+Two caveats travel with that pass, and both matter more than the verdict does:
+
+* **The reported `rejoin: 0.55 s` is an artifact, not a measurement.** The rejoin poller
+  starts immediately after `kubectl delete --wait=false` and matches on `Ready == "True"`,
+  which the still-terminating pod satisfies on the first poll. The killed replica actually
+  took ~18 minutes to serve again — the ROX reload in §3 below, not half a second. That
+  clause of the rule passes vacuously and should be read as unmeasured.
+* **The only service gap came from the replica returning, not from it leaving.** The 2.38 s
+  blackout falls at T+1,085 s, when the recovered leader rejoined the routing pool. The kill
+  itself produced no gap at all, and the two HTTP 500s sit at T+485 s, unrelated to either
+  event.
+
+One unrelated flake showed up during bring-up and is worth knowing about at `DP≥2`: a rank
+can die in `init_tokenizer` with `AttributeError: module '...kimi_k3_processor' has no
+attribute 'KimiK3Processor'`, the HuggingFace `trust_remote_code` dynamic-module import
+race. It fires before the rank joins the distributed group, so the restart is clean and
+self-healing — but doubling the replica count doubles the number of pods racing for it.
 
 ### 2. Dynamic Spot Preemption Priorities (P0 > P1 > P2)
 

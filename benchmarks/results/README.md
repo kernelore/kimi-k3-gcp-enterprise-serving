@@ -30,16 +30,17 @@ carry the right value in both places.
 
 ## Which image produced these files
 
-Every file in `sglang/` was measured against base digest
-`lmsysorg/sglang:kimi-k3@sha256:81a9c006…`. `docker/Dockerfile.sglang` has since moved to
-`sha256:6d9594a4…`, which is the same v0.5.16 base plus a source overlay from
-`sgl-project/sglang@c6ad1f26` — about 225 commits of newer Python over the `srt` and
-`kernels` trees, with the compiled kernel wheel left at the older build.
+This tree spans more than one base image. `docker/Dockerfile.sglang` has moved between
+`lmsysorg/sglang:kimi-k3@sha256:81a9c006…` and `sha256:6d9594a4…` — the same v0.5.16 base
+plus a source overlay from `sgl-project/sglang@c6ad1f26`, about 225 commits of newer Python
+over the `srt` and `kernels` trees, with the compiled kernel wheel left at the older build.
 
-Nothing in this tree was re-measured for that move, and no gate catches it: the recorded
-`metadata.engine_version` is derived from the image *tag* (`kimi-k3`), which did not change,
-so the provenance checks pass either way. Treat a comparison between these numbers and
-anything measured on `6d9594a4…` as cross-image, not like-for-like.
+Nothing here is re-measured when that pin moves, and no gate catches which side of it a
+given file came from: the recorded `metadata.engine_version` is derived from the image *tag*
+(`kimi-k3`), which did not change across the move, so the provenance checks pass either way,
+and the digest is not recorded in the files at all. Two files in this tree are therefore not
+automatically like-for-like; establish which image a run used from the run itself, because
+this tree cannot tell you.
 
 ## Saturation prompt calibration
 
@@ -103,50 +104,15 @@ the right weight to give it is that of a careful note rather than an audited mea
 
 `benchmarks/run_realistic_sweep_kimi_k3.py` was written to replace it with a file that has
 both arms from one run, a `metadata` block, and an `arm_comparison` computed by the harness
-instead of by hand. When that run happens, this file should be deleted rather than kept
-alongside it.
+instead of by hand.
 
-That run happened on 2026-08-03 and produced `sglang/realistic_results.json`, and it does
-**not** supersede this file. It has both arms, the `metadata` block and the harness-computed
-`arm_comparison` as intended, but it was launched without `--metrics-endpoint`, so
-`acceptance_source` reads `not measured` and `accepted_tok_per_step` is `null` in every
-cell. The throughput half of the replacement exists; the acceptance half — the 6.4-to-2.2
-finding that is the only reason this file is kept — does not. Delete it when a realistic
-sweep runs with the metrics endpoint attached and reproduces or refutes that number, and
-not before.
-
-## The 2026-08-03 measurement window
-
-Seven files came out of one supervised window (`scripts/08_run_measurement_window.sh`,
-run label `phase2-20260803e`) against base digest `sha256:6d9594a4…`, so they are
-cross-image against everything above and like-for-like only with each other.
-
-| File | What it is |
-| :--- | :--- |
-| `kv_accuracy_bf16-a.json` / `-b.json` | Two bf16 captures. `-b` exists only to measure how much two identical configurations already disagree. |
-| `kv_accuracy_fp8.json` | The `fp8_e4m3` candidate capture. |
-| `kv_accuracy_verdict.json` | The gate's judgement over those three. `decision: pass`. |
-| `prefix_reuse_hicache-off.json` / `-on.json` | The two arms of the hierarchical-cache A/B. |
-| `realistic_results.json` | Variant `B0` — the no-delta control arm of the tuning sweep. |
-
-Two caveats travel with these, and neither is visible from inside a single file.
-
-**The prefix-reuse arms are cross-node.** A Spot node was preempted between them, so the
-`off` arm ran on the original node pair and the `on` arm on its replacement. The two arms
-are therefore not a clean A/B on their own: the cold arm is the control that makes them
-comparable, and it moved 3.5–8% between runs. Any evicted- or warm-arm delta smaller than
-that should be read against the cold arm's shift in the same direction, not taken at face
-value. A first `on` arm was lost outright to the same preemption — it recorded 0 successful
-requests out of 2 and out of 64 — and was discarded rather than repaired.
-
-**`realistic_results.json` is one variant of nine.** The sweep table in
-`scripts/07_run_tuning_sweep.sh` has nine rows; `B0` is the control and the only one that
-completed. `B1` exhausted its 1800 s rollout budget without serving traffic, which is a
-schedule failure rather than a result for `cutedsl`, and the window was stopped on cost
-after that. There is no accepted variant in this tree and therefore no measured tuning
-gain — the file is a baseline, and `sglang/checkpoint.tsv` is deliberately not committed
-because a checkpoint recording seven never-attempted rows would read as seven negative
-results.
+The mere presence of a `realistic_results.json` in this tree is not enough to retire it.
+That harness only records acceptance when it is launched with `--metrics-endpoint`; without
+one, `acceptance_source` reads `not measured` and `accepted_tok_per_step` is `null` in every
+cell, so the replacement covers the throughput half and leaves the acceptance half — the
+only reason the hand-assembled file is kept — unmeasured. Read those two fields before
+deleting anything: it goes once a realistic sweep has run with the metrics endpoint attached
+and has reproduced or refuted its acceptance figure, and not before.
 
 ## Where c=16 comes from
 
